@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install root deps
+        run: |
+          npm i -g npm@latest
+      - name: Install web deps
+        working-directory: apps/web
+        run: npm ci
+      - name: Build web
+        working-directory: apps/web
+        run: npm run build
+      - name: Install functions deps
+        working-directory: functions
+        run: npm ci
+      - name: Build functions
+        working-directory: functions
+        run: npm run build
+      - name: Test functions
+        working-directory: functions
+        run: npm test -- --passWithNoTests
+

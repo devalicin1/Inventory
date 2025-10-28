@@ -1,0 +1,17 @@
+@import "tailwindcss";
+
+html, body, #root {
+  @apply h-full w-full bg-white text-gray-900;
+}
+
+.app-shell {
+  @apply min-h-screen grid grid-rows-[1fr_auto] md:grid-rows-1 md:grid-cols-[16rem_1fr];
+}
+
+.bottom-nav {
+  @apply fixed bottom-0 left-0 right-0 z-50 grid grid-cols-4 gap-1 border-t bg-white/90 backdrop-blur supports-[backdrop-filter]:bg-white/70 md:hidden;
+}
+
+.sidebar {
+  @apply hidden md:block md:h-screen md:sticky md:top-0 border-r bg-gray-50;
+}

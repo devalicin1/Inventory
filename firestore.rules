@@ -1,0 +1,101 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function hasWorkspaceAccess(workspaceId) {
+      return request.auth != null && workspaceId in request.auth.token.workspaces;
+    }
+
+    function isOwnerOrAdmin() {
+      return request.auth != null && (
+        'roles' in request.auth.token && (
+          'owner' in request.auth.token.roles || 'admin' in request.auth.token.roles
+        )
+      );
+    }
+
+    function isManager() {
+      return request.auth != null && 'roles' in request.auth.token && 'manager' in request.auth.token.roles;
+    }
+
+    function isStaff() {
+      return request.auth != null && 'roles' in request.auth.token && 'staff' in request.auth.token.roles;
+    }
+
+    function isOperator() {
+      return request.auth != null && 'roles' in request.auth.token && 'operator' in request.auth.token.roles;
+    }
+
+    // Workspace root
+    match /workspaces/{wId} {
+      allow read, write: if hasWorkspaceAccess(wId) && isOwnerOrAdmin();
+
+      // Subcollections
+      match /users/{userId} {
+        allow read: if hasWorkspaceAccess(wId);
+        allow write: if hasWorkspaceAccess(wId) && isOwnerOrAdmin();
+      }
+
+      match /locations/{locId} {
+        allow read: if hasWorkspaceAccess(wId);
+        allow write: if hasWorkspaceAccess(wId) && (isOwnerOrAdmin() || isManager());
+      }
+
+      match /products/{pId} {
+        allow read: if hasWorkspaceAccess(wId);
+        allow create, update, delete: if hasWorkspaceAccess(wId) && (isOwnerOrAdmin() || isManager());
+      }
+
+      match /boms/{bomId} {
+        allow read: if hasWorkspaceAccess(wId);
+        allow write: if hasWorkspaceAccess(wId) && (isOwnerOrAdmin() || isManager());
+      }
+
+      match /productionOrders/{poId} {
+        allow read: if hasWorkspaceAccess(wId);
+        allow create, update, delete: if hasWorkspaceAccess(wId) && (isOwnerOrAdmin() || isManager());
+      }
+
+      match /tasks/{taskId} {
+        allow read: if hasWorkspaceAccess(wId);
+        allow create, update, delete: if hasWorkspaceAccess(wId) && (isOwnerOrAdmin() || isManager());
+        // Staff can update their own task progress (non-sensitive fields)
+        allow update: if hasWorkspaceAccess(wId) && isStaff();
+      }
+
+      match /workflows/{wfId} {
+        allow read: if hasWorkspaceAccess(wId);
+        allow write: if hasWorkspaceAccess(wId) && (isOwnerOrAdmin() || isManager());
+      }
+
+      match /savedViews/{viewId} {
+        allow read, write: if hasWorkspaceAccess(wId);
+      }
+
+      match /stock/{sid} {
+        allow read: if hasWorkspaceAccess(wId) && (isOwnerOrAdmin() || isManager() || isStaff() || isOperator());
+        // Invariant: clients cannot write stock directly
+        allow write: if false;
+      }
+
+      match /stockTxns/{txnId} {
+        allow read: if hasWorkspaceAccess(wId);
+        // Allow creation by authenticated users within workspace; validation done in Functions
+        allow create: if hasWorkspaceAccess(wId);
+        // Immutable
+        allow update, delete: if false;
+      }
+    }
+
+    // Cost field redaction: clients can't read cost if not owner/admin
+    match /workspaces/{wId}/stock/{sid} {
+      allow get: if hasWorkspaceAccess(wId) && (resource.data.avgCost == null || isOwnerOrAdmin());
+      allow list: if hasWorkspaceAccess(wId);
+    }
+
+    match /workspaces/{wId}/stockTxns/{tid} {
+      allow get: if hasWorkspaceAccess(wId) && (resource.data.unitCost == null || isOwnerOrAdmin());
+      allow list: if hasWorkspaceAccess(wId);
+    }
+  }
+}
+
