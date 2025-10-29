@@ -148,7 +148,7 @@ export async function createProduct(workspaceId: string, input: ProductInput): P
   }
 
   const [qrUrl, barcodeUrl] = await Promise.all([
-    uploadDataUrl(qrRef, qrData),
+    uploadDataUrl(qrRef, qrData.dataURL),
     uploadDataUrl(barRef, barcodeData),
   ])
 
