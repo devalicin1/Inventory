@@ -1,7 +1,9 @@
 import { db, storage } from '../lib/firebase'
+import { createStockTransaction } from './inventory'
 import {
   addDoc,
   collection,
+  deleteDoc,
   doc,
   getDocs,
   orderBy,
@@ -9,7 +11,7 @@ import {
   serverTimestamp,
   updateDoc,
 } from 'firebase/firestore'
-import { getDownloadURL, ref, uploadBytes } from 'firebase/storage'
+import { getDownloadURL, ref, uploadBytes, deleteObject } from 'firebase/storage'
 import { generateQRCodeDataURL } from '../utils/qrcode'
 import { generateBarcodeDataURL } from '../utils/barcode'
 import { sanitizeForFirestore, coerceNumberOrNull } from '../utils/sanitize'
@@ -35,6 +37,8 @@ export interface ProductInput {
   materialSeries?: string
   boardType?: string
   gsm?: string
+  barcodeUrl?: string | null
+  qrUrl?: string | null
   dimensionsWxLmm?: string
   cal?: string
   tags?: string[]
@@ -54,10 +58,15 @@ export interface Product extends ProductInput {
 }
 
 export async function listProducts(workspaceId: string): Promise<Product[]> {
-  const productsCol = collection(db, 'workspaces', workspaceId, 'products')
-  const qy = query(productsCol, orderBy('name'))
-  const snap = await getDocs(qy)
-  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as Product[]
+  try {
+    const productsCol = collection(db, 'workspaces', workspaceId, 'products')
+    const qy = query(productsCol, orderBy('name'))
+    const snap = await getDocs(qy)
+    return snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as Product[]
+  } catch (error) {
+    console.error('Error fetching products:', error)
+    throw error
+  }
 }
 
 export interface Group {
@@ -67,10 +76,40 @@ export interface Group {
 }
 
 export async function listGroups(workspaceId: string): Promise<Group[]> {
-  const groupsCol = collection(db, 'workspaces', workspaceId, 'groups')
-  const qy = query(groupsCol, orderBy('name'))
-  const snap = await getDocs(qy)
-  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as Group[]
+  try {
+    const groupsCol = collection(db, 'workspaces', workspaceId, 'groups')
+    const qy = query(groupsCol, orderBy('name'))
+    const snap = await getDocs(qy)
+    return snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as Group[]
+  } catch (error) {
+    console.error('Error fetching groups:', error)
+    throw error
+  }
+}
+
+export async function createGroup(workspaceId: string, name: string, parentId?: string | null): Promise<string> {
+  const col = collection(db, 'workspaces', workspaceId, 'groups')
+  const ref = await addDoc(col, { name: name.trim(), parentId: parentId ?? null, createdAt: serverTimestamp(), updatedAt: serverTimestamp() } as any)
+  return ref.id
+}
+
+export async function renameGroup(workspaceId: string, id: string, name: string): Promise<void> {
+  await updateDoc(doc(db, 'workspaces', workspaceId, 'groups', id), { name: name.trim(), updatedAt: serverTimestamp() } as any)
+}
+
+export async function deleteGroup(workspaceId: string, id: string): Promise<void> {
+  await deleteDoc(doc(db, 'workspaces', workspaceId, 'groups', id))
+}
+
+export async function moveGroupParent(
+  workspaceId: string,
+  id: string,
+  newParentId: string | null
+): Promise<void> {
+  await updateDoc(doc(db, 'workspaces', workspaceId, 'groups', id), {
+    parentId: newParentId ?? null,
+    updatedAt: serverTimestamp(),
+  } as any)
 }
 
 export async function createProduct(workspaceId: string, input: ProductInput): Promise<Product> {
@@ -148,7 +187,7 @@ export async function createProduct(workspaceId: string, input: ProductInput): P
   }
 
   const [qrUrl, barcodeUrl] = await Promise.all([
-    uploadDataUrl(qrRef, qrData),
+    uploadDataUrl(qrRef, qrData.dataUrl),
     uploadDataUrl(barRef, barcodeData),
   ])
 
@@ -165,6 +204,24 @@ export async function createProduct(workspaceId: string, input: ProductInput): P
   } catch (err) {
     console.error('createProduct updateDoc (images/qr/barcode) failed:', err, afterCreateUpdate)
     throw err
+  }
+
+  // Seed initial stock if provided
+  try {
+    const initialQty = Number(input.quantityBox || 0)
+    if (initialQty > 0) {
+      await createStockTransaction({
+        workspaceId,
+        productId: docRef.id,
+        type: 'in',
+        qty: initialQty,
+        reason: 'Initial stock at product creation',
+        reference: 'ProductForm',
+        unitCost: typeof input.pricePerBox === 'number' ? input.pricePerBox : undefined,
+      })
+    }
+  } catch (e) {
+    console.warn('Initial stock transaction failed (non-fatal):', e)
   }
 
   return {
@@ -222,4 +279,60 @@ export async function updateProduct(
   await updateDoc(target, updatePayload as any)
 }
 
+export async function setProductStatus(
+  workspaceId: string,
+  id: string,
+  status: 'active' | 'inactive' | 'draft'
+): Promise<void> {
+  await updateDoc(doc(db, 'workspaces', workspaceId, 'products', id), {
+    status,
+    updatedAt: serverTimestamp(),
+  } as any)
+}
 
+export async function moveProductToGroup(
+  workspaceId: string,
+  id: string,
+  groupId: string | null
+): Promise<void> {
+  await updateDoc(doc(db, 'workspaces', workspaceId, 'products', id), {
+    groupId: groupId ?? null,
+    updatedAt: serverTimestamp(),
+  } as any)
+}
+
+export async function deleteProduct(
+  workspaceId: string,
+  id: string
+): Promise<void> {
+  await deleteDoc(doc(db, 'workspaces', workspaceId, 'products', id))
+}
+
+export async function saveProductQr(
+  workspaceId: string,
+  productId: string,
+  dataUrl: string
+): Promise<string> {
+  const qrRef = ref(storage, `workspaces/${workspaceId}/products/${productId}/qr.png`)
+  const res = await fetch(dataUrl)
+  const buf = await res.arrayBuffer()
+  await uploadBytes(qrRef, new Uint8Array(buf), { contentType: 'image/png' })
+  const url = await getDownloadURL(qrRef)
+  await updateDoc(doc(db, 'workspaces', workspaceId, 'products', productId), {
+    qrUrl: url,
+    updatedAt: serverTimestamp(),
+  } as any)
+  return url
+}
+
+export async function deleteProductQr(
+  workspaceId: string,
+  productId: string
+): Promise<void> {
+  const qrRef = ref(storage, `workspaces/${workspaceId}/products/${productId}/qr.png`)
+  try { await deleteObject(qrRef) } catch {}
+  await updateDoc(doc(db, 'workspaces', workspaceId, 'products', productId), {
+    qrUrl: null,
+    updatedAt: serverTimestamp(),
+  } as any)
+}

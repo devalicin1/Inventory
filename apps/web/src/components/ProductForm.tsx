@@ -1,14 +1,18 @@
-import { useState } from 'react'
-import { createProduct, type ProductInput, type Group } from '../api/products'
+import { useEffect, useState } from 'react'
+import { createProduct, updateProduct, type ProductInput, type Group } from '../api/products'
+import { listCustomFields, type CustomField } from '../api/settings'
 
 interface Props {
   workspaceId: string
   groups: Group[]
   onCreated: () => void
   onClose: () => void
+  // Optional editing props
+  productId?: string
+  initialValues?: Partial<ProductInput> & { name?: string; sku?: string }
 }
 
-export function ProductForm({ workspaceId, groups, onCreated, onClose }: Props) {
+export function ProductForm({ workspaceId, groups, onCreated, onClose, productId, initialValues }: Props) {
   const [form, setForm] = useState<ProductInput>({
     name: '',
     sku: '',
@@ -33,6 +37,15 @@ export function ProductForm({ workspaceId, groups, onCreated, onClose }: Props) 
     tags: [],
     notes: '',
   })
+  // Prefill when editing
+  useEffect(() => {
+    if (initialValues) {
+      setForm((f) => ({
+        ...f,
+        ...(initialValues as any),
+      }))
+    }
+  }, [initialValues])
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [primaryPreview, setPrimaryPreview] = useState<string | null>(null)
@@ -43,6 +56,28 @@ export function ProductForm({ workspaceId, groups, onCreated, onClose }: Props) 
     tagsAndNotes: false,
   })
 
+  // Custom fields for selected group
+  const [customFields, setCustomFields] = useState<CustomField[]>([])
+  const [customValues, setCustomValues] = useState<Record<string, any>>({})
+
+  // Load custom fields for selected group or global when group changes
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      if (!workspaceId) return
+      try {
+        const all = await listCustomFields(workspaceId)
+        const filtered = all.filter(f => f.active && (!f.groupId || f.groupId === (form.groupId || '')))
+        if (cancelled) return
+        setCustomFields(filtered)
+      } catch (e) {
+        // silent
+      }
+    }
+    load()
+    return () => { cancelled = true }
+  }, [workspaceId, form.groupId])
+
   const handleChange = (key: keyof ProductInput, value: any) => {
     setForm((f) => ({ ...f, [key]: value }))
   }
@@ -52,11 +87,17 @@ export function ProductForm({ workspaceId, groups, onCreated, onClose }: Props) 
     setSubmitting(true)
     setError(null)
     try {
-      await createProduct(workspaceId, form)
+      // merge custom values
+      const payload: any = { ...form, ...customValues }
+      if (productId) {
+        await updateProduct(workspaceId, productId, payload)
+      } else {
+        await createProduct(workspaceId, payload)
+      }
       onCreated()
       onClose()
     } catch (err: any) {
-      setError(err?.message || 'Failed to create product')
+      setError(err?.message || (productId ? 'Failed to update product' : 'Failed to create product'))
     } finally {
       setSubmitting(false)
     }
@@ -77,7 +118,7 @@ export function ProductForm({ workspaceId, groups, onCreated, onClose }: Props) 
         {/* Header */}
         <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between bg-white">
           <div>
-            <h3 className="text-xl font-bold text-gray-900">Add New Product</h3>
+            <h3 className="text-xl font-bold text-gray-900">{productId ? 'Edit Product' : 'Add New Product'}</h3>
             <p className="text-sm text-gray-600 mt-1">QR code and barcode will be generated automatically</p>
           </div>
           <button 
@@ -152,6 +193,72 @@ export function ProductForm({ workspaceId, groups, onCreated, onClose }: Props) 
                       </div>
                     </div>
                   </section>
+
+                  {/* Custom Fields (depends on selected group) */}
+                  {customFields.length > 0 && (
+                    <section className="bg-white rounded-lg border border-gray-200 p-6">
+                      <h4 className="text-lg font-semibold text-gray-900 mb-4">Custom Fields</h4>
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {customFields.map((field) => (
+                          <div key={field.id}>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                              {field.name} {field.required && '*'}
+                            </label>
+                            {field.type === 'text' && (
+                              <input
+                                value={customValues[`custom_${field.id}`] || ''}
+                                onChange={(e) => setCustomValues(v => ({ ...v, [`custom_${field.id}`]: e.target.value }))}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                required={field.required}
+                              />
+                            )}
+                            {field.type === 'number' && (
+                              <input
+                                type="number"
+                                value={customValues[`custom_${field.id}`] ?? ''}
+                                onChange={(e) => setCustomValues(v => ({ ...v, [`custom_${field.id}`]: e.target.value === '' ? '' : Number(e.target.value) }))}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                required={field.required}
+                              />
+                            )}
+                            {field.type === 'date' && (
+                              <input
+                                type="date"
+                                value={customValues[`custom_${field.id}`] || ''}
+                                onChange={(e) => setCustomValues(v => ({ ...v, [`custom_${field.id}`]: e.target.value }))}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                required={field.required}
+                              />
+                            )}
+                            {field.type === 'boolean' && (
+                              <div className="flex items-center">
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(customValues[`custom_${field.id}`])}
+                                  onChange={(e) => setCustomValues(v => ({ ...v, [`custom_${field.id}`]: e.target.checked }))}
+                                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                />
+                                <label className="ml-2 text-sm text-gray-700">Yes</label>
+                              </div>
+                            )}
+                            {field.type === 'select' && (
+                              <select
+                                value={customValues[`custom_${field.id}`] || ''}
+                                onChange={(e) => setCustomValues(v => ({ ...v, [`custom_${field.id}`]: e.target.value }))}
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                required={field.required}
+                              >
+                                <option value="">Select {field.name}</option>
+                                {(field.options || []).map((opt, idx) => (
+                                  <option key={idx} value={opt}>{opt}</option>
+                                ))}
+                              </select>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+                  )}
 
                   {/* Inventory & Pricing Section */}
                   <section className="bg-white rounded-lg border border-gray-200 p-6">
@@ -537,7 +644,7 @@ export function ProductForm({ workspaceId, groups, onCreated, onClose }: Props) 
                         Saving...
                       </>
                     ) : (
-                      'Save Product'
+                      productId ? 'Save Changes' : 'Save Product'
                     )}
                   </button>
                 </div>

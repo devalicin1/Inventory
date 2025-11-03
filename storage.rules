@@ -1,13 +1,10 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-    match /workspaces/{wId}/attachments/{allPaths=**} {
-      allow read: if request.auth != null && wId in request.auth.token.workspaces;
-      allow write: if request.auth != null && wId in request.auth.token.workspaces;
-    }
-    match /labels/{allPaths=**} {
-      allow read: if true; // public label PDFs if needed
-      allow write: if request.auth != null;
+    // Development rules - allow all access for now
+    // TODO: Implement proper authentication and restore security rules
+    match /{allPaths=**} {
+      allow read, write: if true;
     }
   }
 }

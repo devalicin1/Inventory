@@ -12,6 +12,14 @@
       "collectionGroup": "stockTxns",
       "queryScope": "COLLECTION",
       "fields": [
+        { "fieldPath": "productId", "order": "ASCENDING" },
+        { "fieldPath": "timestamp", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "stockTxns",
+      "queryScope": "COLLECTION",
+      "fields": [
         { "fieldPath": "timestamp", "order": "DESCENDING" },
         { "fieldPath": "productId", "order": "ASCENDING" }
       ]

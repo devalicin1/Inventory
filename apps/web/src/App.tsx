@@ -1,5 +1,7 @@
 import './App.css'
 import { Outlet, NavLink } from 'react-router-dom'
+import { useEffect } from 'react'
+import { useSessionStore } from './state/sessionStore'
 import { 
   HomeIcon, 
   CubeIcon, 
@@ -11,6 +13,18 @@ import {
 } from '@heroicons/react/24/outline'
 
 function App() {
+  const { setSession } = useSessionStore()
+
+  // Mock authentication for development
+  useEffect(() => {
+    // Set a mock user session for development
+    setSession({
+      userId: 'demo-user-123',
+      email: 'demo@example.com',
+      workspaceId: 'demo-workspace',
+      roles: ['owner']
+    })
+  }, [setSession])
   
   return (
     <div className="min-h-screen bg-gray-50">
@@ -47,6 +61,13 @@ function App() {
                 Production
               </NavLink>
               <NavLink
+                to="/scan"
+                className={({ isActive }) => `group flex items-center px-2 py-2 text-sm font-medium rounded-md ${isActive ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'}`}
+              >
+                <QrCodeIcon className="mr-3 h-5 w-5 flex-shrink-0" />
+                Scan
+              </NavLink>
+              <NavLink
                 to="/work"
                 className={({ isActive }) => `group flex items-center px-2 py-2 text-sm font-medium rounded-md ${isActive ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'}`}
               >
@@ -66,6 +87,13 @@ function App() {
               >
                 <ChartBarIcon className="mr-3 h-5 w-5 flex-shrink-0" />
                 Reports
+              </NavLink>
+              <NavLink
+                to="/settings"
+                className={({ isActive }) => `group flex items-center px-2 py-2 text-sm font-medium rounded-md ${isActive ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'}`}
+              >
+                <CogIcon className="mr-3 h-5 w-5 flex-shrink-0" />
+                Settings
               </NavLink>
             </nav>
           </div>

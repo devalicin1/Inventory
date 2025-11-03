@@ -12,19 +12,42 @@ interface DataTableProps<T> {
   columns: Column<T>[]
   onRowClick?: (item: T) => void
   className?: string
+  renderActions?: (item: T) => ReactNode
+  // Selection
+  selectable?: boolean
+  getId?: (item: T) => string
+  selectedIds?: string[]
+  onToggleSelect?: (id: string, item: T, checked: boolean) => void
+  onToggleSelectAll?: (checked: boolean) => void
 }
 
 export function DataTable<T extends Record<string, any>>({ 
   data, 
   columns, 
   onRowClick,
-  className = ''
+  className = '',
+  renderActions,
+  selectable = false,
+  getId,
+  selectedIds = [],
+  onToggleSelect,
+  onToggleSelectAll,
 }: DataTableProps<T>) {
   return (
     <div className={`overflow-x-auto ${className}`}>
       <table className="min-w-full divide-y divide-gray-300">
         <thead className="bg-gray-50">
           <tr>
+            {selectable && (
+              <th className="px-4 py-3.5">
+                <input
+                  type="checkbox"
+                  aria-label="Select all"
+                  checked={data.length > 0 && selectedIds.length === data.length}
+                  onChange={(e) => onToggleSelectAll?.(e.target.checked)}
+                />
+              </th>
+            )}
             {columns.map((column) => (
               <th
                 key={String(column.key)}
@@ -45,6 +68,16 @@ export function DataTable<T extends Record<string, any>>({
               key={index}
               className={`hover:bg-gray-50 ${onRowClick ? 'cursor-pointer' : ''}`}
             >
+              {selectable && (
+                <td className="px-4 py-4">
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.includes(getId ? getId(item) : String(index))}
+                    onChange={(e) => onToggleSelect?.(getId ? getId(item) : String(index), item, e.target.checked)}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                </td>
+              )}
               {columns.map((column) => (
                 <td
                   key={String(column.key)}
@@ -57,12 +90,16 @@ export function DataTable<T extends Record<string, any>>({
                 </td>
               ))}
               <td className="relative whitespace-nowrap py-4 pl-3 pr-4 text-right text-sm font-medium sm:pr-6">
-                <button
-                  onClick={() => onRowClick?.(item)}
-                  className="text-blue-600 hover:text-blue-900"
-                >
-                  View
-                </button>
+                {renderActions ? (
+                  renderActions(item)
+                ) : (
+                  <button
+                    onClick={() => onRowClick?.(item)}
+                    className="text-blue-600 hover:text-blue-900"
+                  >
+                    View
+                  </button>
+                )}
               </td>
             </tr>
           ))}
