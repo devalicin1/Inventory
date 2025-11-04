@@ -5,7 +5,9 @@ import {
   listJobs, 
   listWorkflows, 
   listWorkcenters, 
-  listResources 
+  listResources,
+  listJobProductionRuns,
+  type ProductionRun
 } from '../api/production-jobs'
 import { 
   ChartBarIcon,
@@ -24,7 +26,7 @@ interface ProductionReportsProps {
   workspaceId: string
 }
 
-type ReportType = 'wip' | 'throughput' | 'onTime' | 'cycleTime' | 'bottleneck' | 'utilization' | 'materialUsage' | 'output' | 'deadlines'
+type ReportType = 'wip' | 'throughput' | 'onTime' | 'cycleTime' | 'bottleneck' | 'utilization' | 'materialUsage' | 'output' | 'deadlines' | 'stageOutput'
 
 export function ProductionReports({ workspaceId }: ProductionReportsProps) {
   const [selectedReport, setSelectedReport] = useState<ReportType>('wip')
@@ -70,6 +72,7 @@ export function ProductionReports({ workspaceId }: ProductionReportsProps) {
     { id: 'materialUsage', name: 'Material Usage', icon: CubeIcon, description: 'Material consumption analysis' },
     { id: 'output', name: 'Output & Palletization', icon: TruckIcon, description: 'Production output and packaging metrics' },
     { id: 'deadlines', name: 'Deadlines & Acceptance', icon: CalendarIcon, description: 'Deadline tracking and acceptance rates' },
+    { id: 'stageOutput', name: 'Stage Output Report', icon: CheckCircleIcon, description: 'Output results by job and stage' },
   ]
 
   // Calculate WIP by Stage
@@ -206,6 +209,92 @@ export function ProductionReports({ workspaceId }: ProductionReportsProps) {
     return outputData
   }
 
+  // Fetch production runs for all filtered jobs
+  const { data: allRunsData } = useQuery({
+    queryKey: ['allProductionRuns', workspaceId, filteredJobs.map(j => j.id).join(',')],
+    queryFn: async () => {
+      const runsMap: { [jobId: string]: ProductionRun[] } = {}
+      await Promise.all(
+        filteredJobs.map(async (job) => {
+          try {
+            const runs = await listJobProductionRuns(workspaceId, job.id)
+            runsMap[job.id] = runs
+          } catch (error) {
+            console.error(`Error fetching runs for job ${job.id}:`, error)
+            runsMap[job.id] = []
+          }
+        })
+      )
+      return runsMap
+    },
+    enabled: filteredJobs.length > 0 && selectedReport === 'stageOutput',
+  })
+
+  // Calculate Stage Output Report
+  const stageOutputData = () => {
+    if (!allRunsData) return []
+    
+    const getStageName = (stageId: string) => {
+      for (const wf of workflows) {
+        const stage = wf.stages?.find(s => s.id === stageId)
+        if (stage) return stage.name
+      }
+      return stageId
+    }
+
+    const getWorkcenterName = (workcenterId?: string) => {
+      if (!workcenterId) return '-'
+      const wc = workcenters.find(w => w.id === workcenterId)
+      return wc?.name || workcenterId
+    }
+
+    const reportData: Array<{
+      jobCode: string
+      productName: string
+      stageId: string
+      stageName: string
+      workcenterId?: string
+      workcenterName: string
+      qtyGood: number
+      qtyScrap: number
+      lot?: string
+      date: string
+      operatorId: string
+      notes?: string
+    }> = []
+
+    filteredJobs.forEach(job => {
+      const runs = allRunsData[job.id] || []
+      runs.forEach(run => {
+        const runDate = run.at?.seconds 
+          ? new Date(run.at.seconds * 1000).toISOString().split('T')[0]
+          : new Date().toISOString().split('T')[0]
+        
+        reportData.push({
+          jobCode: job.code || job.id,
+          productName: job.productName || job.sku || '',
+          stageId: run.stageId,
+          stageName: getStageName(run.stageId),
+          workcenterId: run.workcenterId,
+          workcenterName: getWorkcenterName(run.workcenterId),
+          qtyGood: run.qtyGood || 0,
+          qtyScrap: run.qtyScrap || 0,
+          lot: run.lot,
+          date: runDate,
+          operatorId: run.operatorId || '',
+          notes: run.notes,
+        })
+      })
+    })
+
+    // Sort by job code, then by stage order, then by date
+    return reportData.sort((a, b) => {
+      if (a.jobCode !== b.jobCode) return a.jobCode.localeCompare(b.jobCode)
+      if (a.stageId !== b.stageId) return a.stageId.localeCompare(b.stageId)
+      return b.date.localeCompare(a.date) // newest first
+    })
+  }
+
   // Calculate Deadlines & Acceptance
   const deadlinesAcceptance = () => {
     const upcomingDeadlines = jobs
@@ -252,6 +341,8 @@ export function ProductionReports({ workspaceId }: ProductionReportsProps) {
         return <OutputReport data={outputPalletization()} />
       case 'deadlines':
         return <DeadlinesReport data={deadlinesAcceptance()} />
+      case 'stageOutput':
+        return <StageOutputReport data={stageOutputData()} />
       default:
         return null
     }
@@ -281,6 +372,10 @@ export function ProductionReports({ workspaceId }: ProductionReportsProps) {
       case 'deadlines':
         exportData = deadlinesAcceptance().upcomingDeadlines
         filename = 'deadlines_acceptance.csv'
+        break
+      case 'stageOutput':
+        exportData = stageOutputData()
+        filename = 'stage_output_report.csv'
         break
       default:
         return
@@ -610,6 +705,114 @@ const OutputReport: FC<{ data: { jobCode: string; sku: string; totalPlanned: num
                   item.palletVariance > 0 ? 'text-red-600' : item.palletVariance < 0 ? 'text-green-600' : 'text-gray-900'
                 }`}>
                   {item.palletVariance > 0 ? '+' : ''}{item.palletVariance}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+const StageOutputReport: FC<{ data: Array<{
+  jobCode: string
+  productName: string
+  stageId: string
+  stageName: string
+  workcenterId?: string
+  workcenterName: string
+  qtyGood: number
+  qtyScrap: number
+  lot?: string
+  date: string
+  operatorId: string
+  notes?: string
+}> }> = ({ data }) => {
+  if (data.length === 0) {
+    return (
+      <div>
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">Stage Output Report</h3>
+        <p className="text-gray-500">No production outputs found for the selected date range.</p>
+      </div>
+    )
+  }
+
+  // Group by job for summary
+  const jobSummary: { [jobCode: string]: { totalGood: number; totalScrap: number; stages: string[] } } = {}
+  data.forEach(item => {
+    if (!jobSummary[item.jobCode]) {
+      jobSummary[item.jobCode] = { totalGood: 0, totalScrap: 0, stages: [] }
+    }
+    jobSummary[item.jobCode].totalGood += item.qtyGood
+    jobSummary[item.jobCode].totalScrap += item.qtyScrap
+    if (!jobSummary[item.jobCode].stages.includes(item.stageName)) {
+      jobSummary[item.jobCode].stages.push(item.stageName)
+    }
+  })
+
+  return (
+    <div>
+      <h3 className="text-lg font-semibold text-gray-900 mb-4">Stage Output Report</h3>
+      <p className="text-sm text-gray-600 mb-6">
+        Showing {data.length} output entries across {Object.keys(jobSummary).length} jobs
+      </p>
+
+      {/* Summary */}
+      <div className="mb-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="bg-blue-50 rounded-lg p-4">
+          <div className="text-2xl font-bold text-blue-900">{Object.keys(jobSummary).length}</div>
+          <div className="text-sm text-blue-700">Jobs with Output</div>
+        </div>
+        <div className="bg-green-50 rounded-lg p-4">
+          <div className="text-2xl font-bold text-green-900">
+            {data.reduce((sum, item) => sum + item.qtyGood, 0).toLocaleString()}
+          </div>
+          <div className="text-sm text-green-700">Total Good Quantity</div>
+        </div>
+        <div className="bg-red-50 rounded-lg p-4">
+          <div className="text-2xl font-bold text-red-900">
+            {data.reduce((sum, item) => sum + item.qtyScrap, 0).toLocaleString()}
+          </div>
+          <div className="text-sm text-red-700">Total Scrap</div>
+        </div>
+      </div>
+
+      {/* Detailed Table */}
+      <div className="overflow-x-auto">
+        <table className="min-w-full divide-y divide-gray-200">
+          <thead className="bg-gray-50">
+            <tr>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Job Code</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Stage</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Workcenter</th>
+              <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Qty Good</th>
+              <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Qty Scrap</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Lot</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Operator</th>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Notes</th>
+            </tr>
+          </thead>
+          <tbody className="bg-white divide-y divide-gray-200">
+            {data.map((item, idx) => (
+              <tr key={idx} className="hover:bg-gray-50">
+                <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">{item.jobCode}</td>
+                <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{item.productName}</td>
+                <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{item.stageName}</td>
+                <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">{item.workcenterName}</td>
+                <td className="px-4 py-3 whitespace-nowrap text-sm text-right font-medium text-green-600">{item.qtyGood.toLocaleString()}</td>
+                <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-red-600">
+                  {item.qtyScrap > 0 ? item.qtyScrap.toLocaleString() : '-'}
+                </td>
+                <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">{item.lot || '-'}</td>
+                <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
+                  {new Date(item.date).toLocaleDateString()}
+                </td>
+                <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">{item.operatorId || '-'}</td>
+                <td className="px-4 py-3 text-sm text-gray-600 max-w-xs truncate" title={item.notes}>
+                  {item.notes || '-'}
                 </td>
               </tr>
             ))}

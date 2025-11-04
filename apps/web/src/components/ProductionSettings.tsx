@@ -708,6 +708,8 @@ const CreateEditModal: FC<{
     wipLimit: 5,
     expectedSLAHours: 0,
     exitChecks: [] as string[],
+    inputUOM: '' as '' | 'box' | 'sheets' | 'cartoon' | 'pieces',
+    outputUOM: '' as '' | 'box' | 'sheets' | 'cartoon' | 'pieces',
   })
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -725,6 +727,8 @@ const CreateEditModal: FC<{
       wipLimit: 5,
       expectedSLAHours: 0,
       exitChecks: [],
+      inputUOM: '',
+      outputUOM: '',
     })
     setShowStageForm(true)
   }
@@ -738,6 +742,8 @@ const CreateEditModal: FC<{
       wipLimit: stage.wipLimit || 5,
       expectedSLAHours: stage.expectedSLAHours || 0,
       exitChecks: stage.exitChecks || [],
+      inputUOM: stage.inputUOM || '',
+      outputUOM: stage.outputUOM || '',
     })
     setShowStageForm(true)
   }
@@ -797,7 +803,12 @@ const CreateEditModal: FC<{
                         <div className={`w-3 h-3 rounded ${stage.color}`}></div>
                         <div>
                           <p className="text-sm font-medium text-gray-900">{stage.name}</p>
-                          <p className="text-xs text-gray-500">Order: {stage.order} • WIP Limit: {stage.wipLimit || 'Unlimited'}</p>
+                          <p className="text-xs text-gray-500">
+                            Order: {stage.order} • WIP Limit: {stage.wipLimit || 'Unlimited'}
+                            {stage.inputUOM && stage.outputUOM && (
+                              <span className="ml-2">• {stage.inputUOM} → {stage.outputUOM}</span>
+                            )}
+                          </p>
                         </div>
                       </div>
                       <div className="flex items-center space-x-2">
@@ -1275,6 +1286,41 @@ const CreateEditModal: FC<{
                   onChange={(e) => setStageFormData({...stageFormData, expectedSLAHours: parseInt(e.target.value)})}
                   className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
                 />
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Input UOM
+                  </label>
+                  <select
+                    value={stageFormData.inputUOM}
+                    onChange={(e) => setStageFormData({...stageFormData, inputUOM: e.target.value as any})}
+                    className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                  >
+                    <option value="">Select Input</option>
+                    <option value="box">Box</option>
+                    <option value="sheets">Sheets</option>
+                    <option value="cartoon">Cartoon</option>
+                    <option value="pieces">Pieces</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Output UOM
+                  </label>
+                  <select
+                    value={stageFormData.outputUOM}
+                    onChange={(e) => setStageFormData({...stageFormData, outputUOM: e.target.value as any})}
+                    className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                  >
+                    <option value="">Select Output</option>
+                    <option value="box">Box</option>
+                    <option value="sheets">Sheets</option>
+                    <option value="cartoon">Cartoon</option>
+                    <option value="pieces">Pieces</option>
+                  </select>
+                </div>
               </div>
             </div>
             

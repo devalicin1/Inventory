@@ -373,12 +373,16 @@ export async function generateJobPDFBlob(job: Job): Promise<Blob> {
         addSpecLine('Number Up:', specs.numberUp, 2)
          // Colors intentionally omitted from printout
         addSpecLine('Board:', specs.board, 2)
+        if ((specs as any).gsm) addSpecLine('GSM:', (specs as any).gsm, 2)
         addSpecLine('Microns:', specs.microns, 2)
         addSpecLine('Varnish:', specs.varnish, 2)
          // Cut To duplicated elsewhere; omit here for cleaner layout
         addSpecLine('Sheets (incl. wastage):', specs.sheetsToUse, 2)
         if (specs.sheetSize) addSpecLine('Material Size:', specs.sheetSize, 2)
         if (specs.yield) addSpecLine('Yield:', specs.yield, 2)
+        if ((specs as any).tags && Array.isArray((specs as any).tags) && (specs as any).tags.length > 0) {
+          addSpecLine('Tags:', (specs as any).tags.join(', '), 2)
+        }
       }
 
       // Ensure both columns align visually (use tallest of left/right)

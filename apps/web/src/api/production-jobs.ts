@@ -104,6 +104,7 @@ export interface ProductionSpecs {
   printedColors?: number  // Number of print colors
   varnish?: string  // Varnish/coating type
   microns?: number  // Board thickness
+  gsm?: string  // Paper/board GSM of selected sheet
   board?: string  // Board type/material
   supplier?: string  // Source/supplier
   sheetSize?: { width?: number; length?: number }  // Sheet size
@@ -111,6 +112,7 @@ export interface ProductionSpecs {
   cutTo?: string  // Cut dimensions
   yield?: string  // Output per sheet
   labelNo?: string  // Label number
+  tags?: string[]  // Copied from selected sheet product tags
 }
 
 export interface JobInput {
@@ -594,8 +596,23 @@ export async function setJobStatus(
         } as any)
       }
     }
+    
+    // If moving to Done, emit a status_change history event
+    if (status === 'done' && prev && prev.status !== 'done') {
+      const historyRef = doc(collection(db, 'workspaces', workspaceId, 'jobs', jobId, 'history'))
+      await setDoc(historyRef, {
+        at: serverTimestamp(),
+        actorId: 'system',
+        type: 'status_change',
+        payload: { 
+          previousStatus: prev.status || 'unknown', 
+          newStatus: 'done',
+          reason: 'job_completed'
+        },
+      } as any)
+    }
   } catch (e) {
-    console.warn('setJobStatus: failed to record stage start on release', e)
+    console.warn('setJobStatus: failed to record history event', e)
   }
 }
 
@@ -1025,10 +1042,10 @@ export async function listJobProductionRuns(workspaceId: string, jobId: string):
 export async function createProductionRun(
   workspaceId: string,
   jobId: string,
-  input: Omit<ProductionRun, 'id' | 'at'>
+  input: Omit<ProductionRun, 'id'>
 ): Promise<string> {
   const colRef = collection(db, 'workspaces', workspaceId, 'jobs', jobId, 'productionRuns')
-  const payload = sanitizeForFirestore({ ...input, at: serverTimestamp() })
+  const payload = sanitizeForFirestore({ ...input, at: (input as any).at || serverTimestamp() })
   const ref = await addDoc(colRef, payload as any)
 
   // Optionally roll-up qtyProduced on job.output[0] for quick progress bar

@@ -274,6 +274,16 @@ export function CreateJobForm({
         }
       }
 
+      // Copy GSM and Tags from selected sheet product if available
+      const gsm = (product as any).gsm
+      if (gsm) {
+        (newSpecs as any).gsm = String(gsm)
+      }
+      const tags = (product as any).tags
+      if (Array.isArray(tags)) {
+        (newSpecs as any).tags = tags.filter(Boolean)
+      }
+
       // Add sheet to BOM if not already present
       const nextBom = [...(prev.bom || [])]
       const existingBomItem = nextBom.find(b => b.sku === product.sku)
@@ -1371,6 +1381,17 @@ export function CreateJobForm({
                             <div>
                               <label className="block text-sm font-medium text-gray-700 mb-2">Microns</label>
                               <input type="number" value={formData.productionSpecs?.microns || ''} onChange={(e) => setFormData({...formData, productionSpecs: {...formData.productionSpecs, microns: Number(e.target.value)}})} className="block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 transition-colors py-2.5 px-3 border" />
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-3 mt-3">
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-2">GSM</label>
+                              <input type="text" value={(formData.productionSpecs as any)?.gsm || ''} onChange={(e) => setFormData({...formData, productionSpecs: { ...(formData.productionSpecs || {} as any), gsm: e.target.value } as any })} className="block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 transition-colors py-2.5 px-3 border" />
+                            </div>
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-2">Tags</label>
+                              <input type="text" value={((formData.productionSpecs as any)?.tags || []).join(', ')} onChange={(e) => setFormData({...formData, productionSpecs: { ...(formData.productionSpecs || {} as any), tags: e.target.value.split(',').map(s => s.trim()).filter(Boolean) } as any })} className="block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 transition-colors py-2.5 px-3 border" placeholder="tag1, tag2" />
                             </div>
                           </div>
                         </div>

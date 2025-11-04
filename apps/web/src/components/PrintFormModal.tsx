@@ -352,12 +352,7 @@ export const PrintFormModal: FC<Props> = ({ job, onClose }) => {
                   <input
                     type="text"
                     value={data.priceAgreed || ''}
-                    onChange={(e) => {
-                      // Doğrudan state güncelle, setTimeout ile event loop'tan sonra
-                      setTimeout(() => {
-                        handleInputChange('priceAgreed', e.target.value)
-                      }, 0)
-                    }}
+                    onChange={(e) => handleInputChange('priceAgreed', e.target.value)}
                     className="w-full border border-gray-300 rounded-lg px-3 py-2.5 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 hover:border-gray-400"
                     placeholder="Price agreement details"
                     onFocus={(e) => e.target.select()}

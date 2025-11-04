@@ -19,6 +19,7 @@ import {
 } from '../api/production-jobs'
 import { downloadJobPDF } from '../utils/pdfGenerator'
 import { PrintFormModal } from './PrintFormModal'
+import { JobCreatePrintFormModal } from './JobCreatePrintFormModal'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { listWorkflows, type Workflow, updateJob, setJobStatus } from '../api/production-jobs'
 import { listProducts, type ListedProduct } from '../api/inventory'
@@ -63,6 +64,7 @@ export function JobDetail({ job, workspaceId, onClose, onDelete, workcenters = [
   const [showCreateTimeLog, setShowCreateTimeLog] = useState(false)
   const queryClient = useQueryClient()
   const [showPrintForm, setShowPrintForm] = useState(false)
+  const [showCreatePrintForm, setShowCreatePrintForm] = useState(false)
 
   // Keep job fresh so stage changes reflect immediately after confirm
   const { data: jobFresh } = useQuery({
@@ -218,6 +220,14 @@ export function JobDetail({ job, workspaceId, onClose, onDelete, workcenters = [
               <span className="hidden sm:inline">Print Form</span>
             </button>
             <button
+              onClick={() => setShowCreatePrintForm(true)}
+              className="px-3 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 flex items-center gap-2"
+              title="Download Create Form"
+            >
+              <ArrowDownTrayIcon className="h-5 w-5" />
+              <span className="hidden sm:inline">Create Form</span>
+            </button>
+            <button
               onClick={async () => {
                 try {
                   await downloadJobPDF(effectiveJob)
@@ -356,6 +366,13 @@ export function JobDetail({ job, workspaceId, onClose, onDelete, workcenters = [
 
       {showPrintForm && (
         <PrintFormModal job={effectiveJob} onClose={() => setShowPrintForm(false)} />
+      )}
+
+      {showCreatePrintForm && (
+        <JobCreatePrintFormModal
+          formData={effectiveJob}
+          onClose={() => setShowCreatePrintForm(false)}
+        />
       )}
 
       {showCreateConsumption && (
@@ -1372,6 +1389,16 @@ const OutputTab: FC<{ job: Job; workspaceId: string; workcenters: Array<{ id: st
     return id
   }
 
+  const getStageOutputUOM = (stageId: string): string => {
+    for (const wf of workflows) {
+      const s = wf.stages?.find(st => st.id === stageId)
+      if (s?.outputUOM) return s.outputUOM
+      // If no outputUOM, check inputUOM
+      if (s?.inputUOM) return s.inputUOM
+    }
+    return '' // Default: no unit shown
+  }
+
   const plannedIds: string[] = Array.isArray((job as any).plannedStageIds) ? (job as any).plannedStageIds : []
   const wf = workflows.find(w => w.id === (job as any).workflowId)
   const stageOptions = (wf?.stages || [])
@@ -1464,19 +1491,55 @@ const OutputTab: FC<{ job: Job; workspaceId: string; workcenters: Array<{ id: st
       </div>
 
       <div className="bg-white rounded-lg border border-gray-200 p-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-lg font-medium text-gray-900">Production Output</h3>
-            <p className="text-sm text-gray-600">Actual vs planned</p>
-          </div>
-          <div className="text-right">
-            <div className="text-sm text-gray-600">Planned: {planned}</div>
-            <div className="text-sm text-gray-900 font-medium">Good: {totalGood} • Scrap: {totalScrap}</div>
-            <div className="mt-2 w-48 bg-gray-200 rounded-full h-2">
-              <div className="bg-blue-600 h-2 rounded-full" style={{ width: `${Math.min(progress, 100)}%` }} />
-            </div>
-          </div>
+        <div className="mb-4">
+          <h3 className="text-lg font-medium text-gray-900">Production Output</h3>
+          <p className="text-sm text-gray-600">Actual vs planned</p>
         </div>
+        
+        {/* Stage-wise summary */}
+        {(() => {
+          const groupedByStage = runs.reduce((acc: Record<string, typeof runs>, r) => {
+            const stageId = r.stageId
+            if (!acc[stageId]) acc[stageId] = []
+            acc[stageId].push(r)
+            return acc
+          }, {})
+
+          const stageOrder = stageOptions.map(s => s.id)
+          const sortedStages = Object.keys(groupedByStage).sort((a, b) => {
+            const idxA = stageOrder.indexOf(a)
+            const idxB = stageOrder.indexOf(b)
+            if (idxA === -1 && idxB === -1) return 0
+            if (idxA === -1) return 1
+            if (idxB === -1) return -1
+            return idxA - idxB
+          })
+
+          if (sortedStages.length === 0) return null
+
+          return (
+            <div className="border-t border-gray-200 pt-4 mt-4">
+              <h4 className="text-sm font-semibold text-gray-700 mb-3">By Stage</h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {sortedStages.map((stageId) => {
+                  const stageRuns = groupedByStage[stageId]
+                  const stageName = getStageName(stageId)
+                  const stageOutputUOM = getStageOutputUOM(stageId)
+                  const stageTotalGood = stageRuns.reduce((sum, r) => sum + (r.qtyGood || 0), 0)
+                  const stageTotalScrap = stageRuns.reduce((sum, r) => sum + (r.qtyScrap || 0), 0)
+                  
+                  return (
+                    <div key={stageId} className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                      <div className="text-sm font-semibold text-gray-900 mb-2">{stageName}</div>
+                      <div className="text-xs text-gray-600 mb-1">Good: <span className="font-medium text-gray-900">{stageTotalGood.toLocaleString()}{stageOutputUOM && <span className="text-gray-500 ml-1">({stageOutputUOM})</span>}</span></div>
+                      <div className="text-xs text-gray-600">Scrap: <span className="font-medium text-gray-900">{stageTotalScrap.toLocaleString()}{stageOutputUOM && <span className="text-gray-500 ml-1">({stageOutputUOM})</span>}</span></div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )
+        })()}
       </div>
 
       <div className="bg-white rounded-lg border border-gray-200">
@@ -1489,26 +1552,116 @@ const OutputTab: FC<{ job: Job; workspaceId: string; workcenters: Array<{ id: st
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Machine / Workcenter</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Good</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Scrap</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Unit</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Lot</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Operator</th>
                 <th className="px-6 py-3" />
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
-              {runs.map((r) => (
-                <tr key={r.id}>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{new Date(r.at?.seconds ? r.at.seconds * 1000 : r.at).toLocaleString()}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{getStageName(r.stageId)}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{getWorkcenterName(r.workcenterId)}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{r.qtyGood}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{r.qtyScrap || 0}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{r.lot || '-'}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{r.operatorId}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
-                    {/* Future: edit/delete actions */}
-                  </td>
-                </tr>
-              ))}
+              {(() => {
+                // Group runs by stage
+                const groupedByStage = runs.reduce((acc: Record<string, typeof runs>, r) => {
+                  const stageId = r.stageId
+                  if (!acc[stageId]) acc[stageId] = []
+                  acc[stageId].push(r)
+                  return acc
+                }, {})
+
+                // Get stage order from workflow
+                const stageOrder = stageOptions.map(s => s.id)
+                const sortedStages = Object.keys(groupedByStage).sort((a, b) => {
+                  const idxA = stageOrder.indexOf(a)
+                  const idxB = stageOrder.indexOf(b)
+                  if (idxA === -1 && idxB === -1) return 0
+                  if (idxA === -1) return 1
+                  if (idxB === -1) return -1
+                  return idxA - idxB
+                })
+
+                const rows: JSX.Element[] = []
+                
+                sortedStages.forEach((stageId, stageIdx) => {
+                  const stageRuns = groupedByStage[stageId]
+                  const stageName = getStageName(stageId)
+                  const stageOutputUOM = getStageOutputUOM(stageId)
+                  const stageTotalGood = stageRuns.reduce((sum, r) => sum + (r.qtyGood || 0), 0)
+                  const stageTotalScrap = stageRuns.reduce((sum, r) => sum + (r.qtyScrap || 0), 0)
+                  
+                  // Sort runs within stage by date (newest first)
+                  const sortedRuns = stageRuns.sort((a, b) => {
+                    const dateA = a.at?.seconds ? a.at.seconds * 1000 : new Date(a.at).getTime()
+                    const dateB = b.at?.seconds ? b.at.seconds * 1000 : new Date(b.at).getTime()
+                    return dateB - dateA
+                  })
+
+                  // Stage header row
+                  rows.push(
+                    <tr key={`stage-header-${stageId}`} className="bg-gray-100 border-t-2 border-gray-300">
+                      <td colSpan={2} className="px-6 py-3 text-sm font-semibold text-gray-900">
+                        {stageName}
+                      </td>
+                      <td className="px-6 py-3 text-sm font-medium text-gray-700 text-right" colSpan={1}>
+                        Subtotal:
+                      </td>
+                      <td className="px-6 py-3 whitespace-nowrap text-sm font-semibold text-gray-900">
+                        {stageTotalGood.toLocaleString()}{stageOutputUOM && <span className="text-gray-500 ml-1 text-xs">({stageOutputUOM})</span>}
+                      </td>
+                      <td className="px-6 py-3 whitespace-nowrap text-sm font-semibold text-gray-900">
+                        {stageTotalScrap.toLocaleString()}{stageOutputUOM && <span className="text-gray-500 ml-1 text-xs">({stageOutputUOM})</span>}
+                      </td>
+                      <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-500">
+                        {stageOutputUOM || '-'}
+                      </td>
+                      <td colSpan={2} className="px-6 py-3"></td>
+                    </tr>
+                  )
+
+                  // Individual run rows
+                  sortedRuns.forEach((r) => {
+                    const runStageOutputUOM = getStageOutputUOM(r.stageId)
+                    rows.push(
+                      <tr key={r.id} className="hover:bg-gray-50">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          {new Date(r.at?.seconds ? r.at.seconds * 1000 : r.at).toLocaleString()}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 pl-8">
+                          {/* Indented for visual hierarchy */}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          {getWorkcenterName(r.workcenterId)}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          {r.qtyGood.toLocaleString()}{runStageOutputUOM && <span className="text-gray-500 ml-1 text-xs">({runStageOutputUOM})</span>}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          {(r.qtyScrap || 0).toLocaleString()}{runStageOutputUOM && <span className="text-gray-500 ml-1 text-xs">({runStageOutputUOM})</span>}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          {runStageOutputUOM || '-'}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          {r.lot || '-'}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          {r.operatorId}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
+                          {/* Future: edit/delete actions */}
+                        </td>
+                      </tr>
+                    )
+                  })
+                })
+
+                return rows.length > 0 ? rows : (
+                  <tr>
+                    <td colSpan={9} className="px-6 py-4 text-center text-sm text-gray-500">
+                      No production runs recorded yet.
+                    </td>
+                  </tr>
+                )
+              })()}
             </tbody>
           </table>
         </div>
@@ -1667,7 +1820,7 @@ const HistoryTab: FC<{ history: HistoryEvent[]; workflows: Workflow[] }> = ({ hi
     }
     return id
   }
-  const [typeFilter, setTypeFilter] = useState<'all' | 'stage_change'>('all')
+  const [typeFilter, setTypeFilter] = useState<'all' | 'stage_change' | 'status_change'>('all')
   return (
     <div className="space-y-4">
       <h3 className="text-lg font-medium text-gray-900">History ({history.length})</h3>
@@ -1680,10 +1833,11 @@ const HistoryTab: FC<{ history: HistoryEvent[]; workflows: Workflow[] }> = ({ hi
         >
           <option value="all">All</option>
           <option value="stage_change">Stage changes</option>
+          <option value="status_change">Status changes</option>
         </select>
       </div>
       <div className="space-y-3">
-        {history.filter(e => typeFilter === 'all' || e.type === 'stage_change').map((event) => (
+        {history.filter(e => typeFilter === 'all' || e.type === typeFilter).map((event) => (
           <div key={event.id} className="bg-white border border-gray-200 rounded-lg p-4">
             <div className="flex items-start justify-between">
               <div className="flex-1">
@@ -1704,7 +1858,19 @@ const HistoryTab: FC<{ history: HistoryEvent[]; workflows: Workflow[] }> = ({ hi
                     )}
                   </p>
                 )}
-                {event.type !== 'stage_change' && event.payload && (
+                {event.type === 'status_change' && (
+                  <p className="text-sm text-gray-800 mt-2">
+                    Status changed from <span className="font-medium">{event.payload?.previousStatus || 'unknown'}</span>
+                    {' '}to{' '}
+                    <span className="font-medium">{event.payload?.newStatus || 'unknown'}</span>
+                    {event.payload?.reason && (
+                      <>
+                        {' '}— <span className="text-gray-600">{event.payload.reason}</span>
+                      </>
+                    )}
+                  </p>
+                )}
+                {event.type !== 'stage_change' && event.type !== 'status_change' && event.payload && (
                   <div className="mt-2">
                     <pre className="text-xs text-gray-500 bg-gray-50 p-2 rounded">
                       {JSON.stringify(event.payload, null, 2)}
