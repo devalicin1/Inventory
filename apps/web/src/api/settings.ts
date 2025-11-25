@@ -4,10 +4,12 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDoc,
   getDocs,
   orderBy,
   query,
   serverTimestamp,
+  setDoc,
   updateDoc,
 } from 'firebase/firestore'
 
@@ -293,5 +295,58 @@ export async function initializeDefaultStockReasons(workspaceId: string): Promis
   // Create all default reasons
   for (const reason of defaultReasons) {
     await createStockReason(workspaceId, { ...reason, active: true })
+  }
+}
+
+// Report Settings functions
+export interface ReportSettings {
+  rawMaterialGroupIds: string[] // Group IDs that should be treated as raw materials
+  updatedAt?: any
+}
+
+const DEFAULT_REPORT_SETTINGS: ReportSettings = {
+  rawMaterialGroupIds: []
+}
+
+export async function getReportSettings(workspaceId: string): Promise<ReportSettings> {
+  try {
+    const docRef = doc(db, 'workspaces', workspaceId, 'settings', 'reports')
+    const docSnap = await getDoc(docRef)
+    
+    if (docSnap.exists()) {
+      const data = docSnap.data()
+      return {
+        rawMaterialGroupIds: data.rawMaterialGroupIds || [],
+        updatedAt: data.updatedAt
+      }
+    }
+    return DEFAULT_REPORT_SETTINGS
+  } catch (error) {
+    console.error('Error fetching report settings:', error)
+    return DEFAULT_REPORT_SETTINGS
+  }
+}
+
+export async function updateReportSettings(workspaceId: string, settings: Partial<ReportSettings>): Promise<void> {
+  try {
+    const docRef = doc(db, 'workspaces', workspaceId, 'settings', 'reports')
+    const docSnap = await getDoc(docRef)
+    
+    const settingsData: any = {
+      ...(docSnap.exists() ? docSnap.data() : DEFAULT_REPORT_SETTINGS),
+      ...settings,
+      updatedAt: serverTimestamp()
+    }
+    
+    if (docSnap.exists()) {
+      // Update existing document
+      await updateDoc(docRef, settingsData)
+    } else {
+      // Create new document
+      await setDoc(docRef, settingsData)
+    }
+  } catch (error) {
+    console.error('Error updating report settings:', error)
+    throw error
   }
 }

@@ -5,6 +5,7 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDoc,
   getDocs,
   orderBy,
   query,
@@ -15,6 +16,19 @@ import { getDownloadURL, ref, uploadBytes, deleteObject } from 'firebase/storage
 import { generateQRCodeDataURL } from '../utils/qrcode'
 import { generateBarcodeDataURL } from '../utils/barcode'
 import { sanitizeForFirestore, coerceNumberOrNull } from '../utils/sanitize'
+
+// Ticket interface (shared with production-jobs)
+export interface Ticket {
+  id: string
+  title: string
+  description?: string
+  assignees: string[]
+  status: 'open' | 'in_progress' | 'done' | 'cancelled'
+  dueDate?: Date
+  attachments: string[]
+  createdAt: any
+  updatedAt: any
+}
 
 export interface ProductInput {
   name: string
@@ -139,7 +153,6 @@ export async function createProduct(workspaceId: string, input: ProductInput): P
     cal: input.cal ?? null,
     tags: (input.tags ?? []).filter(Boolean),
     notes: input.notes ?? null,
-    qtyOnHand: 0,
     createdAt: now,
     updatedAt: now,
   }
@@ -207,8 +220,8 @@ export async function createProduct(workspaceId: string, input: ProductInput): P
   }
 
   // Seed initial stock if provided
+  const initialQty = Number(input.quantityBox || 0)
   try {
-    const initialQty = Number(input.quantityBox || 0)
     if (initialQty > 0) {
       await createStockTransaction({
         workspaceId,
@@ -231,7 +244,7 @@ export async function createProduct(workspaceId: string, input: ProductInput): P
     galleryUrls,
     qrUrl,
     barcodeUrl,
-    qtyOnHand: 0,
+    qtyOnHand: initialQty,
     totalValue: (input.quantityBox || 0) * (input.pricePerBox || 0),
   }
 }
@@ -243,9 +256,14 @@ export async function updateProduct(
 ): Promise<void> {
   const target = doc(db, 'workspaces', workspaceId, 'products', id)
 
+  // Get existing product data to preserve existing galleryUrls
+  const existingDoc = await getDoc(target)
+  const existingData = existingDoc.data() as Product | undefined
+  const existingGalleryUrls = existingData?.galleryUrls || []
+
   // Handle optional new images
   let imageUrl: string | undefined
-  const galleryUrls: string[] = []
+  const newGalleryUrls: string[] = []
 
   if (input.imageFile) {
     const imgRef = ref(storage, `workspaces/${workspaceId}/products/${id}/image`)
@@ -253,23 +271,32 @@ export async function updateProduct(
     await uploadBytes(imgRef, new Uint8Array(imgBytes), { contentType: input.imageFile.type || 'image/jpeg' })
     imageUrl = await getDownloadURL(imgRef)
   }
+
   if (input.imageFiles && input.imageFiles.length > 0) {
+    // Use timestamp-based naming to avoid conflicts
+    const timestamp = Date.now()
     for (let i = 0; i < input.imageFiles.length; i++) {
       const f = input.imageFiles[i]
-      const gRef = ref(storage, `workspaces/${workspaceId}/products/${id}/gallery/${i}`)
+      const gRef = ref(storage, `workspaces/${workspaceId}/products/${id}/gallery/${timestamp}_${i}`)
       const bytes = await f.arrayBuffer()
       await uploadBytes(gRef, new Uint8Array(bytes), { contentType: f.type || 'image/jpeg' })
-      galleryUrls.push(await getDownloadURL(gRef))
+      newGalleryUrls.push(await getDownloadURL(gRef))
     }
   }
+
+  // Merge existing galleryUrls with new ones
+  const mergedGalleryUrls = [...existingGalleryUrls, ...newGalleryUrls]
 
   // Recompute total value if price or quantity changed
   const totalValue = (Number(input.quantityBox) || 0) * (coerceNumberOrNull(input.pricePerBox) ?? 0)
 
+  // Remove File objects from input before sanitizing (they should not go to Firestore)
+  const { imageFile, imageFiles, ...restInput } = input
+
   const updatePayload = sanitizeForFirestore({
-    ...(input as any),
+    ...restInput,
     ...(imageUrl ? { imageUrl } : {}),
-    ...(galleryUrls.length ? { galleryUrls } : {}),
+    ...(newGalleryUrls.length > 0 ? { galleryUrls: mergedGalleryUrls } : {}),
     ...(input.quantityBox !== undefined || input.pricePerBox !== undefined
       ? { totalValue }
       : {}),
@@ -330,9 +357,60 @@ export async function deleteProductQr(
   productId: string
 ): Promise<void> {
   const qrRef = ref(storage, `workspaces/${workspaceId}/products/${productId}/qr.png`)
-  try { await deleteObject(qrRef) } catch {}
+  try { await deleteObject(qrRef) } catch { }
   await updateDoc(doc(db, 'workspaces', workspaceId, 'products', productId), {
     qrUrl: null,
     updatedAt: serverTimestamp(),
   } as any)
+}
+
+// ===== PRODUCT TICKETS =====
+
+export async function listProductTickets(workspaceId: string, productId: string): Promise<Ticket[]> {
+  try {
+    const ticketsCol = collection(db, 'workspaces', workspaceId, 'products', productId, 'tickets')
+    const qy = query(ticketsCol, orderBy('createdAt', 'desc'))
+    const snap = await getDocs(qy)
+    return snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as Ticket[]
+  } catch (error) {
+    console.error('Error fetching product tickets:', error)
+    return []
+  }
+}
+
+export async function createProductTicket(
+  workspaceId: string,
+  productId: string,
+  input: Omit<Ticket, 'id' | 'createdAt' | 'updatedAt'>
+): Promise<string> {
+  const col = collection(db, 'workspaces', workspaceId, 'products', productId, 'tickets')
+  const ref = await addDoc(col, {
+    ...input,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  } as any)
+  return ref.id
+}
+
+export async function updateProductTicket(
+  workspaceId: string,
+  productId: string,
+  ticketId: string,
+  input: Partial<Omit<Ticket, 'id' | 'createdAt' | 'updatedAt'>>
+): Promise<void> {
+  await updateDoc(
+    doc(db, 'workspaces', workspaceId, 'products', productId, 'tickets', ticketId),
+    {
+      ...input,
+      updatedAt: serverTimestamp(),
+    } as any
+  )
+}
+
+export async function deleteProductTicket(
+  workspaceId: string,
+  productId: string,
+  ticketId: string
+): Promise<void> {
+  await deleteDoc(doc(db, 'workspaces', workspaceId, 'products', productId, 'tickets', ticketId))
 }

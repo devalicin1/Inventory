@@ -85,7 +85,7 @@ export function DataTable<T extends Record<string, any>>({
                 >
                   {column.render 
                     ? column.render(item[column.key], item)
-                    : String(item[column.key] || '')
+                    : (item[column.key] != null && item[column.key] !== '' ? String(item[column.key]) : '-')
                   }
                 </td>
               ))}

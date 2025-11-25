@@ -18,7 +18,7 @@ import {
   setDoc,
 } from 'firebase/firestore'
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage'
-import { createStockTransaction } from './inventory'
+import { createStockTransaction, getProductByCode } from './inventory'
 import { generateQRCodeDataURL } from '../utils/qrcode'
 import { generateBarcodeDataURL } from '../utils/barcode'
 import { sanitizeForFirestore } from '../utils/sanitize'
@@ -229,6 +229,7 @@ export interface Consumption {
   userId: string
   at: any
   approved?: boolean
+  notes?: string
 }
 
 export interface Attachment {
@@ -338,7 +339,7 @@ export async function listJobs(
   try {
     // Build query constraints
     const constraints: any[] = []
-    
+
     // Apply filters first
     if (filters?.status && filters.status.length > 0) {
       constraints.push(where('status', 'in', filters.status))
@@ -361,25 +362,25 @@ export async function listJobs(
     if (filters?.dueBefore) {
       constraints.push(where('dueDate', '<=', filters.dueBefore))
     }
-    
+
     // Add ordering only if no array filters (which require composite index)
     if (!filters?.status?.length && !filters?.priority?.length) {
       constraints.push(orderBy('createdAt', 'desc'))
     }
-    
+
     if (pagination?.limit) {
       constraints.push(limit(pagination.limit))
     }
     if (pagination?.startAfter) {
       constraints.push(startAfter(pagination.startAfter))
     }
-    
+
     // Build final query
     const q = query(collection(db, 'workspaces', workspaceId, 'jobs'), ...constraints)
 
     const snap = await getDocs(q)
     const jobs = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as Job[]
-    
+
     return {
       jobs,
       lastDoc: snap.docs[snap.docs.length - 1] as DocumentSnapshot | undefined
@@ -409,7 +410,7 @@ export async function createJob(workspaceId: string, input: JobInput): Promise<J
 
   const jobsCol = collection(db, 'workspaces', workspaceId, 'jobs')
   const now = serverTimestamp()
-  
+
   const basePayload = {
     ...input,
     createdAt: now,
@@ -420,7 +421,7 @@ export async function createJob(workspaceId: string, input: JobInput): Promise<J
 
   const sanitized = sanitizeForFirestore(basePayload)
   console.log('createJob sanitized payload ->', sanitized)
-  
+
   let docRef
   try {
     docRef = await addDoc(jobsCol, sanitized as any)
@@ -432,7 +433,7 @@ export async function createJob(workspaceId: string, input: JobInput): Promise<J
   // Generate QR and Barcode for the job (optional, don't fail if it fails)
   let qrUrl: string | undefined
   let barcodeUrl: string | undefined
-  
+
   try {
     const qrData = await generateQRCodeDataURL(input.code || docRef.id)
     const barcodeData = await generateBarcodeDataURL(input.code || docRef.id)
@@ -496,6 +497,135 @@ export async function updateJob(
   await updateDoc(target, updatePayload as any)
 }
 
+// Helper function to calculate when threshold was met for a stage
+async function calculateThresholdMetAt(
+  workspaceId: string,
+  jobId: string,
+  stageId: string,
+  jobData: any
+): Promise<number | null> {
+  if (!stageId || !jobData) return null
+
+  try {
+    // Fetch all production runs to calculate previous stage output
+    const runsCol = collection(db, 'workspaces', workspaceId, 'jobs', jobId, 'productionRuns')
+    const allRunsSnap = await getDocs(query(runsCol, orderBy('at', 'asc')))
+    const allRuns = allRunsSnap.docs.map(d => ({ id: d.id, ...d.data() } as any))
+
+    // Get runs for this stage
+    const runs = allRuns.filter((r: any) => r.stageId === stageId)
+    if (runs.length === 0) return null
+
+    // Fetch workflow to get stage info for UOM conversion
+    const workflowsRef = collection(db, 'workspaces', workspaceId, 'workflows')
+    const workflowSnap = await getDoc(doc(workflowsRef, jobData.workflowId))
+    const workflow = workflowSnap.exists() ? workflowSnap.data() : null
+    const stageInfo = workflow?.stages?.find((s: any) => s.id === stageId)
+    const stageInputUOM = stageInfo?.inputUOM || ''
+    const stageOutputUOM = stageInfo?.outputUOM || ''
+    const numberUp = jobData.productionSpecs?.numberUp || 1
+
+    // Find previous stage from planned stages
+    const plannedStages: string[] = Array.isArray(jobData.plannedStageIds) ? jobData.plannedStageIds : []
+    const currentStageIndex = plannedStages.indexOf(stageId)
+    const previousStageId = currentStageIndex > 0 ? plannedStages[currentStageIndex - 1] : null
+
+    // Calculate planned quantity - use previous stage's output if available
+    let plannedQty: number
+    if (previousStageId) {
+      // Get previous stage info
+      const previousStageInfo = workflow?.stages?.find((s: any) => s.id === previousStageId)
+      const previousStageInputUOM = previousStageInfo?.inputUOM || ''
+      const previousStageOutputUOM = previousStageInfo?.outputUOM || ''
+
+      // Get previous stage runs
+      const previousStageRuns = allRuns.filter((r: any) => r.stageId === previousStageId)
+
+      // Convert previous stage runs to output UOM
+      const convertPreviousToOutputUOM = (qtyInInputUOM: number): number => {
+        if (previousStageInputUOM === 'sheets' && previousStageOutputUOM === 'cartoon' && numberUp > 0) {
+          return qtyInInputUOM * numberUp
+        }
+        return qtyInInputUOM
+      }
+
+      // Calculate previous stage total output (runs are already in output UOM after conversion)
+      const previousStageTotalOutput = previousStageRuns.reduce((sum: number, r: any) => {
+        return sum + Number(r.qtyGood || 0) // Already in output UOM
+      }, 0)
+
+      if (previousStageTotalOutput > 0) {
+        // Use previous stage output as planned quantity
+        // Convert to current stage output UOM if needed
+        if (previousStageOutputUOM === stageOutputUOM) {
+          plannedQty = previousStageTotalOutput
+        } else if (previousStageOutputUOM === 'cartoon' && stageOutputUOM === 'sheets' && numberUp > 0) {
+          plannedQty = previousStageTotalOutput / numberUp
+        } else if (previousStageOutputUOM === 'sheets' && stageOutputUOM === 'cartoon' && numberUp > 0) {
+          plannedQty = previousStageTotalOutput * numberUp
+        } else {
+          plannedQty = previousStageTotalOutput
+        }
+      } else {
+        // Fallback to original plan if no previous stage output
+        if (stageOutputUOM === 'cartoon') {
+          const boxQty = jobData.packaging?.plannedBoxes || 0
+          const pcsPerBox = jobData.packaging?.pcsPerBox || 1
+          plannedQty = boxQty * pcsPerBox
+        } else {
+          const bom = Array.isArray(jobData.bom) ? jobData.bom : []
+          const sheetItem = bom.find((item: any) => {
+            const uom = String(item.uom || '').toLowerCase()
+            return ['sht', 'sheet', 'sheets'].includes(uom)
+          })
+          plannedQty = sheetItem ? Number(sheetItem.qtyRequired || 0) : (jobData.output?.[0]?.qtyPlanned || Number(jobData.quantity || 0))
+        }
+      }
+    } else {
+      // First stage - use original planned quantity
+      if (stageOutputUOM === 'cartoon') {
+        const boxQty = jobData.packaging?.plannedBoxes || 0
+        const pcsPerBox = jobData.packaging?.pcsPerBox || 1
+        plannedQty = boxQty * pcsPerBox
+      } else {
+        const bom = Array.isArray(jobData.bom) ? jobData.bom : []
+        const sheetItem = bom.find((item: any) => {
+          const uom = String(item.uom || '').toLowerCase()
+          return ['sht', 'sheet', 'sheets'].includes(uom)
+        })
+        plannedQty = sheetItem ? Number(sheetItem.qtyRequired || 0) : (jobData.output?.[0]?.qtyPlanned || Number(jobData.quantity || 0))
+      }
+    }
+
+    const WASTAGE_THRESHOLD_LOWER = 400
+    const completionThreshold = Math.max(0, plannedQty - WASTAGE_THRESHOLD_LOWER)
+
+    // Calculate cumulative production and find when threshold was met
+    // Production runs are already stored in output UOM, so use directly
+    let cumulativeTotal = 0
+    for (const run of runs) {
+      const qtyGood = Number(run.qtyGood || 0) // Already in output UOM
+      cumulativeTotal += qtyGood
+
+      if (cumulativeTotal >= completionThreshold) {
+        // Threshold met at this run's timestamp
+        const runAt = run.at
+        if (runAt?.seconds) {
+          return runAt.seconds
+        } else if (runAt) {
+          // If it's a Date object
+          return Math.floor(new Date(runAt).getTime() / 1000)
+        }
+      }
+    }
+
+    return null
+  } catch (error) {
+    console.warn('calculateThresholdMetAt error:', error)
+    return null
+  }
+}
+
 export async function moveJobToStage(
   workspaceId: string,
   jobId: string,
@@ -544,6 +674,12 @@ export async function moveJobToStage(
     }
   }
 
+  // Calculate threshold met date for previous stage
+  let thresholdMetAt: number | null = null
+  if (previousStageId && newStageId !== previousStageId) {
+    thresholdMetAt = await calculateThresholdMetAt(workspaceId, jobId, previousStageId, jobData)
+  }
+
   // Update job stage
   batch.update(jobRef, {
     currentStageId: newStageId,
@@ -555,6 +691,10 @@ export async function moveJobToStage(
   const payload: any = { newStageId, previousStageId }
   if (typeof note === 'string' && note.trim().length > 0) {
     payload.note = note
+  }
+  // Add threshold met timestamp if available
+  if (thresholdMetAt !== null) {
+    payload.previousStageThresholdMetAt = thresholdMetAt
   }
   batch.set(historyRef, {
     at: serverTimestamp(),
@@ -596,7 +736,39 @@ export async function setJobStatus(
         } as any)
       }
     }
-    
+
+    // If moving to Blocked, emit a status_change history event
+    if (status === 'blocked' && prev && prev.status !== 'blocked') {
+      const historyRef = doc(collection(db, 'workspaces', workspaceId, 'jobs', jobId, 'history'))
+      await setDoc(historyRef, {
+        at: serverTimestamp(),
+        actorId: 'current-user', // TODO: Get from auth context
+        type: 'status_change',
+        payload: {
+          previousStatus: prev.status || 'unknown',
+          newStatus: 'blocked',
+          reason: blockReason || 'Job blocked',
+          blockReason: blockReason
+        },
+      } as any)
+    }
+
+    // If moving from Blocked to In Progress (Resume), emit a status_change history event
+    if (status === 'in_progress' && prev && prev.status === 'blocked') {
+      const historyRef = doc(collection(db, 'workspaces', workspaceId, 'jobs', jobId, 'history'))
+      await setDoc(historyRef, {
+        at: serverTimestamp(),
+        actorId: 'current-user', // TODO: Get from auth context
+        type: 'status_change',
+        payload: {
+          previousStatus: 'blocked',
+          newStatus: 'in_progress',
+          reason: 'Job resumed',
+          previousBlockReason: prev.blockReason
+        },
+      } as any)
+    }
+
     // If moving to Done, emit a status_change history event
     if (status === 'done' && prev && prev.status !== 'done') {
       const historyRef = doc(collection(db, 'workspaces', workspaceId, 'jobs', jobId, 'history'))
@@ -604,8 +776,8 @@ export async function setJobStatus(
         at: serverTimestamp(),
         actorId: 'system',
         type: 'status_change',
-        payload: { 
-          previousStatus: prev.status || 'unknown', 
+        payload: {
+          previousStatus: prev.status || 'unknown',
           newStatus: 'done',
           reason: 'job_completed'
         },
@@ -831,9 +1003,13 @@ export async function createConsumption(
   try {
     if ((input as any).approved) {
       await recalculateJobBomConsumption(workspaceId, jobId)
+      console.log('[createConsumption] BOM consumed values recalculated successfully')
+    } else {
+      console.log('[createConsumption] Consumption not approved, skipping BOM recalculation')
     }
   } catch (e) {
-    console.warn('createConsumption: bom recompute failed', e)
+    console.error('createConsumption: bom recompute failed', e)
+    // Don't throw - consumption is already created
   }
   return ref.id
 }
@@ -1026,6 +1202,103 @@ export async function listJobHistory(workspaceId: string, jobId: string): Promis
   }
 }
 
+// ===== OUTPUT RECORDING & BACKFLUSHING =====
+
+export async function recordJobOutput(
+  workspaceId: string,
+  jobId: string,
+  params: {
+    qtyOutput: number
+    autoConsumeMaterials: boolean
+    completeJob: boolean
+    stageId?: string
+    workcenterId?: string
+    lot?: string
+    notes?: string
+    userId?: string
+  }
+): Promise<void> {
+  const { qtyOutput, autoConsumeMaterials, completeJob, stageId, workcenterId, lot, notes, userId } = params
+  const currentUser = userId || 'current-user'
+
+  // 1. Fetch Job Data
+  const jobRef = doc(db, 'workspaces', workspaceId, 'jobs', jobId)
+  const jobSnap = await getDoc(jobRef)
+  if (!jobSnap.exists()) throw new Error('Job not found')
+  const job = jobSnap.data() as any
+
+  // 2. Create Stock Transaction for Output (Finished Goods)
+  // Only do this if we are recording a positive output quantity
+  if (qtyOutput > 0) {
+    // Look up product by SKU to get productId (Job doesn't have productId field)
+    const product = await getProductByCode(workspaceId, job.sku)
+    if (!product) {
+      throw new Error(`Product not found for SKU: ${job.sku}. Cannot record output.`)
+    }
+
+    await createStockTransaction({
+      workspaceId,
+      productId: product.id,
+      type: 'in',
+      qty: qtyOutput,
+      userId: currentUser,
+      reason: `Production output (${job.code})`,
+      reference: job.code,
+      // @ts-ignore
+      refs: { jobId, jobCode: job.code, stageId, workcenterId, lot, notes },
+    })
+  }
+
+  // 3. Backflushing (Auto-consume materials)
+  if (autoConsumeMaterials && qtyOutput > 0) {
+    try {
+      // Ensure we have a valid stageId (required by Consumption interface)
+      const validStageId = stageId || job.currentStageId
+      if (!validStageId) {
+        console.warn('Cannot perform backflushing: stageId is required but not available')
+      } else {
+        const plannedQty = Number(job.quantity || 0)
+        // Avoid division by zero
+        if (plannedQty > 0) {
+          const proportion = qtyOutput / plannedQty
+          const bom = Array.isArray(job.bom) ? job.bom : []
+
+          // Process each BOM item
+          for (const item of bom) {
+            const required = Number(item.qtyRequired || 0)
+            if (required > 0) {
+              const qtyToConsume = required * proportion
+
+              // Create consumption record (which triggers stock deduction)
+              await createConsumption(workspaceId, jobId, {
+                itemId: (item as any).itemId || (item as any).id, // Handle different BOM structures
+                sku: item.sku,
+                name: item.name,
+                qtyUsed: qtyToConsume,
+                uom: item.uom,
+                approved: true, // Auto-approved
+                userId: currentUser,
+                stageId: validStageId,
+                lot: '', // Backflushed items usually don't have specific lot tracking unless strict
+                notes: 'Auto-consumed (Backflush)',
+              })
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Backflushing failed:', error)
+      // We don't throw here to avoid rolling back the output recording, but we should probably alert the user
+      // For now, we log it. In a real app, we might want to return a warning.
+    }
+  }
+
+  // 4. Update Job Status if requested
+  if (completeJob) {
+    await setJobStatus(workspaceId, jobId, 'done')
+  }
+}
+
 // ===== PRODUCTION RUNS (ACTUAL OUTPUT) =====
 export async function listJobProductionRuns(workspaceId: string, jobId: string): Promise<ProductionRun[]> {
   try {
@@ -1070,7 +1343,7 @@ export async function createProductionRun(
 }
 
 // ===== HELPERS =====
-async function recalculateJobBomConsumption(workspaceId: string, jobId: string): Promise<void> {
+export async function recalculateJobBomConsumption(workspaceId: string, jobId: string): Promise<void> {
   const jobRef = doc(db, 'workspaces', workspaceId, 'jobs', jobId)
   const jobSnap = await getDoc(jobRef)
   if (!jobSnap.exists()) return
@@ -1079,21 +1352,96 @@ async function recalculateJobBomConsumption(workspaceId: string, jobId: string):
   if (bom.length === 0) return
 
   const consCol = collection(db, 'workspaces', workspaceId, 'jobs', jobId, 'consumptions')
+  // Get ALL consumptions (both approved and not approved) for debugging
+  const consSnapAll = await getDocs(consCol)
+  // Get approved consumptions for actual calculation
   const consSnap = await getDocs(query(consCol, where('approved', '==', true)))
-  const totalsByKey: Record<string, number> = {}
+  
+  console.log(`[recalculateJobBomConsumption] Job: ${jobId}, BOM items: ${bom.length}, Approved consumptions: ${consSnap.docs.length}, All consumptions: ${consSnapAll.docs.length}`)
+  
+  // Build multiple lookup maps for flexible matching
+  const totalsByItemId: Record<string, number> = {}
+  const totalsBySku: Record<string, number> = {}
+  const totalsByName: Record<string, number> = {}
+  // Special map for consumptions with empty SKU - match by name only
+  const totalsByNameNoSku: Record<string, number> = {}
+  
   consSnap.docs.forEach(d => {
     const r: any = d.data()
-    const key = String(r.itemId || r.sku)
-    totalsByKey[key] = (totalsByKey[key] || 0) + Number(r.qtyUsed || 0)
+    const qtyUsed = Number(r.qtyUsed || 0)
+    if (qtyUsed <= 0) return
+    
+    // Normalize keys (trim, lowercase for case-insensitive matching)
+    const itemId = r.itemId ? String(r.itemId).trim() : null
+    const sku = r.sku ? String(r.sku).trim().toLowerCase() : null
+    const name = r.name ? String(r.name).trim().toLowerCase().replace(/\s+/g, ' ') : null
+    
+    console.log(`[recalculateJobBomConsumption] Consumption: itemId=${itemId}, sku=${sku || '(empty)'}, name=${name}, qtyUsed=${qtyUsed}`)
+    
+    if (itemId) {
+      totalsByItemId[itemId] = (totalsByItemId[itemId] || 0) + qtyUsed
+    }
+    if (sku && sku !== '') {
+      totalsBySku[sku] = (totalsBySku[sku] || 0) + qtyUsed
+    }
+    if (name) {
+      totalsByName[name] = (totalsByName[name] || 0) + qtyUsed
+      // If SKU is empty/null, also add to special map for name-only matching
+      if (!sku || sku === '') {
+        totalsByNameNoSku[name] = (totalsByNameNoSku[name] || 0) + qtyUsed
+      }
+    }
   })
 
   const nextBom = bom.map(b => {
-    const key = String((b as any).itemId || b.sku)
-    const consumed = Number(totalsByKey[key] || 0)
-    return { ...b, consumed }
+    // Try multiple matching strategies
+    let consumed = 0
+    
+    // 1. Try itemId match (most reliable)
+    const bomItemId = (b as any).itemId ? String((b as any).itemId).trim() : null
+    const bomSku = b.sku ? String(b.sku).trim().toLowerCase() : null
+    const bomName = b.name ? String(b.name).trim().toLowerCase().replace(/\s+/g, ' ') : null
+    
+    console.log(`[recalculateJobBomConsumption] BOM item: itemId=${bomItemId || '(empty)'}, sku=${bomSku || '(empty)'}, name=${bomName || '(empty)'}`)
+    
+    if (bomItemId && totalsByItemId[bomItemId]) {
+      consumed = totalsByItemId[bomItemId]
+      console.log(`[recalculateJobBomConsumption] Matched by itemId: ${consumed}`)
+    } else {
+      // 2. Try SKU match (case-insensitive)
+      if (bomSku && bomSku !== '' && totalsBySku[bomSku]) {
+        consumed = totalsBySku[bomSku]
+        console.log(`[recalculateJobBomConsumption] Matched by SKU: ${consumed}`)
+      } else {
+        // 3. Try name match (case-insensitive, fallback)
+        if (bomName) {
+          // If BOM item has no SKU (or empty SKU), prioritize name-only matching
+          if ((!bomSku || bomSku === '') && totalsByNameNoSku[bomName]) {
+            consumed = totalsByNameNoSku[bomName]
+            console.log(`[recalculateJobBomConsumption] Matched by name (BOM no SKU): ${consumed}`)
+          } else if (totalsByNameNoSku[bomName]) {
+            // If consumption has no SKU but name matches, use it (even if BOM has SKU)
+            consumed = totalsByNameNoSku[bomName]
+            console.log(`[recalculateJobBomConsumption] Matched by name (consumption no SKU): ${consumed}`)
+          } else if (totalsByName[bomName]) {
+            // Otherwise use general name match
+            consumed = totalsByName[bomName]
+            console.log(`[recalculateJobBomConsumption] Matched by name: ${consumed}`)
+          } else {
+            console.log(`[recalculateJobBomConsumption] No match found for BOM item`)
+            // Debug: show what we're looking for
+            console.log(`[recalculateJobBomConsumption] Looking for: name="${bomName}", available names:`, Object.keys(totalsByName))
+            console.log(`[recalculateJobBomConsumption] Available names (no SKU):`, Object.keys(totalsByNameNoSku))
+          }
+        }
+      }
+    }
+    
+    return { ...b, consumed: Number(consumed) }
   })
 
   await updateDoc(jobRef, { bom: nextBom, updatedAt: serverTimestamp() })
+  console.log(`[recalculateJobBomConsumption] Updated BOM with consumed values`)
 }
 
 // ===== CUSTOMER MANAGEMENT =====

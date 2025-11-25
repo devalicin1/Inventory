@@ -82,14 +82,19 @@ export function Reports() {
       <div className="bg-white rounded-lg border border-gray-200">
         <div className="p-6">
           {/* Report Description */}
-          <div className="mb-6">
-            <h2 className="text-lg font-semibold text-gray-900">
-              {reportTabs.find(tab => tab.id === activeTab)?.name}
-            </h2>
-            <p className="text-sm text-gray-500 mt-1">
-              {reportTabs.find(tab => tab.id === activeTab)?.description}
-            </p>
-          </div>
+          {(() => {
+            const activeReport = reportTabs.find(tab => tab.id === activeTab)
+            return (
+              <div className="mb-6">
+                <h2 className="text-lg font-semibold text-gray-900">
+                  {activeReport?.name || 'Report'}
+                </h2>
+                <p className="text-sm text-gray-500 mt-1">
+                  {activeReport?.description || 'View detailed inventory reports and analytics'}
+                </p>
+              </div>
+            )
+          })()}
 
           {/* Report Content */}
           {activeTab === 'stock-on-hand' && (

@@ -17,7 +17,7 @@ const db = getFirestore(app)
 
 async function seedDemoData() {
   const workspaceId = 'demo-workspace'
-  const userId = 'demo-user'
+  const userId = 'demo-user-123' // Match the userId from App.tsx
 
   console.log('Seeding demo data...')
 
@@ -197,9 +197,89 @@ async function seedDemoData() {
       })
     }
 
+    // Create demo tasks
+    const tasks = [
+      {
+        id: 'task-1',
+        title: 'Cut materials for Widget A',
+        description: 'Cut 100 pieces of material according to specifications',
+        workflowId: 'wf-1',
+        stageId: 'open',
+        assigneeId: userId,
+        assigneeName: 'John Doe',
+        priority: 'high',
+        dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days from now
+        status: 'Open',
+        links: { productId: 'prod-1' }
+      },
+      {
+        id: 'task-2',
+        title: 'Assemble Widget B components',
+        description: 'Assemble 50 units of Widget B',
+        workflowId: 'wf-1',
+        stageId: 'progress',
+        assigneeId: userId,
+        assigneeName: 'John Doe',
+        priority: 'med',
+        dueDate: new Date(Date.now() + 10 * 24 * 60 * 60 * 1000), // 10 days from now
+        status: 'InProgress',
+        links: { productId: 'prod-2' }
+      },
+      {
+        id: 'task-3',
+        title: 'Quality check Widget A',
+        description: 'Perform quality inspection on completed Widget A units',
+        workflowId: 'wf-1',
+        stageId: 'blocked',
+        assigneeId: userId,
+        assigneeName: 'John Doe',
+        priority: 'urgent',
+        dueDate: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000), // 2 days from now
+        status: 'Blocked',
+        links: { productId: 'prod-1' }
+      },
+      {
+        id: 'task-4',
+        title: 'Package completed items',
+        description: 'Package and label completed Widget B units',
+        workflowId: 'wf-1',
+        stageId: 'done',
+        assigneeId: userId,
+        assigneeName: 'John Doe',
+        priority: 'low',
+        dueDate: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000), // 2 days ago
+        status: 'Done',
+        links: { productId: 'prod-2' }
+      },
+      {
+        id: 'task-5',
+        title: 'Prepare materials for next production run',
+        description: 'Gather and prepare all materials needed for upcoming production batch',
+        workflowId: 'wf-1',
+        stageId: 'open',
+        assigneeId: userId,
+        assigneeName: 'John Doe',
+        priority: 'med',
+        dueDate: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000), // 5 days from now
+        status: 'Open',
+        links: {}
+      }
+    ]
+
+    for (const task of tasks) {
+      await setDoc(doc(db, 'workspaces', workspaceId, 'tasks', task.id), {
+        ...task,
+        workspaceId,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        createdBy: userId
+      })
+    }
+
     console.log('Demo data seeded successfully!')
     console.log('Workspace ID:', workspaceId)
     console.log('User ID:', userId)
+    console.log(`Created ${tasks.length} demo tasks`)
 
   } catch (error) {
     console.error('Error seeding data:', error)

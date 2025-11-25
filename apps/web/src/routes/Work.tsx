@@ -1,30 +1,15 @@
-import { useState, type FC } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import React, { useState, type FC } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { KanbanBoard } from '../components/KanbanBoard'
 import { DataTable } from '../components/DataTable'
-import { listMyTasks } from '../api/work'
+import { listMyTasks, updateTask, createTask, completeTask, type Task, type TaskInput } from '../api/work'
+import { useSessionStore } from '../state/sessionStore'
 import { 
   PlusIcon, 
   ViewColumnsIcon,
-  Squares2X2Icon
+  Squares2X2Icon,
+  XMarkIcon
 } from '@heroicons/react/24/outline'
-
-interface Task {
-  id: string
-  title: string
-  description?: string
-  workflowId: string
-  stageId: string
-  assigneeId?: string
-  assigneeName?: string
-  priority: 'low' | 'med' | 'high' | 'urgent'
-  dueDate?: string
-  status: 'Open' | 'InProgress' | 'Blocked' | 'Done'
-  links?: {
-    productId?: string
-    poId?: string
-  }
-}
 
 interface Stage {
   id: string
@@ -37,16 +22,27 @@ interface Stage {
 export function Work() {
   const [view, setView] = useState<'board' | 'list'>('board')
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
+  const [showCreateForm, setShowCreateForm] = useState(false)
+  const queryClient = useQueryClient()
+  const { workspaceId, userId } = useSessionStore()
 
-  // Mock workspace ID - in real app, get from context
-  const workspaceId = 'demo-workspace'
-  const userId = 'demo-user'
-
-  // Mock data - in real app, fetch from Firestore
-  const { data: tasks = [], isLoading } = useQuery({
+  // Fetch tasks from Firestore
+  const { data: tasks = [], isLoading, error } = useQuery({
     queryKey: ['myTasks', workspaceId, userId],
-    queryFn: () => listMyTasks(workspaceId, userId),
+    queryFn: () => listMyTasks(workspaceId || '', userId || ''),
+    enabled: !!workspaceId && !!userId,
   })
+
+  // Debug logging
+  React.useEffect(() => {
+    if (workspaceId && userId) {
+      console.log('Work component - workspaceId:', workspaceId, 'userId:', userId)
+      console.log('Work component - tasks:', tasks.length, 'isLoading:', isLoading)
+      if (error) {
+        console.error('Work component - error:', error)
+      }
+    }
+  }, [workspaceId, userId, tasks.length, isLoading, error])
 
   const stages: Stage[] = [
     { id: 'open', name: 'Open', color: 'bg-gray-100' },
@@ -55,9 +51,85 @@ export function Work() {
     { id: 'done', name: 'Done', color: 'bg-green-100', isTerminal: true },
   ]
 
-  const handleTaskMove = (taskId: string, newStageId: string) => {
-    console.log('Move task', taskId, 'to stage', newStageId)
-    // In real app, update task in Firestore
+  const handleTaskMove = async (taskId: string, newStageId: string) => {
+    if (!workspaceId) return
+
+    try {
+      await updateTask(workspaceId, taskId, { stageId: newStageId })
+      // Invalidate and refetch tasks
+      queryClient.invalidateQueries({ queryKey: ['myTasks', workspaceId, userId] })
+    } catch (error) {
+      console.error('Failed to move task:', error)
+      alert('Failed to move task. Please try again.')
+    }
+  }
+
+  const handleCreateDemoTasks = async () => {
+    if (!workspaceId || !userId) return
+
+    const demoTasks: TaskInput[] = [
+      {
+        title: 'Cut materials for Widget A',
+        description: 'Cut 100 pieces of material according to specifications',
+        workflowId: 'wf-1',
+        stageId: 'open',
+        assigneeId: userId,
+        assigneeName: 'John Doe',
+        priority: 'high',
+        dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days from now
+      },
+      {
+        title: 'Assemble Widget B components',
+        description: 'Assemble 50 units of Widget B',
+        workflowId: 'wf-1',
+        stageId: 'progress',
+        assigneeId: userId,
+        assigneeName: 'John Doe',
+        priority: 'med',
+        dueDate: new Date(Date.now() + 10 * 24 * 60 * 60 * 1000), // 10 days from now
+      },
+      {
+        title: 'Quality check Widget A',
+        description: 'Perform quality inspection on completed Widget A units',
+        workflowId: 'wf-1',
+        stageId: 'blocked',
+        assigneeId: userId,
+        assigneeName: 'John Doe',
+        priority: 'urgent',
+        dueDate: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000), // 2 days from now
+      },
+      {
+        title: 'Package completed items',
+        description: 'Package and label completed Widget B units',
+        workflowId: 'wf-1',
+        stageId: 'done',
+        assigneeId: userId,
+        assigneeName: 'John Doe',
+        priority: 'low',
+        dueDate: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000), // 2 days ago
+      },
+      {
+        title: 'Prepare materials for next production run',
+        description: 'Gather and prepare all materials needed for upcoming production batch',
+        workflowId: 'wf-1',
+        stageId: 'open',
+        assigneeId: userId,
+        assigneeName: 'John Doe',
+        priority: 'med',
+        dueDate: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000), // 5 days from now
+      }
+    ]
+
+    try {
+      for (const task of demoTasks) {
+        await createTask(workspaceId, task)
+      }
+      queryClient.invalidateQueries({ queryKey: ['myTasks', workspaceId, userId] })
+      alert('Demo tasks created successfully!')
+    } catch (error) {
+      console.error('Failed to create demo tasks:', error)
+      alert('Failed to create demo tasks. Please try again.')
+    }
   }
 
   const getPriorityColor = (priority: string) => {
@@ -152,10 +224,21 @@ export function Work() {
                   List
                 </button>
               </div>
-              <button className="ml-3 inline-flex items-center rounded-md bg-green-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-green-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-green-600">
+              <button 
+                onClick={() => setShowCreateForm(true)}
+                className="ml-3 inline-flex items-center rounded-md bg-green-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-green-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-green-600"
+              >
                 <PlusIcon className="-ml-0.5 mr-1.5 h-5 w-5" />
                 New Task
               </button>
+              {tasks.length === 0 && (
+                <button 
+                  onClick={handleCreateDemoTasks}
+                  className="ml-3 inline-flex items-center rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+                >
+                  Create Demo Tasks
+                </button>
+              )}
             </div>
           </div>
 
@@ -184,7 +267,26 @@ export function Work() {
         </div>
       </div>
 
-      {view === 'board' ? (
+      {tasks.length === 0 ? (
+        <div className="bg-white rounded-lg border border-gray-100 shadow-sm p-12 text-center">
+          <div className="mx-auto h-12 w-12 text-gray-400 mb-4">
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" className="h-12 w-12">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+            </svg>
+          </div>
+          <h3 className="text-lg font-medium text-gray-900 mb-2">No tasks found</h3>
+          <p className="text-sm text-gray-500 mb-6">
+            You don't have any tasks assigned yet. Create your first task to get started!
+          </p>
+          <button
+            onClick={() => setShowCreateForm(true)}
+            className="inline-flex items-center rounded-md bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-green-500"
+          >
+            <PlusIcon className="-ml-0.5 mr-1.5 h-5 w-5" />
+            Create Your First Task
+          </button>
+        </div>
+      ) : view === 'board' ? (
         <div className="bg-white rounded-lg border border-gray-100 shadow-sm p-4">
           <KanbanBoard
             tasks={tasks}
@@ -206,7 +308,23 @@ export function Work() {
       {selectedTask && (
         <TaskDetail
           task={selectedTask}
+          workspaceId={workspaceId || ''}
           onClose={() => setSelectedTask(null)}
+          onUpdate={() => {
+            queryClient.invalidateQueries({ queryKey: ['myTasks', workspaceId, userId] })
+          }}
+        />
+      )}
+
+      {showCreateForm && (
+        <CreateTaskForm
+          workspaceId={workspaceId || ''}
+          userId={userId || ''}
+          onClose={() => setShowCreateForm(false)}
+          onCreated={() => {
+            queryClient.invalidateQueries({ queryKey: ['myTasks', workspaceId, userId] })
+            setShowCreateForm(false)
+          }}
         />
       )}
     </div>
@@ -214,17 +332,33 @@ export function Work() {
   )
 }
 
-type TaskDetailProps = { task: Task; onClose: () => void }
+type TaskDetailProps = { 
+  task: Task
+  workspaceId: string
+  onClose: () => void
+  onUpdate: () => void
+}
 
 const TaskDetail: FC<TaskDetailProps> = (props) => {
-  const { task, onClose } = props
+  const { task, workspaceId, onClose, onUpdate } = props
   const [produceQty, setProduceQty] = useState(0)
   const [consumeQty, setConsumeQty] = useState(0)
+  const [isCompleting, setIsCompleting] = useState(false)
 
-  const handleComplete = () => {
-    console.log('Complete task', task.id, { produceQty, consumeQty })
-    // In real app, call completeTask function
-    onClose()
+  const handleComplete = async () => {
+    if (!workspaceId) return
+
+    setIsCompleting(true)
+    try {
+      await completeTask(workspaceId, task.id, produceQty, consumeQty)
+      onUpdate()
+      onClose()
+    } catch (error) {
+      console.error('Failed to complete task:', error)
+      alert('Failed to complete task. Please try again.')
+    } finally {
+      setIsCompleting(false)
+    }
   }
 
   return (
@@ -291,9 +425,10 @@ const TaskDetail: FC<TaskDetailProps> = (props) => {
         <div className="flex gap-2 mt-6">
           <button
             onClick={handleComplete}
-            className="flex-1 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
+            disabled={isCompleting}
+            className="flex-1 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Complete Task
+            {isCompleting ? 'Completing...' : 'Complete Task'}
           </button>
           <button
             onClick={onClose}
@@ -302,6 +437,152 @@ const TaskDetail: FC<TaskDetailProps> = (props) => {
             Close
           </button>
         </div>
+      </div>
+    </div>
+  )
+}
+
+type CreateTaskFormProps = {
+  workspaceId: string
+  userId: string
+  onClose: () => void
+  onCreated: () => void
+}
+
+const CreateTaskForm: FC<CreateTaskFormProps> = ({ workspaceId, userId, onClose, onCreated }) => {
+  const [formData, setFormData] = useState<TaskInput>({
+    title: '',
+    description: '',
+    workflowId: 'production',
+    stageId: 'open',
+    assigneeId: userId,
+    assigneeName: 'Current User',
+    priority: 'med',
+    dueDate: undefined,
+  })
+  const [isSubmitting, setIsSubmitting] = useState(false)
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!formData.title.trim()) {
+      alert('Please enter a task title')
+      return
+    }
+
+    setIsSubmitting(true)
+    try {
+      await createTask(workspaceId, formData)
+      onCreated()
+    } catch (error) {
+      console.error('Failed to create task:', error)
+      alert('Failed to create task. Please try again.')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black bg-opacity-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-lg p-6 max-w-lg w-full max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold">Create New Task</h3>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600"
+          >
+            <XMarkIcon className="h-5 w-5" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Title *
+            </label>
+            <input
+              type="text"
+              value={formData.title}
+              onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+              className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Description
+            </label>
+            <textarea
+              value={formData.description}
+              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+              rows={3}
+              className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Priority
+              </label>
+              <select
+                value={formData.priority}
+                onChange={(e) => setFormData({ ...formData, priority: e.target.value as any })}
+                className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+              >
+                <option value="low">Low</option>
+                <option value="med">Medium</option>
+                <option value="high">High</option>
+                <option value="urgent">Urgent</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Initial Stage
+              </label>
+              <select
+                value={formData.stageId}
+                onChange={(e) => setFormData({ ...formData, stageId: e.target.value })}
+                className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+              >
+                <option value="open">Open</option>
+                <option value="progress">In Progress</option>
+                <option value="blocked">Blocked</option>
+                <option value="done">Done</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Due Date
+            </label>
+            <input
+              type="date"
+              value={formData.dueDate ? (typeof formData.dueDate === 'string' ? formData.dueDate : new Date(formData.dueDate).toISOString().split('T')[0]) : ''}
+              onChange={(e) => setFormData({ ...formData, dueDate: e.target.value || undefined })}
+              className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+            />
+          </div>
+
+          <div className="flex gap-2 mt-6">
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className="flex-1 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isSubmitting ? 'Creating...' : 'Create Task'}
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 bg-gray-300 text-gray-700 rounded hover:bg-gray-400"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   )

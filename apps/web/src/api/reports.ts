@@ -1,6 +1,7 @@
-// import { db } from '../lib/firebase'
-// import { collection, getDocs, query, orderBy, where, limit } from 'firebase/firestore'
-import { listProducts } from './inventory'
+import { db } from '../lib/firebase'
+import { collection, getDocs, query, orderBy, where, limit } from 'firebase/firestore'
+import { listProducts, listProductStockTxns } from './inventory'
+import { getReportSettings } from './settings'
 
 // Types for report data
 export interface StockOnHandRow {
@@ -142,17 +143,156 @@ function calculateDaysBetween(date1: Date, date2: Date): number {
   return Math.floor((date2.getTime() - date1.getTime()) / (1000 * 60 * 60 * 24))
 }
 
-// function calculateStandardDeviation(values: number[]): number {
-//   const mean = values.reduce((sum, val) => sum + val, 0) / values.length
-//   const variance = values.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / values.length
-//   return Math.sqrt(variance)
-// }
+function calculateStandardDeviation(values: number[]): number {
+  if (values.length === 0) return 0
+  const mean = values.reduce((sum, val) => sum + val, 0) / values.length
+  const variance = values.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / values.length
+  return Math.sqrt(variance)
+}
 
 function getAgingBucket(daysOnHand: number): string {
   if (daysOnHand <= 30) return '0-30'
   if (daysOnHand <= 60) return '31-60'
   if (daysOnHand <= 90) return '61-90'
   return '90+'
+}
+
+// Helper: Clean product name to fix encoding issues
+function cleanProductName(name: string | null | undefined): string {
+  if (!name) return 'Unnamed Product'
+  let cleaned = String(name)
+    .replace(/\uFFFD/g, '') // Remove replacement characters ()
+    .replace(/\u0000/g, '') // Remove null characters
+    .trim()
+  
+  // Remove question marks that appear between numbers/words (likely encoding errors)
+  cleaned = cleaned.replace(/\s+\?\s+/g, ' ') // Remove " ? " patterns
+  cleaned = cleaned.replace(/(\d)\s+\?(\s+\d)/g, '$1$2') // Remove " ? " between numbers
+  cleaned = cleaned.replace(/(\w)\s+\?(\s+\w)/g, '$1$2') // Remove " ? " between words
+  cleaned = cleaned.replace(/\s+\?/g, '') // Remove trailing " ?"
+  cleaned = cleaned.replace(/\?\s+/g, '') // Remove leading "? "
+  cleaned = cleaned.replace(/\s+/g, ' ') // Normalize multiple spaces to single space
+  cleaned = cleaned.trim()
+  
+  return cleaned || 'Unnamed Product'
+}
+
+// Helper: Calculate average daily demand from transaction history
+async function calculateAvgDailyDemand(
+  workspaceId: string,
+  productId: string,
+  days: number = 90
+): Promise<number> {
+  try {
+    const txns = await listProductStockTxns(workspaceId, productId, 1000)
+    const cutoffDate = new Date()
+    cutoffDate.setDate(cutoffDate.getDate() - days)
+    
+    // Filter Ship transactions (outgoing) from last N days
+    const shipTxns = txns.filter(txn => {
+      const txnDate = txn.timestamp?.toDate?.() || new Date(txn.timestamp)
+      return txn.type === 'Ship' && txnDate >= cutoffDate && txn.qty < 0
+    })
+    
+    if (shipTxns.length === 0) return 0
+    
+    // Calculate total units shipped
+    const totalShipped = shipTxns.reduce((sum, txn) => sum + Math.abs(txn.qty || 0), 0)
+    
+    // Calculate average daily demand
+    const actualDays = Math.max(1, days) // At least 1 day
+    return totalShipped / actualDays
+  } catch (error) {
+    console.error(`Error calculating avg daily demand for product ${productId}:`, error)
+    return 0
+  }
+}
+
+// Helper: Find first receipt date from transaction history
+async function getFirstReceiptDate(
+  workspaceId: string,
+  productId: string
+): Promise<Date | null> {
+  try {
+    const txns = await listProductStockTxns(workspaceId, productId, 1000)
+    
+    // Find first Receive transaction
+    const receiveTxns = txns.filter(txn => txn.type === 'Receive' && txn.qty > 0)
+    
+    if (receiveTxns.length === 0) return null
+    
+    // Get earliest receipt date
+    const dates = receiveTxns
+      .map(txn => txn.timestamp?.toDate?.() || new Date(txn.timestamp))
+      .filter(date => !isNaN(date.getTime()))
+    
+    if (dates.length === 0) return null
+    
+    return new Date(Math.min(...dates.map(d => d.getTime())))
+  } catch (error) {
+    console.error(`Error finding first receipt date for product ${productId}:`, error)
+    return null
+  }
+}
+
+// Helper: Calculate average unit cost from transaction history
+async function calculateAvgUnitCost(
+  workspaceId: string,
+  productId: string
+): Promise<number> {
+  try {
+    const txns = await listProductStockTxns(workspaceId, productId, 1000)
+    
+    // Get Receive transactions with unitCost
+    const receiveTxns = txns.filter(txn => {
+      const txnData = txn as any
+      return txn.type === 'Receive' && txn.qty > 0 && txnData.unitCost != null
+    })
+    
+    if (receiveTxns.length === 0) return 0
+    
+    // Calculate weighted average unit cost
+    let totalCost = 0
+    let totalQty = 0
+    
+    receiveTxns.forEach(txn => {
+      const txnData = txn as any
+      const qty = Math.abs(txn.qty || 0)
+      const cost = Number(txnData.unitCost || 0)
+      if (qty > 0 && cost > 0) {
+        totalCost += cost * qty
+        totalQty += qty
+      }
+    })
+    
+    return totalQty > 0 ? totalCost / totalQty : 0
+  } catch (error) {
+    console.error(`Error calculating avg unit cost for product ${productId}:`, error)
+    return 0
+  }
+}
+
+// Helper function to filter out raw materials based on report settings
+async function filterRawMaterials(workspaceId: string, products: any[]): Promise<any[]> {
+  try {
+    const reportSettings = await getReportSettings(workspaceId)
+    const rawMaterialGroupIds = reportSettings.rawMaterialGroupIds || []
+    
+    if (rawMaterialGroupIds.length === 0) {
+      // If no settings, fall back to boardType check
+      return products.filter(product => !(product as any).boardType)
+    }
+    
+    // Filter out products that belong to raw material groups
+    return products.filter(product => {
+      const productGroupId = (product as any).groupId
+      return !productGroupId || !rawMaterialGroupIds.includes(productGroupId)
+    })
+  } catch (error) {
+    console.error('Error filtering raw materials:', error)
+    // Fallback to boardType check on error
+    return products.filter(product => !(product as any).boardType)
+  }
 }
 
 // Stock On-Hand Report
@@ -162,25 +302,30 @@ export async function getStockOnHandReport(
 ): Promise<StockOnHandRow[]> {
   const products = await listProducts(workspaceId)
   
-  // For now, we'll use mock data since we don't have all the required fields
-  // In a real implementation, you'd calculate these from actual transaction data
-  return products.map(product => {
+  // Filter out raw materials based on report settings
+  const finishedProducts = await filterRawMaterials(workspaceId, products)
+  
+  // Calculate report data for each product using real transaction data
+  const reportData = await Promise.all(finishedProducts.map(async product => {
     const soh = product.qtyOnHand || 0
-    const allocated = 0 // Not implemented yet
+    const allocated = 0 // Not implemented yet - would come from order allocation system
     const available = soh - allocated
-    const onPO = 0 // Not implemented yet
+    const onPO = 0 // Not implemented yet - would come from purchase order system
     const min = product.minStock || 0
-    const max = (product as any).maxStock || min * 3 // Default to 3x min
-    const safety = (product as any).safetyStock || min * 0.5 // Default to 50% of min
-    const avgDailyDemand = 1 // Mock value - would calculate from sales history
+    const max = (product as any).maxStock || (min > 0 ? min * 3 : 0) // Default to 3x min if min exists
+    const safety = (product as any).safetyStock || (min > 0 ? min * 0.5 : 0) // Default to 50% of min
+    
+    // Calculate average daily demand from actual transaction history
+    const avgDailyDemand = await calculateAvgDailyDemand(workspaceId, product.id, 90)
+    
     const leadTime = (product as any).leadTimeDays || 7 // Default 7 days
     const reorderPoint = safety + avgDailyDemand * leadTime
-    const daysOfCover = avgDailyDemand > 0 ? available / avgDailyDemand : 0
+    const daysOfCover = avgDailyDemand > 0 ? available / avgDailyDemand : (available > 0 ? 999 : 0)
     
     return {
-      sku: product.sku,
-      productName: product.name,
-      location: 'Main Warehouse', // Default location
+      sku: product.sku || '-',
+      productName: cleanProductName(product.name),
+      location: 'Main Warehouse', // Default location - could be enhanced to track multiple locations
       soh,
       allocated,
       available,
@@ -190,12 +335,14 @@ export async function getStockOnHandReport(
       safety,
       reorderPoint,
       daysOfCover,
-      lowStock: available <= reorderPoint,
-      overStock: soh > max,
-      category: product.category,
-      supplier: (product as any).supplier
+      lowStock: available <= reorderPoint && reorderPoint > 0,
+      overStock: max > 0 && soh > max,
+      category: product.category || undefined,
+      supplier: (product as any).supplier || undefined
     }
-  })
+  }))
+  
+  return reportData
 }
 
 // Inventory Aging Report
@@ -205,19 +352,46 @@ export async function getInventoryAgingReport(
 ): Promise<InventoryAgingRow[]> {
   const products = await listProducts(workspaceId)
   
-  // Mock data - in real implementation, would calculate from transaction history
-  return products.map(product => {
+  // Filter out raw materials based on report settings
+  const finishedProducts = await filterRawMaterials(workspaceId, products)
+  
+  // Calculate aging data from actual transaction history
+  const reportData = await Promise.all(finishedProducts.map(async product => {
     const soh = product.qtyOnHand || 0
-    const firstReceiptDate = new Date(Date.now() - Math.random() * 365 * 24 * 60 * 60 * 1000) // Random date within last year
+    
+    // Get first receipt date from transaction history
+    const firstReceiptDateObj = await getFirstReceiptDate(workspaceId, product.id)
+    const firstReceiptDate = firstReceiptDateObj || new Date() // Fallback to today if no receipt found
     const daysOnHand = calculateDaysBetween(firstReceiptDate, new Date())
     const agingBucket = getAgingBucket(daysOnHand)
-    const unitCost = (product as any).unitCost || 10 // Mock unit cost
+    
+    // Calculate average unit cost from transaction history
+    const unitCost = await calculateAvgUnitCost(workspaceId, product.id) || (product as any).unitCost || 0
     const value = soh * unitCost
-    const deadStock = daysOnHand >= 90 && Math.random() > 0.5 // Mock dead stock flag
+    
+    // Dead stock: items older than 90 days with no recent sales (no Ship transactions in last 30 days)
+    let deadStock = false
+    if (daysOnHand >= 90 && soh > 0) {
+      try {
+        const txns = await listProductStockTxns(workspaceId, product.id, 100)
+        const thirtyDaysAgo = new Date()
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
+        
+        const recentShipments = txns.filter(txn => {
+          const txnDate = txn.timestamp?.toDate?.() || new Date(txn.timestamp)
+          return txn.type === 'Ship' && txnDate >= thirtyDaysAgo && txn.qty < 0
+        })
+        
+        deadStock = recentShipments.length === 0
+      } catch (error) {
+        // If error checking, assume not dead stock
+        deadStock = false
+      }
+    }
     
     return {
-      sku: product.sku,
-      product: product.name,
+      sku: product.sku || '-',
+      product: cleanProductName(product.name),
       firstReceiptDate: firstReceiptDate.toISOString().split('T')[0],
       daysOnHand,
       agingBucket,
@@ -226,7 +400,9 @@ export async function getInventoryAgingReport(
       value,
       deadStock
     }
-  })
+  }))
+  
+  return reportData
 }
 
 // Replenishment Suggestions Report
@@ -236,24 +412,68 @@ export async function getReplenishmentReport(
 ): Promise<ReplenishmentRow[]> {
   const products = await listProducts(workspaceId)
   
-  return products.map(product => {
+  // Filter out raw materials based on report settings
+  const finishedProducts = await filterRawMaterials(workspaceId, products)
+  
+  // Calculate replenishment suggestions using real demand data
+  const reportData = await Promise.all(finishedProducts.map(async product => {
     const soh = product.qtyOnHand || 0
-    const avgDailyDemand = Math.random() * 5 + 1 // Mock daily demand
+    
+    // Calculate average daily demand from actual transaction history
+    const avgDailyDemand = await calculateAvgDailyDemand(workspaceId, product.id, 90)
+    
     const leadTime = (product as any).leadTimeDays || 7
     const reviewPeriod = (product as any).reviewPeriodDays || 7
-    const demandStdDev = avgDailyDemand * 0.3 // Mock standard deviation
-    const safety = 1.65 * demandStdDev * Math.sqrt(leadTime + reviewPeriod) // 95% service level
+    
+    // Calculate demand standard deviation from historical data
+    let demandStdDev = avgDailyDemand * 0.3 // Default to 30% of average
+    try {
+      const txns = await listProductStockTxns(workspaceId, product.id, 1000)
+      const cutoffDate = new Date()
+      cutoffDate.setDate(cutoffDate.getDate() - 90)
+      
+      // Get daily shipments for last 90 days
+      const dailyShipments: Record<string, number> = {}
+      txns.filter(txn => {
+        const txnDate = txn.timestamp?.toDate?.() || new Date(txn.timestamp)
+        return txn.type === 'Ship' && txnDate >= cutoffDate && txn.qty < 0
+      }).forEach(txn => {
+        const txnDate = txn.timestamp?.toDate?.() || new Date(txn.timestamp)
+        const dateKey = txnDate.toISOString().split('T')[0]
+        dailyShipments[dateKey] = (dailyShipments[dateKey] || 0) + Math.abs(txn.qty || 0)
+      })
+      
+      const dailyValues = Object.values(dailyShipments)
+      if (dailyValues.length > 1) {
+        demandStdDev = calculateStandardDeviation(dailyValues)
+      }
+    } catch (error) {
+      // Use default if calculation fails
+    }
+    
+    // Calculate safety stock using 95% service level (z-score = 1.65)
+    const safety = 1.65 * demandStdDev * Math.sqrt(leadTime + reviewPeriod)
     const targetStock = safety + avgDailyDemand * (leadTime + reviewPeriod)
     const available = soh
-    const onPO = 0 // Not implemented yet
+    const onPO = 0 // Not implemented yet - would come from purchase order system
     const suggestedQty = Math.max(0, targetStock - available - onPO)
     const moq = (product as any).moq || 10
     const casePack = (product as any).casePack || 12
+    
+    // Round suggested quantity to case pack and ensure it meets MOQ
+    let finalSuggestedQty = suggestedQty
+    if (casePack > 1) {
+      finalSuggestedQty = Math.ceil(suggestedQty / casePack) * casePack
+    }
+    if (finalSuggestedQty > 0 && finalSuggestedQty < moq) {
+      finalSuggestedQty = moq
+    }
+    
     const supplier = (product as any).supplier || 'Default Supplier'
     
     return {
-      sku: product.sku,
-      product: product.name,
+      sku: product.sku || '-',
+      product: cleanProductName(product.name),
       avgDailyDemand,
       leadTime,
       reviewPeriod,
@@ -261,52 +481,111 @@ export async function getReplenishmentReport(
       targetStock,
       available,
       onPO,
-      suggestedQty: Math.ceil(suggestedQty / casePack) * casePack, // Round to case pack
+      suggestedQty: finalSuggestedQty,
       moq,
       casePack,
       supplier
     }
-  })
+  }))
+  
+  return reportData
 }
 
 // SKU Velocity & ABC Report
 export async function getSkuVelocityReport(
   workspaceId: string,
-  _filters: ReportFilters = {}
+  filters: ReportFilters = {}
 ): Promise<SkuVelocityRow[]> {
   const products = await listProducts(workspaceId)
   
-  // Mock data - would calculate from actual sales transactions
-  const mockData = products.map(product => {
-    const netUnits = Math.floor(Math.random() * 1000) + 100
-    const netRevenue = netUnits * (Math.random() * 50 + 10) // Random price between 10-60
-    const periodDays = 365 // 12 months
-    const unitsSoldPerDay = netUnits / periodDays
-    const revenuePerDay = netRevenue / periodDays
-    const turnoverRatio = Math.random() * 5 + 1 // Mock turnover
-    const sellThroughPercent = Math.random() * 100 // Mock sell-through
-    const channel = ['Shopify', 'Amazon', 'Manual'][Math.floor(Math.random() * 3)]
-    
-    return {
-      sku: product.sku,
-      product: product.name,
-      unitsSoldPerDay,
-      revenuePerDay,
-      netUnits,
-      netRevenue,
-      turnoverRatio,
-      sellThroughPercent,
-      abcClass: '', // Will be calculated after sorting
-      channel
-    }
-  })
+  // Filter out raw materials based on report settings
+  const finishedProducts = await filterRawMaterials(workspaceId, products)
   
-  // Sort by net revenue and assign ABC classes
-  mockData.sort((a, b) => b.netRevenue - a.netRevenue)
-  const totalRevenue = mockData.reduce((sum, item) => sum + item.netRevenue, 0)
+  const periodDays = 365 // 12 months for annual analysis
+  
+  // Calculate velocity data from actual transaction history
+  const velocityData = await Promise.all(finishedProducts.map(async product => {
+    try {
+      const txns = await listProductStockTxns(workspaceId, product.id, 1000)
+      
+      // Filter Ship transactions (sales) from last year
+      const cutoffDate = new Date()
+      cutoffDate.setFullYear(cutoffDate.getFullYear() - 1)
+      
+      const shipTxns = txns.filter(txn => {
+        const txnDate = txn.timestamp?.toDate?.() || new Date(txn.timestamp)
+        return txn.type === 'Ship' && txnDate >= cutoffDate && txn.qty < 0
+      })
+      
+      // Calculate net units sold
+      const netUnits = shipTxns.reduce((sum, txn) => sum + Math.abs(txn.qty || 0), 0)
+      
+      // Calculate revenue (if unitCost is available, use it; otherwise estimate)
+      const txnData = shipTxns[0] as any
+      const avgUnitPrice = txnData?.unitCost ? 
+        shipTxns.reduce((sum, txn) => {
+          const txnData = txn as any
+          return sum + (txnData.unitCost || 0)
+        }, 0) / shipTxns.length : 
+        (product as any).pricePerBox || 10 // Fallback to product price or default
+      
+      const netRevenue = netUnits * avgUnitPrice
+      const unitsSoldPerDay = netUnits / periodDays
+      const revenuePerDay = netRevenue / periodDays
+      
+      // Calculate turnover ratio (annual sales / average inventory)
+      const avgInventory = product.qtyOnHand || 0
+      const turnoverRatio = avgInventory > 0 ? netUnits / avgInventory : 0
+      
+      // Calculate sell-through percent (units sold / (units sold + current inventory))
+      const sellThroughPercent = (netUnits + avgInventory) > 0 ? 
+        (netUnits / (netUnits + avgInventory)) * 100 : 0
+      
+      // Channel detection (could be enhanced with actual channel data from transactions)
+      const channel = (product as any).channel || 'Manual'
+      
+      return {
+        sku: product.sku || '-',
+        product: cleanProductName(product.name),
+        unitsSoldPerDay,
+        revenuePerDay,
+        netUnits,
+        netRevenue,
+        turnoverRatio,
+        sellThroughPercent,
+        abcClass: '', // Will be calculated after sorting
+        channel
+      }
+    } catch (error) {
+      console.error(`Error calculating velocity for product ${product.id}:`, error)
+      // Return zero values if calculation fails
+      return {
+        sku: product.sku || '-',
+        product: cleanProductName(product.name),
+        unitsSoldPerDay: 0,
+        revenuePerDay: 0,
+        netUnits: 0,
+        netRevenue: 0,
+        turnoverRatio: 0,
+        sellThroughPercent: 0,
+        abcClass: 'C',
+        channel: 'Manual'
+      }
+    }
+  }))
+  
+  // Sort by net revenue and assign ABC classes (80/15/5 rule)
+  velocityData.sort((a, b) => b.netRevenue - a.netRevenue)
+  const totalRevenue = velocityData.reduce((sum, item) => sum + item.netRevenue, 0)
+  
+  if (totalRevenue === 0) {
+    // If no revenue, assign all to class C
+    return velocityData.map(item => ({ ...item, abcClass: 'C' }))
+  }
+  
   let cumulativeRevenue = 0
   
-  return mockData.map(item => {
+  return velocityData.map(item => {
     cumulativeRevenue += item.netRevenue
     const cumulativePercent = (cumulativeRevenue / totalRevenue) * 100
     let abcClass = 'C'
@@ -319,12 +598,108 @@ export async function getSkuVelocityReport(
 
 // Inventory Ledger Report
 export async function getInventoryLedgerReport(
-  _workspaceId: string,
-  _filters: ReportFilters = {}
+  workspaceId: string,
+  filters: ReportFilters = {}
 ): Promise<InventoryLedgerRow[]> {
-  // This would query stockTxns collection and build the ledger
-  // For now, return empty array as we need to implement transaction querying
-  return []
+  try {
+    const txnsCol = collection(db, 'workspaces', workspaceId, 'stockTxns')
+    
+    // Build query based on filters
+    let q = query(txnsCol, orderBy('timestamp', 'desc'))
+    
+    // Apply filters
+    if (filters.sku) {
+      // Need to find product ID from SKU first
+      const products = await listProducts(workspaceId)
+      const product = products.find(p => p.sku === filters.sku)
+      if (product) {
+        q = query(txnsCol, where('productId', '==', product.id), orderBy('timestamp', 'desc'))
+      } else {
+        return [] // No product found with this SKU
+      }
+    }
+    
+    if (filters.movementType) {
+      // Filter by transaction type
+      const typeMap: Record<string, string> = {
+        'Receive': 'Receive',
+        'Ship': 'Ship',
+        'Transfer': 'Transfer',
+        'Adjust+': 'Adjust+',
+        'Adjust-': 'Adjust-'
+      }
+      const serverType = typeMap[filters.movementType] || filters.movementType
+      q = query(txnsCol, where('type', '==', serverType), orderBy('timestamp', 'desc'))
+    }
+    
+    if (filters.user) {
+      q = query(txnsCol, where('userId', '==', filters.user), orderBy('timestamp', 'desc'))
+    }
+    
+    const txnsSnap = await getDocs(q)
+    
+    // Get all products for SKU lookup
+    const products = await listProducts(workspaceId)
+    const productMap = new Map(products.map(p => [p.id, p]))
+    
+    // Build ledger rows with running balance
+    const ledgerRows: InventoryLedgerRow[] = []
+    let runningBalance = 0
+    
+    // Process transactions in chronological order (oldest first for running balance)
+    const txns = txnsSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }))
+    txns.sort((a, b) => {
+      const dateA = a.timestamp?.toDate?.() || new Date(a.timestamp)
+      const dateB = b.timestamp?.toDate?.() || new Date(b.timestamp)
+      return dateA.getTime() - dateB.getTime()
+    })
+    
+    txns.forEach(txn => {
+      const txnDate = txn.timestamp?.toDate?.() || new Date(txn.timestamp)
+      const product = productMap.get(txn.productId)
+      
+      // Skip if date filter doesn't match
+      if (filters.dateFrom) {
+        const fromDate = new Date(filters.dateFrom)
+        if (txnDate < fromDate) return
+      }
+      if (filters.dateTo) {
+        const toDate = new Date(filters.dateTo)
+        toDate.setHours(23, 59, 59, 999)
+        if (txnDate > toDate) return
+      }
+      
+      const qty = Number(txn.qty || 0)
+      const qtyIn = qty > 0 ? qty : 0
+      const qtyOut = qty < 0 ? Math.abs(qty) : 0
+      const net = qty
+      runningBalance += qty
+      
+      // Get document number from refs
+      const refs = txn.refs || {}
+      const documentNo = refs.ref || refs.poId || refs.jobId || refs.taskId || txn.id.substring(0, 8)
+      
+      ledgerRows.push({
+        dateTime: txnDate.toISOString(),
+        documentNo,
+        movementType: txn.type || 'Unknown',
+        locationIn: txn.toLoc || '-',
+        locationOut: txn.fromLoc || '-',
+        qtyIn,
+        qtyOut,
+        net,
+        runningBalance,
+        user: txn.userId || 'Unknown',
+        notes: txn.reason || ''
+      })
+    })
+    
+    // Return in reverse chronological order (newest first)
+    return ledgerRows.reverse()
+  } catch (error) {
+    console.error('Error generating inventory ledger report:', error)
+    return []
+  }
 }
 
 // Cycle Count Accuracy Report

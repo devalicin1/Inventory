@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, type FC } from 'react'
-import { 
-  type Job, 
-  type Workflow, 
-  type Workcenter, 
+import {
+  type Job,
+  type Workflow,
+  type Workcenter,
   type Resource,
   listJobs,
   listWorkflows,
@@ -12,7 +12,7 @@ import {
   setJobStatus
 } from '../api/production-jobs'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { 
+import {
   PlayIcon,
   PauseIcon,
   CheckCircleIcon,
@@ -40,7 +40,6 @@ interface StageColumn {
 }
 
 export function ProductionBoard({ workspaceId, onJobClick, fitToScreen = false, zoom = 1 }: ProductionBoardProps) {
-  const [selectedJob, setSelectedJob] = useState<Job | null>(null)
   const [swimlane, setSwimlane] = useState<'workcenter' | 'assignee' | 'priority'>('workcenter')
   const [density, setDensity] = useState<'compact' | 'standard' | 'cozy'>(() => {
     const saved = typeof window !== 'undefined' ? window.localStorage.getItem('boardDensity') : null
@@ -99,7 +98,7 @@ export function ProductionBoard({ workspaceId, onJobClick, fitToScreen = false, 
           // eslint-disable-next-line no-alert
           alert(message)
         }
-      } catch (_) {
+      } catch {
         // noop
       }
     },
@@ -196,7 +195,7 @@ export function ProductionBoard({ workspaceId, onJobClick, fitToScreen = false, 
       case 'workcenter':
         return workcenters.find(wc => wc.id === job.workcenterId)?.name || 'Unassigned'
       case 'assignee':
-        return job.assignees.length > 0 
+        return job.assignees.length > 0
           ? resources.filter(r => job.assignees.includes(r.id)).map(r => r.name).join(', ')
           : 'Unassigned'
       case 'priority':
@@ -240,152 +239,147 @@ export function ProductionBoard({ workspaceId, onJobClick, fitToScreen = false, 
 
   return (
     <>
-    <div ref={outerRef} className="h-full flex flex-col">
-      {/* Header Controls */}
-      <div className="flex items-center justify-between p-4 border-b border-gray-200">
-        <div className="flex items-center space-x-4">
-          <h2 className="text-lg font-semibold text-gray-900">Production Board</h2>
-          <div className="flex rounded-md shadow-sm" role="group">
-            {(['workcenter', 'assignee', 'priority'] as const).map((option) => (
-              <button
-                key={option}
-                onClick={() => setSwimlane(option)}
-                className={`px-3 py-1 text-sm font-medium rounded-md ${
-                  swimlane === option
+      <div ref={outerRef} className="h-full flex flex-col">
+        {/* Header Controls */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between p-3 sm:p-4 border-b border-gray-200 gap-3 sm:gap-4">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+            <h2 className="text-base sm:text-lg font-semibold text-gray-900">Production Board</h2>
+            <div className="flex rounded-md shadow-sm overflow-x-auto" role="group">
+              {(['workcenter', 'assignee', 'priority'] as const).map((option) => (
+                <button
+                  key={option}
+                  onClick={() => setSwimlane(option)}
+                  className={`px-2 sm:px-3 py-1 text-xs sm:text-sm font-medium rounded-md whitespace-nowrap ${swimlane === option
                     ? 'bg-blue-600 text-white'
                     : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
-                }`}
-              >
-                {option.charAt(0).toUpperCase() + option.slice(1)}
-              </button>
-            ))}
+                    }`}
+                >
+                  {option.charAt(0).toUpperCase() + option.slice(1)}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
-        <div className="flex items-center space-x-3">
-          <div className="hidden md:flex rounded-md shadow-sm" role="group">
-            {(['compact', 'standard', 'cozy'] as const).map((opt) => (
-              <button
-                key={opt}
-                onClick={() => {
-                  setDensity(opt)
-                  try { window.localStorage.setItem('boardDensity', opt) } catch {}
-                }}
-                className={`px-3 py-1 text-sm font-medium rounded-md ${
-                  density === opt
+          <div className="flex items-center justify-between sm:justify-end space-x-2 sm:space-x-3">
+            <div className="hidden sm:flex rounded-md shadow-sm" role="group">
+              {(['compact', 'standard', 'cozy'] as const).map((opt) => (
+                <button
+                  key={opt}
+                  onClick={() => {
+                    setDensity(opt)
+                    try { window.localStorage.setItem('boardDensity', opt) } catch { }
+                  }}
+                  className={`px-3 py-1 text-sm font-medium rounded-md ${density === opt
                     ? 'bg-blue-600 text-white'
                     : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
-                }`}
-              >
-                {opt.charAt(0).toUpperCase() + opt.slice(1)}
-              </button>
-            ))}
+                    }`}
+                >
+                  {opt.charAt(0).toUpperCase() + opt.slice(1)}
+                </button>
+              ))}
+            </div>
+            <div className="text-xs sm:text-sm text-gray-500 whitespace-nowrap">{safeJobs.length} jobs</div>
           </div>
-          <div className="text-sm text-gray-500">{safeJobs.length} jobs total</div>
         </div>
-      </div>
 
-      {/* Board */}
-      <div className="flex-1 overflow-x-auto p-6">
-        <div ref={contentRef} className="flex space-x-6 min-w-max" style={{ transform: `scale(${(fitScale || 1) * (zoom || 1)})` }}>
-          {stageColumns.map((column) => (
-            <div
-              key={column.id}
-              className="flex-shrink-0 min-w-[360px] 2xl:min-w-[420px] 3xl:min-w-[460px]"
-              onDragOver={(e) => {
-                e.preventDefault()
-              }}
-              onDrop={(e) => {
-                e.preventDefault()
-                const jobId = e.dataTransfer.getData('application/job-id')
-                if (jobId) {
-                  if (column.id === '__completed__') {
-                    // Do not allow dropping directly into the Completed column
-                    return
+        {/* Board */}
+        <div className="flex-1 overflow-x-auto p-3 sm:p-4 md:p-6">
+          <div ref={contentRef} className="flex space-x-3 sm:space-x-4 md:space-x-6 min-w-max" style={{ transform: `scale(${(fitScale || 1) * (zoom || 1)})` }}>
+            {stageColumns.map((column) => (
+              <div
+                key={column.id}
+                className="flex-shrink-0 min-w-[280px] sm:min-w-[320px] md:min-w-[360px] 2xl:min-w-[420px] 3xl:min-w-[460px]"
+                onDragOver={(e) => {
+                  e.preventDefault()
+                }}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  const jobId = e.dataTransfer.getData('application/job-id')
+                  if (jobId) {
+                    if (column.id === '__completed__') {
+                      // Do not allow dropping directly into the Completed column
+                      return
+                    }
+                    const stageName = stages.find(s => s.id === column.id)?.name || 'this stage'
+                    const job = safeJobs.find(j => j.id === jobId)
+                    const planned = (job as any)?.plannedStageIds as string[] | undefined
+                    if (planned && !planned.includes(column.id)) {
+                      alert(`This job cannot move to ${stageName} (not in its planned stages).`)
+                      return
+                    }
+                    setConfirmMove({ open: true, jobId, jobCode: job?.code || jobId, targetStageId: column.id, targetStageName: stageName })
                   }
-                  const stageName = stages.find(s => s.id === column.id)?.name || 'this stage'
-                  const job = safeJobs.find(j => j.id === jobId)
-                  const planned = (job as any)?.plannedStageIds as string[] | undefined
-                  if (planned && !planned.includes(column.id)) {
-                    alert(`This job cannot move to ${stageName} (not in its planned stages).`)
-                    return
-                  }
-                  setConfirmMove({ open: true, jobId, jobCode: job?.code || jobId, targetStageId: column.id, targetStageName: stageName })
-                }
-              }}
-            >
-              {/* Column Header */}
-              <div className={`${column.color} rounded-lg p-4 mb-4`}>
-                <div className="flex items-center justify-between">
-                  <h3 className="font-semibold text-gray-900">{column.name}</h3>
-                  <div className="flex items-center space-x-2">
-                    <span className="text-sm text-gray-600">
-                      {column.currentCount}
-                      {column.wipLimit && ` / ${column.wipLimit}`}
-                    </span>
-                    {column.wipLimit && column.currentCount > column.wipLimit && (
-                      <ExclamationTriangleIcon className="h-4 w-4 text-red-500" />
-                    )}
-                  </div>
-                </div>
-                {column.wipLimit && (
-                  <div className="mt-2">
-                    <div className="w-full bg-gray-200 rounded-full h-2">
-                      <div
-                        className={`h-2 rounded-full ${
-                          column.currentCount > column.wipLimit ? 'bg-red-500' : 'bg-blue-500'
-                        }`}
-                        style={{ width: `${Math.min((column.currentCount / column.wipLimit) * 100, 100)}%` }}
-                      />
+                }}
+              >
+                {/* Column Header */}
+                <div className={`${column.color} rounded-lg p-3 sm:p-4 mb-3 sm:mb-4`}>
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-semibold text-sm sm:text-base text-gray-900 truncate pr-2">{column.name}</h3>
+                    <div className="flex items-center space-x-1.5 sm:space-x-2 flex-shrink-0">
+                      <span className="text-xs sm:text-sm text-gray-600">
+                        {column.currentCount}
+                        {column.wipLimit && ` / ${column.wipLimit}`}
+                      </span>
+                      {column.wipLimit && column.currentCount > column.wipLimit && (
+                        <ExclamationTriangleIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-red-500" />
+                      )}
                     </div>
                   </div>
-                )}
-              </div>
+                  {column.wipLimit && (
+                    <div className="mt-2">
+                      <div className="w-full bg-gray-200 rounded-full h-2">
+                        <div
+                          className={`h-2 rounded-full ${column.currentCount > column.wipLimit ? 'bg-red-500' : 'bg-blue-500'
+                            }`}
+                          style={{ width: `${Math.min((column.currentCount / column.wipLimit) * 100, 100)}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
 
-              {/* Jobs */}
-              <div className={`${density === 'cozy' ? 'space-y-4' : density === 'standard' ? 'space-y-3' : 'space-y-2'}`}> 
-                {column.jobs.map((job) => (
-                  <JobCard
-                    key={job.id}
-                    job={job}
-                    onMove={handleJobMove}
-                    onStatusChange={handleStatusChange}
-                    onClick={() => onJobClick?.(job)}
-                    swimlaneValue={getSwimlaneValue(job)}
-                    getPriorityColor={getPriorityColor}
-                    getRiskColor={getRiskColor}
-                    workcenters={workcenters}
-                    resources={resources}
-                    density={density}
-                    stages={stages}
-                    onRequestMove={(targetStageId, targetStageName) => setConfirmMove({ open: true, jobId: job.id, jobCode: job.code, targetStageId, targetStageName })}
-                  />
-                ))}
+                {/* Jobs */}
+                <div className={`${density === 'cozy' ? 'space-y-4' : density === 'standard' ? 'space-y-3' : 'space-y-2'}`}>
+                  {column.jobs.map((job) => (
+                    <JobCard
+                      key={job.id}
+                      job={job}
+                      onStatusChange={handleStatusChange}
+                      onClick={() => onJobClick?.(job)}
+                      swimlaneValue={getSwimlaneValue(job)}
+                      getPriorityColor={getPriorityColor}
+                      getRiskColor={getRiskColor}
+                      workcenters={workcenters}
+                      resources={resources}
+                      density={density}
+                      stages={stages}
+                      onRequestMove={(targetStageId, targetStageName) => setConfirmMove({ open: true, jobId: job.id, jobCode: job.code, targetStageId, targetStageName })}
+                    />
+                  ))}
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       </div>
-    </div>
-    {confirmMove.open && (
-      <ConfirmMoveModal
-        jobCode={confirmMove.jobCode || ''}
-        targetStageName={confirmMove.targetStageName || ''}
-        onCancel={() => setConfirmMove({ open: false })}
-        onConfirm={(note) => {
-          if (confirmMove.jobId && confirmMove.targetStageId) {
-            handleJobMove(confirmMove.jobId, confirmMove.targetStageId, note)
-          }
-          setConfirmMove({ open: false })
-        }}
-      />
-    )}
+      {confirmMove.open && (
+        <ConfirmMoveModal
+          jobCode={confirmMove.jobCode || ''}
+          targetStageName={confirmMove.targetStageName || ''}
+          onCancel={() => setConfirmMove({ open: false })}
+          onConfirm={(note) => {
+            if (confirmMove.jobId && confirmMove.targetStageId) {
+              handleJobMove(confirmMove.jobId, confirmMove.targetStageId, note)
+            }
+            setConfirmMove({ open: false })
+          }}
+        />
+      )}
     </>
   )
 }
 
 interface JobCardProps {
   job: Job
-  onMove: (jobId: string, newStageId: string) => void
   onStatusChange: (jobId: string, status: Job['status'], blockReason?: string) => void
   onClick: () => void
   swimlaneValue: string
@@ -400,7 +394,6 @@ interface JobCardProps {
 
 const JobCard: FC<JobCardProps> = ({
   job,
-  onMove,
   onStatusChange,
   onClick,
   swimlaneValue,
@@ -450,17 +443,17 @@ const JobCard: FC<JobCardProps> = ({
 
   const densityClasses =
     density === 'cozy'
-      ? 'p-5 text-[15px]'
+      ? 'p-3 sm:p-4 md:p-5 text-sm sm:text-[15px]'
       : density === 'standard'
-      ? 'p-4 text-[14px]'
-      : 'p-3 text-[13px]'
+        ? 'p-2.5 sm:p-3 md:p-4 text-xs sm:text-sm md:text-[14px]'
+        : 'p-2 sm:p-2.5 md:p-3 text-xs sm:text-[13px]'
 
   const currentIndex = stages?.findIndex(s => s.id === job.currentStageId) ?? -1
   const nextStage = currentIndex >= 0 && stages && currentIndex + 1 < stages.length ? stages[currentIndex + 1] : undefined
 
   return (
     <div
-      className={`bg-white rounded-lg border border-gray-200 cursor-pointer hover:shadow-md transition-shadow ${densityClasses} relative`}
+      className={`bg-white rounded-xl border border-gray-200 cursor-pointer shadow-sm hover:shadow-md transition-all ${densityClasses} relative group`}
       draggable={!openMove}
       onDragStart={(e) => {
         if (openMove) return
@@ -472,15 +465,15 @@ const JobCard: FC<JobCardProps> = ({
       onMouseLeave={() => setShowActions(false)}
     >
       {/* Header */}
-      <div className="flex items-start justify-between mb-2">
-        <div className="flex-1">
-          <div className="flex items-center space-x-2">
-            <span className="font-medium text-sm text-gray-900">{job.code}</span>
-            <span className={`px-2 py-1 rounded-full text-xs font-medium ${getPriorityColor(job.priority)}`}>
+      <div className="flex items-start justify-between mb-2 gap-2">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center space-x-1.5 sm:space-x-2 flex-wrap">
+            <span className="font-medium text-xs sm:text-sm text-gray-900 truncate">{job.code}</span>
+            <span className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded-full text-xs font-medium ${getPriorityColor(job.priority)} flex-shrink-0`}>
               P{job.priority}
             </span>
           </div>
-          <p className="text-sm text-gray-600 mt-1">{job.sku} • {job.quantity} {job.unit}</p>
+          <p className="text-xs sm:text-sm text-gray-600 mt-0.5 sm:mt-1 truncate">{job.sku} • {job.quantity} {job.unit}</p>
         </div>
         {showActions && (
           <div className="flex space-x-1">
@@ -545,26 +538,29 @@ const JobCard: FC<JobCardProps> = ({
           className="absolute z-20 mt-1 right-2 top-10 bg-white border border-gray-200 rounded shadow-md p-2 space-y-1"
           onClick={(e) => e.stopPropagation()}
         >
-          {nextStage && (!((job as any).plannedStageIds) || (job as any).plannedStageIds.includes(nextStage.id)) && (
-            <button
-              className="w-full text-left px-3 py-1.5 text-sm rounded hover:bg-gray-50"
-              onClick={() => onRequestMove(nextStage.id, nextStage.name)}
-            >
-              Next stage → {nextStage.name}
-            </button>
-          )}
+          {nextStage && (!((job as any).plannedStageIds) || (job as any).plannedStageIds.includes(nextStage.id)) &&
+            // Note: Threshold check is handled in ConfirmMoveModal/ConfirmStageChangeModal
+            // For now, show Next stage button - actual threshold validation happens when moving
+            (
+              <button
+                className="w-full text-left px-3 py-1.5 text-sm rounded hover:bg-gray-50"
+                onClick={() => onRequestMove(nextStage.id, nextStage.name)}
+              >
+                Next stage → {nextStage.name}
+              </button>
+            )}
           {stages
             ?.filter(s => s.id !== job.currentStageId)
             .filter(s => !((job as any).plannedStageIds) || (job as any).plannedStageIds.includes(s.id))
             .map(s => (
-            <button
-              key={s.id}
-              className="w-full text-left px-3 py-1.5 text-sm rounded hover:bg-gray-50"
-              onClick={() => onRequestMove(s.id, s.name)}
-            >
-              Move to {s.name}
-            </button>
-          ))}
+              <button
+                key={s.id}
+                className="w-full text-left px-3 py-1.5 text-sm rounded hover:bg-gray-50"
+                onClick={() => onRequestMove(s.id, s.name)}
+              >
+                Move to {s.name}
+              </button>
+            ))}
         </div>
       )}
 

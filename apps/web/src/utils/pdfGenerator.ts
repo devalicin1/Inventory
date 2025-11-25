@@ -4,579 +4,360 @@ import type { Job } from '../api/production-jobs'
 
 const COMPANY_LOGO = '/logo.png'
 
+const COLORS = {
+  text: [30, 30, 30],
+  label: [100, 100, 100],
+  accent: [41, 128, 185],
+  bgLight: [248, 249, 250],
+  border: [220, 220, 220],
+  priority: {
+    high: [220, 38, 38],
+    med: [234, 88, 12],
+    low: [22, 163, 74]
+  }
+}
+
 export async function generateJobPDFBlob(job: Job): Promise<Blob> {
   try {
-    // Create PDF in portrait A4 format
-    const doc = new jsPDF({
-      orientation: 'portrait',
-      unit: 'mm',
-      format: 'a4',
-    })
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
 
-    // Constants for A4 page
     const pageWidth = 210
     const pageHeight = 297
-    const margin = 12
-    const contentWidth = pageWidth - (margin * 2)
+    const margin = 10 // Küçültüldü
     let currentY = margin
 
-    // Helper to check if we need a page break
-    const checkPageBreak = (requiredHeight: number): boolean => {
-      if (currentY + requiredHeight > pageHeight - margin) {
-        doc.addPage()
-        currentY = margin
+    // --- YARDIMCI HESAPLAMALAR (Eski koddaki mantığın aynısı) ---
+    const pickNumber = (...values: Array<number | undefined | null>) => {
+      for (const value of values) {
+        if (typeof value === 'number' && !Number.isNaN(value)) return value
+      }
+      return undefined
+    }
+
+    const plannedData = (job.packaging as any)?.planned
+    const pcsPerBox = job.packaging?.pcsPerBox ?? plannedData?.pcsPerBox
+    const boxesPerPallet = job.packaging?.boxesPerPallet ?? plannedData?.boxesPerPallet
+    const plannedBoxes = pickNumber(job.packaging?.plannedBoxes, plannedData?.totals?.outers, plannedData?.plannedBoxes, job.unit === 'box' ? job.quantity : undefined)
+    
+    // Palet ve Toplam Parça Hesaplaması
+    const palletsCalc = pickNumber(
+      job.packaging?.plannedPallets,
+      plannedData?.totals?.pallets,
+      plannedData?.pallets,
+      plannedBoxes && boxesPerPallet ? Math.ceil(plannedBoxes / boxesPerPallet) : undefined
+    )
+    const totalPieces = pickNumber(
+      pcsPerBox && plannedBoxes ? pcsPerBox * plannedBoxes : undefined,
+      pcsPerBox && job.unit === 'box' ? pcsPerBox * (job.quantity || 0) : undefined
+    )
+
+    // Miktar Metnini Oluştur (Örn: 1000 units (2 pallets, 50000 pcs))
+    const qtyExtras: string[] = []
+    if (typeof palletsCalc === 'number') qtyExtras.push(`${palletsCalc} plts`)
+    if (typeof totalPieces === 'number') qtyExtras.push(`${totalPieces} pcs`)
+    const quantityDisplay = `${job.quantity} ${job.unit || ''}` 
+    const quantitySubtext = qtyExtras.length ? `(${qtyExtras.join(', ')})` : ''
+
+    // --- ÇİZİM FONKSİYONLARI ---
+
+    const checkPageBreak = (requiredHeight: number) => {
+      // Tek sayfaya sığdırmak için sayfa ekleme
+      if (currentY + requiredHeight > pageHeight - margin - 30) {
+        // İçeriği küçült veya atla
         return true
       }
       return false
     }
 
-    // Header Section - Compact and professional
+    const drawDataBlock = (label: string, value: string, x: number, y: number, width: number, colorOverride?: number[]) => {
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(6) // Küçültüldü
+      doc.setTextColor(COLORS.label[0], COLORS.label[1], COLORS.label[2])
+      doc.text(label.toUpperCase(), x, y)
+
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(8) // Küçültüldü
+      if (colorOverride) doc.setTextColor(colorOverride[0], colorOverride[1], colorOverride[2])
+      else doc.setTextColor(COLORS.text[0], COLORS.text[1], COLORS.text[2])
+      
+      const splitValue = doc.splitTextToSize(value || '-', width)
+      doc.text(splitValue, x, y + 3.5) // Spacing azaltıldı
+      return splitValue.length * 3.5
+    }
+
+    const drawBox = (x: number, y: number, w: number, h: number, title?: string) => {
+      doc.setDrawColor(COLORS.border[0], COLORS.border[1], COLORS.border[2])
+      doc.setLineWidth(0.3)
+      doc.rect(x, y, w, h)
+      
+      if (title) {
+          doc.setFillColor(COLORS.bgLight[0], COLORS.bgLight[1], COLORS.bgLight[2])
+          doc.rect(x, y, w, 6, 'F') // Küçültüldü
+          doc.rect(x, y, w, 6, 'S')
+          doc.setFont('helvetica', 'bold')
+          doc.setFontSize(7) // Küçültüldü
+          doc.setTextColor(COLORS.text[0], COLORS.text[1], COLORS.text[2])
+          doc.text(title.toUpperCase(), x + 3, y + 4)
+      }
+    }
+
+    // --- HEADER ---
     const drawHeader = async () => {
-      // Company logo and title section
       try {
         const logoResponse = await fetch(COMPANY_LOGO)
         if (logoResponse.ok) {
           const logoBlob = await logoResponse.blob()
-          const logoDataUrl = await new Promise<string>((resolve, reject) => {
+          const logoDataUrl = await new Promise<string>((resolve) => {
             const reader = new FileReader()
             reader.onloadend = () => resolve(reader.result as string)
-            reader.onerror = reject
             reader.readAsDataURL(logoBlob)
           })
-          doc.addImage(logoDataUrl, 'PNG', margin, currentY, 25, 10)
-        } else {
-          throw new Error('Logo fetch failed')
+          doc.addImage(logoDataUrl, 'PNG', margin, margin, 25, 10) // Küçültüldü
         }
-      } catch (error) {
-        doc.setFontSize(12)
-        doc.setFont('helvetica', 'bold')
-        doc.text('INVENTORY SYSTEM', margin, currentY + 6)
-      }
+      } catch (e) {}
 
-      // Document title (leave space for QR on the far right)
-      doc.setFontSize(16)
+      const titleY = margin + 4
       doc.setFont('helvetica', 'bold')
-      doc.setTextColor(44, 62, 80)
-      doc.text('PRODUCTION ORDER', pageWidth - margin - 18, currentY + 6, { align: 'right' })
+      doc.setFontSize(16) // Küçültüldü
+      doc.setTextColor(COLORS.text[0], COLORS.text[1], COLORS.text[2])
+      doc.text('PRODUCTION ORDER', pageWidth - margin - 10, titleY, { align: 'right' })
 
-      // NEW / REPEAT badge next to logo
-      const badgeLabel = job.isRepeat ? 'REPEAT' : 'NEW'
-      const badgeColors = job.isRepeat ? { r: 59, g: 130, b: 246 } : { r: 16, g: 185, b: 129 }
-      const badgeX = margin + 28
-      const badgeY = currentY + 1
-      doc.setFillColor(badgeColors.r, badgeColors.g, badgeColors.b)
-      doc.roundedRect(badgeX, badgeY, 20, 7, 1.5, 1.5, 'F')
-      doc.setTextColor(255, 255, 255)
-      doc.setFontSize(8)
-      doc.setFont('helvetica', 'bold')
-      doc.text(badgeLabel, badgeX + 10, badgeY + 4, { align: 'center' })
-      doc.setTextColor(44, 62, 80)
+      doc.setFontSize(7) // Küçültüldü
+      doc.setTextColor(COLORS.label[0], COLORS.label[1], COLORS.label[2])
+      doc.text(`JOB ID: ${job.code || job.id}  |  DATE: ${new Date().toLocaleDateString('en-GB')}`, pageWidth - margin - 10, titleY + 5, { align: 'right' })
 
-      // QR Code - positioned to the far right, not overlapping title
-      const qrCodeText = job.code || job.id
-      const qrResult = await generateQRCodeDataURL(qrCodeText, { scale: 4 })
-      doc.addImage(qrResult.dataUrl, 'PNG', pageWidth - margin - 12, currentY - 1, 12, 12)
+      try {
+        const qrCodeText = job.code || job.id
+        const qrResult = await generateQRCodeDataURL(qrCodeText, { scale: 3 }) // Küçültüldü
+        doc.addImage(qrResult.dataUrl, 'PNG', pageWidth - margin - 10, margin - 1, 10, 10) // Küçültüldü
+      } catch (e) {}
 
-      currentY += 15
+      currentY += 16 // Küçültüldü
     }
 
     await drawHeader()
 
-    // Divider line
-    doc.setDrawColor(200, 200, 200)
-    doc.setLineWidth(0.3)
-    doc.line(margin, currentY, pageWidth - margin, currentY)
-    currentY += 8
+    // --- 1. STATUS STRIP ---
+    const stripHeight = 12 // Küçültüldü
+    doc.setFillColor(COLORS.bgLight[0], COLORS.bgLight[1], COLORS.bgLight[2])
+    doc.rect(margin, currentY, pageWidth - margin * 2, stripHeight, 'F')
+    doc.setDrawColor(COLORS.border[0], COLORS.border[1], COLORS.border[2])
+    doc.rect(margin, currentY, pageWidth - margin * 2, stripHeight, 'S')
 
-    // Compact section template
-    const createCompactSection = (title: string, contentHeight: number = 0) => {
-      checkPageBreak(contentHeight + 15)
-      
-      // Section title with subtle background
-    doc.setFillColor(248, 249, 250)
-    doc.rect(margin, currentY, contentWidth, 8, 'F')
-      
-      doc.setTextColor(44, 62, 80)
-    doc.setFontSize(12)
-      doc.setFont('helvetica', 'bold')
-    doc.text(title, margin + 3, currentY + 6)
-      
-      // Add small breathing space below headers for readability
-    currentY += 13
-    }
+    const colW = (pageWidth - margin * 2) / 4
+    let stripX = margin + 3
+    const stripY = currentY + 4 // Küçültüldü
 
-    // Job Overview - Critical information first
-    createCompactSection('JOB OVERVIEW', 25)
+    let priorityColor = COLORS.text
+    if (job.priority === 1) priorityColor = COLORS.priority.high
+    else if (job.priority === 2) priorityColor = COLORS.priority.med
+    else if (job.priority === 4) priorityColor = COLORS.priority.low
 
-    // Use fixed 3-column grid anchors for perfect alignment
-    const third = contentWidth / 3
-    const colX = [margin, margin + third, margin + third * 2]
+    drawDataBlock('Order Status', job.isRepeat ? 'REPEAT ORDER' : 'NEW ORDER', stripX, stripY, colW)
+    drawDataBlock('Priority', getPriorityLabel(job.priority), stripX + colW, stripY, colW, priorityColor)
+    drawDataBlock('Due Date', formatDate(job.dueDate), stripX + colW * 2, stripY, colW)
+    drawDataBlock('Status', formatStatus(job.status), stripX + colW * 3, stripY, colW)
 
-    // Build quantity extras (pallets, total pieces)
-    const pcsPerBox = job.packaging?.pcsPerBox
-    const boxesPerPallet = job.packaging?.boxesPerPallet
-    const plannedBoxes = job.packaging?.plannedBoxes ?? (job.unit === 'box' ? job.quantity : undefined)
-    const palletsCalc = job.packaging?.plannedPallets ?? (plannedBoxes && boxesPerPallet ? Math.ceil(plannedBoxes / boxesPerPallet) : undefined)
-    const totalPieces = pcsPerBox && (plannedBoxes ?? (job.unit === 'box' ? job.quantity : undefined)) ? pcsPerBox * (plannedBoxes ?? job.quantity) : undefined
-    const qtyExtras: string[] = []
-    if (palletsCalc) qtyExtras.push(`${palletsCalc} pallets`)
-    if (totalPieces) qtyExtras.push(`${totalPieces} pcs`)
-    const quantityDisplay = `${job.quantity} ${job.unit || ''}`.trim() + (qtyExtras.length ? ` (${qtyExtras.join(', ')})` : '')
+    currentY += stripHeight + 4 // Küçültüldü
 
-    // Main job info (row 1)
-    const row1 = [
-      { label: 'Job Code:', value: job.code || 'N/A' },
-      { label: 'Product:', value: job.productName || job.sku || 'N/A' },
-      { label: 'Quantity:', value: quantityDisplay },
-    ] as const
-
-    row1.forEach((item, index) => {
-      const xPos = colX[index]
-      doc.setFontSize(10)
-      doc.setFont('helvetica', 'bold')
-      doc.setTextColor(100, 100, 100)
-      doc.text(item.label, xPos, currentY)
-      doc.setFont('helvetica', 'normal')
-      doc.setTextColor(0, 0, 0)
-      doc.text(item.value, xPos, currentY + 4.5) // value on next line to avoid overlap
-    })
-
-    currentY += 8
-
-    // Secondary job info (row 2) uses same anchors
-    const row2 = [
-      { label: 'Priority:', value: getPriorityLabel(job.priority) },
-      { label: 'Status:', value: formatStatus(job.status) },
-      { label: 'Due Date:', value: formatDate(job.dueDate) },
-    ] as const
-
-    row2.forEach((item, index) => {
-      const xPos = colX[index]
-      doc.setFontSize(10)
-      doc.setFont('helvetica', 'bold')
-      doc.setTextColor(100, 100, 100)
-      doc.text(item.label, xPos, currentY)
-      doc.setFont('helvetica', 'normal')
-      if (item.label === 'Priority:') {
-        const c = getPriorityColor(job.priority)
-        doc.setTextColor(c.r, c.g, c.b)
-      } else {
-        doc.setTextColor(0, 0, 0)
-      }
-      doc.text(item.value, xPos, currentY + 4.5)
-      doc.setTextColor(0, 0, 0)
-    })
-
-    currentY += 14
-
-    // Two-column layout for detailed information
-    const columnWidth = contentWidth / 2
-    const leftColumn = margin
-    const rightColumn = margin + columnWidth + 5
-
-    // Removed ORDER DETAILS section; status badges shown in header
-
-    // Customer Information - Left Column
-    createCompactSection('CUSTOMER INFORMATION', 20)
-    const leftSectionTop = currentY - 10
-    const leftFieldsStartY = currentY
-    let lineY = currentY
-
-    const addLeftField = (label: string, value?: string | number) => {
-      if (value === undefined || value === null || value === '') return
-      doc.setFontSize(10)
-      doc.setFont('helvetica', 'bold')
-      doc.setTextColor(100, 100, 100)
-      doc.text(label, leftColumn, lineY)
-      doc.setFont('helvetica', 'normal')
-      doc.setTextColor(0, 0, 0)
-      doc.text(String(value), leftColumn + 24, lineY)
-      lineY += 4.5
-    }
-
-    addLeftField('Customer:', job.customer.name)
-    addLeftField('Order No:', job.customer.orderNo)
-    addLeftField('Estimate No:', job.customer.estNo)
-    addLeftField('Customer PO:', job.customer.ref)
-    // keep currentY aligned to last printed line
-    currentY = lineY
-
-    // Production Timeline - Right Column
-    doc.setFillColor(248, 249, 250)
-    doc.rect(rightColumn, leftSectionTop, columnWidth - 5, 6, 'F')
+    // --- 2. INFO BOXES (Geri Eklenen Verilerle) ---
+    const boxH = 35 // Küçültüldü
+    const boxW = (pageWidth - margin * 2 - 5) / 2
     
-    doc.setTextColor(44, 62, 80)
-      doc.setFontSize(12)
-    doc.setFont('helvetica', 'bold')
-    doc.text('PRODUCTION TIMELINE', rightColumn + 3, leftSectionTop + 4)
-
-    const timelineInfo = [
-      { label: 'Planned Start:', value: job.plannedStart ? formatDate(job.plannedStart) : 'Not set' },
-      { label: 'Planned End:', value: job.plannedEnd ? formatDate(job.plannedEnd) : 'Not set' },
-    ]
-
-    // Align Planned dates roughly with the left column's first line, slightly lower
-    const timelineStartY = leftFieldsStartY + 1
-    timelineInfo.forEach((item, index) => {
-      doc.setFontSize(10)
-      doc.setFont('helvetica', 'bold')
-      doc.setTextColor(100, 100, 100)
-      doc.text(item.label, rightColumn, timelineStartY + (index * 4))
-      
-      doc.setFont('helvetica', 'normal')
-      doc.setTextColor(0, 0, 0)
-      doc.text(item.value, rightColumn + 28, timelineStartY + (index * 4))
-    })
-
-    currentY += 15
-
-    // BOM Materials - Compact table
-    if (job.bom && job.bom.length > 0) {
-      createCompactSection('REQUIRED MATERIALS', job.bom.length * 4 + 12)
-
-      // Compact table header
-      doc.setFillColor(44, 62, 80)
-      doc.rect(leftColumn, currentY, contentWidth, 4, 'F')
-      
-      doc.setTextColor(255, 255, 255)
-      doc.setFontSize(8)
-      doc.setFont('helvetica', 'bold')
-      
-      doc.text('SKU', leftColumn + 2, currentY + 2.5)
-      doc.text('MATERIAL', leftColumn + 35, currentY + 2.5)
-      doc.text('QTY', leftColumn + 120, currentY + 2.5)
-      doc.text('UNIT', leftColumn + 140, currentY + 2.5)
-      
-      currentY += 6
-
-      // Table rows
-      doc.setTextColor(0, 0, 0)
-      doc.setFont('helvetica', 'normal')
-      
-      job.bom.slice(0, 8).forEach((item) => { // Limit to 8 items for single page
-        if (currentY + 4 > pageHeight - 30) return
-        
-        doc.setFontSize(8)
-        
-        // Truncate long text
-        const skuText = (item.sku || 'N/A').length > 15 ? (item.sku || 'N/A').substring(0, 12) + '...' : (item.sku || 'N/A')
-        doc.text(skuText, leftColumn + 2, currentY + 2.5)
-        
-        const materialName = item.name.length > 35 ? item.name.substring(0, 32) + '...' : item.name
-        doc.text(materialName, leftColumn + 35, currentY + 2.5)
-        
-        doc.text(`${item.qtyRequired}`, leftColumn + 120, currentY + 2.5)
-        doc.text(item.uom, leftColumn + 140, currentY + 2.5)
-        
-        currentY += 4
-      })
-
-      // Show "+X more" if there are more items
-      if (job.bom.length > 8) {
-        doc.setFontSize(7)
-        doc.setTextColor(100, 100, 100)
-        doc.text(`+${job.bom.length - 8} more items...`, leftColumn + 2, currentY + 2.5)
-        currentY += 4
-      }
-
-      currentY += 8
+    // Ürün Kutusu
+    drawBox(margin, currentY, boxW, boxH, 'Product Details')
+    let contentY = currentY + 10 // Küçültüldü
+    drawDataBlock('Product Name', job.productName || '-', margin + 3, contentY, boxW - 6)
+    drawDataBlock('SKU', job.sku || '-', margin + 3, contentY + 8, boxW - 6) // Küçültüldü
+    
+    // Miktar ve Detayı (Geri eklendi)
+    drawDataBlock('Quantity', quantityDisplay, margin + boxW/2, contentY + 8, boxW/2 - 6) // Küçültüldü
+    if (quantitySubtext) {
+        doc.setFontSize(6); doc.setTextColor(COLORS.label[0], COLORS.label[1], COLORS.label[2]) // Küçültüldü
+        doc.text(quantitySubtext, margin + boxW/2, contentY + 15) // Küçültüldü
     }
 
-    // Production Specifications - Compact two-column layout
+    // Müşteri Kutusu
+    drawBox(margin + boxW + 5, currentY, boxW, boxH, 'Customer Information')
+    drawDataBlock('Customer Name', job.customer.name, margin + boxW + 8, contentY, boxW - 6)
+    
+    // Eksik alanlar geri eklendi: PO, Ref, Cutter No
+    drawDataBlock('Order No / PO', job.customer.orderNo || '-', margin + boxW + 8, contentY + 8, boxW/3) // Küçültüldü
+    drawDataBlock('Reference', job.customer.ref || '-', margin + boxW + 8 + boxW/3, contentY + 8, boxW/3) // Küçültüldü
+    drawDataBlock('Cutter No', (job as any).cutterNo || '-', margin + boxW + 8 + (boxW/3)*2, contentY + 8, boxW/3) // Küçültüldü
+    
+    // Planlanan Tarihler (Müşteri kutusu altına)
+    const timelineY = currentY + 25 // Küçültüldü
+    doc.setDrawColor(230, 230, 230); doc.line(margin + boxW + 5, timelineY, margin + boxW * 2 + 5, timelineY)
+    doc.setFontSize(6); doc.setTextColor(COLORS.label[0], COLORS.label[1], COLORS.label[2]) // Küçültüldü
+    doc.text(`Planned: ${formatDate(job.plannedStart)} - ${formatDate(job.plannedEnd)} | Est No: ${job.customer.estNo || '-'}`, margin + boxW + 8, timelineY + 6) // Küçültüldü
+
+    currentY += boxH + 4 // Küçültüldü
+
+    // --- 3. TESLİMAT & LOJİSTİK (YENİ EKLENEN BÖLÜM - EKSİK VERİLER İÇİN) ---
+    // Teslimat adresi ve yöntemi önceki formda vardı, burada tekrar ekliyoruz.
+    if (job.deliveryAddress || job.deliveryMethod) {
+        const delH = 18 // Küçültüldü
+        drawBox(margin, currentY, pageWidth - margin * 2, delH, 'Delivery & Logistics')
+        
+        const dX = margin + 3
+        const dY = currentY + 10 // Küçültüldü
+        const methodW = 40
+        
+        drawDataBlock('Delivery Method', job.deliveryMethod || '-', dX, dY, methodW)
+        
+        // Adres (Çok satırlı olabilir)
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(6); doc.setTextColor(COLORS.label[0], COLORS.label[1], COLORS.label[2]) // Küçültüldü
+        doc.text('DELIVERY ADDRESS', dX + methodW, dY)
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(COLORS.text[0], COLORS.text[1], COLORS.text[2]) // Küçültüldü
+        const addressLines = doc.splitTextToSize(job.deliveryAddress || '-', pageWidth - margin * 2 - methodW - 10)
+        doc.text(addressLines, dX + methodW, dY + 3.5) // Küçültüldü
+        
+        currentY += delH + 4 // Küçültüldü
+    }
+
+    // --- 4. SPESİFİKASYONLAR (Tüm detaylar geri eklendi) ---
     if (job.productionSpecs && Object.keys(job.productionSpecs).length > 0) {
-      const specs = job.productionSpecs
-      createCompactSection('PRODUCTION SPECIFICATIONS', 40)
+        const specs = job.productionSpecs as any
+        const specBoxH = 32 // Küçültüldü
+        checkPageBreak(specBoxH + 10)
+        drawBox(margin, currentY, pageWidth - margin * 2, specBoxH, 'Production Specifications')
+        
+        let specX = margin + 3
+        let specY = currentY + 10 // Küçültüldü
+        const specColW = (pageWidth - margin * 2) / 4 // 4 Sütunlu yapı
 
-      // Helper function to add spec line
-      const addSpecLine = (label: string, value: any, column: number) => {
-        if (value === undefined || value === null || value === '') return
-        
-        const xPos = column === 1 ? leftColumn : rightColumn
-        const yPos = currentY
-        
-      doc.setFontSize(8)
-        doc.setFont('helvetica', 'bold')
-        doc.setTextColor(100, 100, 100)
-        doc.text(label, xPos, yPos)
-        
-      doc.setFont('helvetica', 'normal')
-        doc.setTextColor(0, 0, 0)
-        let displayValue: string
-        if (typeof value === 'object') {
-          const w = (value as any).width
-          const l = (value as any).length
-          const h = (value as any).height
-          const parts: string[] = []
-          if (w !== undefined) parts.push(String(w))
-          if (l !== undefined) parts.push(String(l))
-          if (h !== undefined) parts.push(String(h))
-          displayValue = parts.length > 0 ? parts.join(' x ') + ' mm' : '[n/a]'
-        } else {
-          displayValue = String(value)
+        const renderSpec = (lbl: string, val: any) => {
+             let v = val
+             if (typeof val === 'object' && val !== null) {
+                 if (val.width) v = `${val.width}x${val.length}${val.height ? 'x'+val.height : ''}mm`
+                 else v = JSON.stringify(val)
+             }
+             drawDataBlock(lbl, String(v || '-'), specX, specY, specColW - 4)
         }
-        doc.text(displayValue, xPos + 20, yPos)
-        
-      currentY += 3.5
-      }
 
-      let tempY = currentY
+        // Col 1: Boyutlar
+        if (specs.size) { renderSpec('Finished Size', specs.size); specY += 7 } // Küçültüldü
+        if (specs.sheetSize || specs.sheet) { renderSpec('Sheet Size', specs.sheetSize || specs.sheet); specY += 7 } // Küçültüldü
+        if (specs.formeSize || specs.forme) { renderSpec('Forme Size', specs.formeSize || specs.forme); specY += 7 } // Küçültüldü
 
-      // Left column specs
-      if (specs.size) {
-        doc.setFontSize(8)
-        doc.setFont('helvetica', 'bold')
-        doc.setTextColor(44, 62, 80)
-        doc.text('Dimensions (mm):', leftColumn, currentY)
-        currentY += 3
-        addSpecLine('W:', specs.size.width, 1)
-        addSpecLine('L:', specs.size.length, 1)
-        addSpecLine('H:', specs.size.height, 1)
-        currentY += 3
-      }
+        // Col 2: Malzeme
+        specY = currentY + 10; specX += specColW // Küçültüldü
+        if (specs.board) { renderSpec('Board', specs.board); specY += 7 } // Küçültüldü
+        if (specs.gsm || specs.microns) { renderSpec('GSM / Microns', `${specs.gsm || '-'} / ${specs.microns || '-'}`); specY += 7 } // Küçültüldü
+        if (specs.yield) { renderSpec('Yield', specs.yield); specY += 7 } // Küçültüldü
 
-      if (specs.sheetSize || (specs as any).sheet) {
-        doc.setFontSize(8)
-        doc.setFont('helvetica', 'bold')
-        doc.setTextColor(44, 62, 80)
-        doc.text('Sheet Size (mm):', leftColumn, currentY)
-        currentY += 3
-        const sheetObj: any = (specs as any).sheetSize || (specs as any).sheet
-        addSpecLine('Width:', sheetObj?.width, 1)
-        addSpecLine('Length:', sheetObj?.length, 1)
-        currentY += 3
-      }
+        // Col 3: Baskı
+        specY = currentY + 10; specX += specColW // Küçültüldü
+        if (specs.numberUp) { renderSpec('Number Up', specs.numberUp); specY += 7 } // Küçültüldü
+        if (specs.varnish) { renderSpec('Varnish', specs.varnish); specY += 7 } // Küçültüldü
+        if (specs.sheetsToUse) { renderSpec('Sheets (Inc. Waste)', specs.sheetsToUse); specY += 7 } // Küçültüldü
 
-      if (specs.formeSize || (specs as any).forme) {
-        doc.setFontSize(8)
-        doc.setFont('helvetica', 'bold')
-        doc.setTextColor(44, 62, 80)
-        doc.text('Forme Dimensions (mm):', leftColumn, currentY)
-        currentY += 3
-        const formeObj: any = (specs as any).formeSize || (specs as any).forme
-        addSpecLine('Width:', formeObj?.width, 1)
-        addSpecLine('Length:', formeObj?.length, 1)
-        currentY += 3
-      }
-
-      // Capture left column end to balance heights
-      const leftColumnEndY = currentY
-      // Right column specs
-      currentY = tempY
-
-      if (specs.numberUp || specs.printedColors || specs.board) {
-        doc.setFontSize(8)
-        doc.setFont('helvetica', 'bold')
-        doc.setTextColor(44, 62, 80)
-        doc.text('Parameters:', rightColumn, currentY)
-        currentY += 3
-        
-        addSpecLine('Number Up:', specs.numberUp, 2)
-         // Colors intentionally omitted from printout
-        addSpecLine('Board:', specs.board, 2)
-        if ((specs as any).gsm) addSpecLine('GSM:', (specs as any).gsm, 2)
-        addSpecLine('Microns:', specs.microns, 2)
-        addSpecLine('Varnish:', specs.varnish, 2)
-         // Cut To duplicated elsewhere; omit here for cleaner layout
-        addSpecLine('Sheets (incl. wastage):', specs.sheetsToUse, 2)
-        if (specs.sheetSize) addSpecLine('Material Size:', specs.sheetSize, 2)
-        if (specs.yield) addSpecLine('Yield:', specs.yield, 2)
-        if ((specs as any).tags && Array.isArray((specs as any).tags) && (specs as any).tags.length > 0) {
-          addSpecLine('Tags:', (specs as any).tags.join(', '), 2)
+        // Col 4: Etiketler & Ekstralar
+        specY = currentY + 10; specX += specColW // Küçültüldü
+        if (specs.tags && Array.isArray(specs.tags)) { 
+             renderSpec('Tags', specs.tags.join(', ')); specY += 7  // Küçültüldü
         }
-      }
+        // Renkler (önceki kodda "excluded" denmişti ama veri varsa yazalım)
+        if (specs.printedColors) { renderSpec('Colors', String(specs.printedColors)); }
 
-      // Ensure both columns align visually (use tallest of left/right)
-      currentY = Math.max(currentY, leftColumnEndY, tempY + 22)
-      currentY += 8
+        currentY += specBoxH + 4 // Küçültüldü
     }
 
-    // Packaging & Delivery - Combined section
+    // --- 5. TABLOLAR (BOM & Output) ---
+    const drawTableSection = (title: string, items: any[], headers: string[], colWidths: number[], type: 'bom' | 'output') => {
+        if (!items || items.length === 0) return
+        checkPageBreak(30) // Küçültüldü
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(COLORS.accent[0], COLORS.accent[1], COLORS.accent[2]) // Küçültüldü
+        doc.text(title, margin, currentY); doc.line(margin, currentY + 1.5, pageWidth - margin, currentY + 1.5) // Küçültüldü
+        currentY += 3 // Küçültüldü
+        
+        doc.setFillColor(240, 240, 240); doc.rect(margin, currentY, pageWidth - margin * 2, 5, 'F') // Küçültüldü
+        let tx = margin
+        doc.setFontSize(6); doc.setTextColor(0, 0, 0) // Küçültüldü
+        headers.forEach((h, i) => { doc.text(h, tx + 2, currentY + 3.5); tx += colWidths[i] }) // Küçültüldü
+        currentY += 5 // Küçültüldü
+
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(COLORS.text[0], COLORS.text[1], COLORS.text[2]) // Küçültüldü
+        items.slice(0, 8).forEach((item) => { // Limit azaltıldı (15 -> 8)
+            if (checkPageBreak(5)) return // Küçültüldü
+            let vals = type === 'bom' 
+                ? [item.sku || '-', item.name || '-', String(item.qtyRequired || 0), item.uom || '-']
+                : [item.sku || '-', item.name || '-', String(item.qtyPlanned || item.quantity || 0), item.uom || job.unit || '-']
+            
+            tx = margin
+            vals.forEach((v, i) => {
+                const txt = (i === 1 && v.length > 30) ? v.substring(0, 27) + '...' : v // Küçültüldü
+                doc.text(txt, tx + 2, currentY + 3) // Küçültüldü
+                tx += colWidths[i]
+            })
+            doc.setDrawColor(230, 230, 230); doc.line(margin, currentY + 4.5, pageWidth - margin, currentY + 4.5) // Küçültüldü
+            currentY += 4.5 // Küçültüldü
+        })
+        if (items.length > 8) { // Limit değişti
+             doc.setFontSize(6); doc.setTextColor(COLORS.label[0], COLORS.label[1], COLORS.label[2]) // Küçültüldü
+             doc.text(`... +${items.length - 8} more items`, margin, currentY + 3) // Küçültüldü
+             currentY += 4 // Küçültüldü
+        }
+        currentY += 4 // Küçültüldü
+    }
+
+    if (job.bom && job.bom.length > 0) drawTableSection('REQUIRED MATERIALS (BOM)', job.bom, ['SKU', 'MATERIAL NAME', 'QTY', 'UNIT'], [30, 100, 25, 25], 'bom')
+    if (job.output && job.output.length > 0) drawTableSection('PLANNED OUTPUT', job.output, ['SKU', 'PRODUCT NAME', 'QTY', 'UNIT'], [30, 100, 25, 25], 'output')
+
+    // --- 6. PAKETLEME & NOTLAR ---
+    checkPageBreak(25) // Küçültüldü
     const packaging = job.packaging
-    const hasPackaging = !!(packaging && Object.keys(packaging).length > 0)
-    const hasDelivery = job.deliveryAddress || job.deliveryMethod || job.outerType
-
-    if (hasPackaging || hasDelivery) {
-      createCompactSection('PACKAGING & DELIVERY', 25)
-
-      // Calculate summary values
-      const sumPcsPerBox = job.packaging?.pcsPerBox
-      const sumBoxes = job.packaging?.plannedBoxes ?? (job.unit === 'box' ? job.quantity : undefined)
-      const sumBoxesPerPallet = job.packaging?.boxesPerPallet
-      const sumPallets = job.packaging?.plannedPallets ?? (sumBoxes && sumBoxesPerPallet ? Math.ceil(sumBoxes / sumBoxesPerPallet) : undefined)
-      const sumTotalPcs = sumPcsPerBox && sumBoxes ? sumPcsPerBox * sumBoxes : undefined
-
-      // Two-column grid
-      const labelOffset = 32
-      let leftY = currentY
-      let rightY = currentY
-
-      // Left column summary
-      const leftRows: Array<{label: string; value: string}> = [
-        { label: 'Total Box/PCS', value: `${sumBoxes ?? '—'} box / ${sumTotalPcs ?? '—'} pcs` },
-        { label: 'Pallets', value: sumPallets !== undefined ? String(sumPallets) : '—' },
-        { label: 'Pcs/Box', value: sumPcsPerBox !== undefined ? String(sumPcsPerBox) : '—' },
-        { label: 'Boxes/Pallet', value: sumBoxesPerPallet !== undefined ? String(sumBoxesPerPallet) : '—' },
-      ]
-      leftRows.forEach((row) => {
-        doc.setFontSize(8)
-        doc.setFont('helvetica', 'bold')
-        doc.setTextColor(100, 100, 100)
-        doc.text(row.label + ':', leftColumn, leftY)
-        doc.setFont('helvetica', 'normal')
-        doc.setTextColor(0, 0, 0)
-        doc.text(row.value, leftColumn + labelOffset, leftY)
-        leftY += 4
-      })
-
-      // Right column delivery
-      if (hasDelivery) {
-        if (job.deliveryMethod) {
-          doc.setFontSize(8)
-          doc.setFont('helvetica', 'bold')
-          doc.setTextColor(100, 100, 100)
-          doc.text('Delivery Method:', rightColumn, rightY)
-          doc.setFont('helvetica', 'normal')
-          doc.setTextColor(0, 0, 0)
-          doc.text(job.deliveryMethod, rightColumn + labelOffset, rightY)
-          rightY += 4
-        }
-
-        if (job.deliveryAddress) {
-          doc.setFontSize(8)
-          doc.setFont('helvetica', 'bold')
-          doc.setTextColor(100, 100, 100)
-          doc.text('Address:', rightColumn, rightY)
-          rightY += 3
-          const addrLines = doc.splitTextToSize(job.deliveryAddress, columnWidth - labelOffset - 5)
-          doc.setFont('helvetica', 'normal')
-          doc.setTextColor(0, 0, 0)
-          // ensure address aligns to same x for all lines
-          const addrX = rightColumn + labelOffset
-          addrLines.forEach((line: string, i: number) => {
-            doc.text(line, addrX, rightY + i * 3)
-          })
-          rightY += addrLines.length * 3
-        }
-
-        // Delivery Date (same as due date)
-        if (job.dueDate) {
-          doc.setFontSize(8)
-          doc.setFont('helvetica', 'bold')
-          doc.setTextColor(100, 100, 100)
-          doc.text('Delivery Date:', rightColumn, rightY + 3)
-          doc.setFont('helvetica', 'normal')
-          doc.setTextColor(0, 0, 0)
-          doc.text(formatFullDate(job.dueDate), rightColumn + labelOffset, rightY + 3)
-          rightY += 6
-        }
-      }
-
-      currentY = Math.max(leftY, rightY) + 6
+    if (packaging && (packaging.pcsPerBox || packaging.boxesPerPallet)) {
+         const packH = 15 // Küçültüldü
+         drawBox(margin, currentY, pageWidth - margin * 2, packH, 'Packaging Configuration')
+         let packX = margin + 3
+         let packY = currentY + 10 // Küçültüldü
+         const pW = (pageWidth - margin * 2) / 4
+         drawDataBlock('Pcs / Box', String(packaging.pcsPerBox || '-'), packX, packY, pW)
+         drawDataBlock('Boxes / Pallet', String(packaging.boxesPerPallet || '-'), packX + pW, packY, pW)
+         drawDataBlock('Planned Boxes', String(packaging.plannedBoxes || '-'), packX + pW * 2, packY, pW)
+         drawDataBlock('Planned Pallets', String(packaging.plannedPallets || '-'), packX + pW * 3, packY, pW)
+         currentY += packH + 4 // Küçültüldü
     }
 
-    // Planned Output - Compact table
-    if (job.output && job.output.length > 0) {
-      createCompactSection('PLANNED OUTPUT', job.output.length * 4 + 12)
-
-      // Table header
-      doc.setFillColor(44, 62, 80)
-      doc.rect(leftColumn, currentY, contentWidth, 4, 'F')
-      
-      doc.setTextColor(255, 255, 255)
-      doc.setFontSize(7)
-      doc.setFont('helvetica', 'bold')
-      
-      doc.text('SKU', leftColumn + 2, currentY + 2.5)
-      doc.text('PRODUCT', leftColumn + 35, currentY + 2.5)
-      doc.text('QTY', leftColumn + 120, currentY + 2.5)
-      doc.text('UOM', leftColumn + 140, currentY + 2.5)
-      
-      currentY += 6
-
-      // Table rows
-      doc.setTextColor(0, 0, 0)
-      doc.setFont('helvetica', 'normal')
-      
-      job.output.slice(0, 6).forEach((item) => { // Limit to 6 items
-        if (currentY + 4 > pageHeight - 30) return
-        
-        doc.setFontSize(7)
-        
-        const skuText = (item.sku || 'N/A').length > 15 ? (item.sku || 'N/A').substring(0, 12) + '...' : (item.sku || 'N/A')
-        doc.text(skuText, leftColumn + 2, currentY + 2.5)
-        
-        const productName = item.name.length > 35 ? item.name.substring(0, 32) + '...' : item.name
-        doc.text(productName, leftColumn + 35, currentY + 2.5)
-        
-        const qtyValue = (item as any).qtyPlanned ?? (item as any).quantity ?? (item as any).qty ?? 0
-        doc.text(String(qtyValue), leftColumn + 120, currentY + 2.5)
-        doc.text(item.uom || job.unit || '', leftColumn + 140, currentY + 2.5)
-        
-        currentY += 4
-      })
-
-      if (job.output.length > 6) {
-        doc.setFontSize(8)
-        doc.setTextColor(100, 100, 100)
-        doc.text(`+${job.output.length - 6} more items...`, leftColumn + 2, currentY + 2.5)
-        currentY += 4
-      }
-
-      currentY += 8
-    }
-
-    // Notes Section - Compact
     if (job.notes) {
-      createCompactSection('SPECIAL INSTRUCTIONS', 20)
-
-      doc.setFontSize(9)
-      doc.setFont('helvetica', 'normal')
-      doc.setTextColor(0, 0, 0)
-      
-      const notesLines = doc.splitTextToSize(job.notes, contentWidth - 10)
-      
-      // Notes with subtle background
-      doc.setFillColor(255, 253, 231)
-      doc.rect(margin, currentY, contentWidth, notesLines.length * 3.5 + 4, 'F')
-      
-      doc.setDrawColor(241, 196, 15)
-      doc.setLineWidth(0.2)
-      doc.rect(margin, currentY, contentWidth, notesLines.length * 3.5 + 4)
-      
-      notesLines.forEach((line: string, index: number) => {
-        doc.text(line, margin + 3, currentY + 3 + (index * 3.5))
-      })
-      
-      currentY += notesLines.length * 3.5 + 8
+        checkPageBreak(20) // Küçültüldü
+        doc.setFillColor(255, 252, 235); doc.setDrawColor(245, 230, 180)
+        doc.rect(margin, currentY, pageWidth - margin * 2, 18, 'FD') // Küçültüldü
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(200, 140, 0) // Küçültüldü
+        doc.text('SPECIAL INSTRUCTIONS / NOTES', margin + 3, currentY + 4) // Küçültüldü
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(7); doc.setTextColor(COLORS.text[0], COLORS.text[1], COLORS.text[2]) // Küçültüldü
+        const notes = doc.splitTextToSize(job.notes, pageWidth - margin * 2 - 6)
+        doc.text(notes, margin + 3, currentY + 8) // Küçültüldü
+        currentY += 18 + 4 // Küçültüldü
     }
 
-    // Footer
-    const addFooter = () => {
-      doc.setDrawColor(200, 200, 200)
-      doc.setLineWidth(0.3)
-      doc.line(margin, pageHeight - 12, pageWidth - margin, pageHeight - 12)
-      
-      doc.setFontSize(7)
-      doc.setTextColor(150, 150, 150)
-      doc.setFont('helvetica', 'normal')
-      
-      // Left: Document info
-      doc.text(`Job: ${job.code || job.id}`, margin, pageHeight - 8)
-      
-      // Center: Generation info
-      doc.text(`Generated: ${new Date().toLocaleDateString()}`, pageWidth / 2, pageHeight - 8, { align: 'center' })
-      
-      // Right: Page info
-      const pageCount = doc.getNumberOfPages()
-      doc.text(`Page 1 of ${pageCount}`, pageWidth - margin, pageHeight - 8, { align: 'right' })
+    // --- FOOTER & İMZALAR ---
+    const footerH = 25 // Küçültüldü
+    let footerY = pageHeight - footerH - 5 // Küçültüldü
+    // Tek sayfaya sığdırmak için sayfa ekleme yok
+    if (currentY > footerY - 5) {
+      // İçeriği biraz daha sıkıştır
+      currentY = footerY - 5
     }
 
-    addFooter()
+    const sigW = (pageWidth - margin * 2) / 3
+    const sigH = 15 // Küçültüldü
+    const drawSigBox = (title: string, x: number) => {
+        doc.setDrawColor(COLORS.border[0], COLORS.border[1], COLORS.border[2]); doc.rect(x, footerY, sigW - 5, sigH)
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(6); doc.setTextColor(COLORS.label[0], COLORS.label[1], COLORS.label[2]) // Küçültüldü
+        doc.text(title, x + 2, footerY + 3.5) // Küçültüldü
+        doc.setDrawColor(200, 200, 200); doc.line(x + 5, footerY + sigH - 4, x + sigW - 10, footerY + sigH - 4) // Küçültüldü
+    }
+    drawSigBox('OPERATOR', margin); drawSigBox('QUALITY CONTROL', margin + sigW); drawSigBox('SUPERVISOR', margin + sigW * 2)
 
-    // Return PDF as Blob
-    const pdfBlob = doc.output('blob')
-    return pdfBlob
+    doc.setDrawColor(COLORS.border[0], COLORS.border[1], COLORS.border[2]); doc.line(margin, pageHeight - 8, pageWidth - margin, pageHeight - 8) // Küçültüldü
+    doc.setFontSize(6); doc.setTextColor(150, 150, 150); doc.setFont('helvetica', 'normal') // Küçültüldü
+    doc.text(`Job: ${job.code || job.id}`, margin, pageHeight - 5) // Küçültüldü
+    doc.text(new Date().toLocaleDateString(), pageWidth / 2, pageHeight - 5, { align: 'center' }) // Küçültüldü
 
+    return doc.output('blob')
   } catch (error) {
     console.error('PDF generation error:', error)
     throw new Error(`PDF oluşturulamadı: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}`)
@@ -584,94 +365,68 @@ export async function generateJobPDFBlob(job: Job): Promise<Blob> {
 }
 
 export async function downloadJobPDF(job: Job): Promise<void> {
-  const blob = await generateJobPDFBlob(job)
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = `Production_Order_${job.code || job.id}.pdf`
-  document.body.appendChild(link)
-  link.click()
-  document.body.removeChild(link)
-  URL.revokeObjectURL(url)
+  try {
+    const blob = await generateJobPDFBlob(job)
+    const url = URL.createObjectURL(blob)
+    const filename = `Production_Order_${job.code || job.id}.pdf`
+    
+    // Mobil cihazlar için kontrol
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
+    
+    if (isMobile) {
+      // Mobil cihazlarda yeni pencerede aç
+      const newWindow = window.open(url, '_blank')
+      if (!newWindow) {
+        // Pop-up engellenmişse, kullanıcıya bilgi ver
+        throw new Error('PDF açılamadı. Lütfen tarayıcınızın pop-up engelleyicisini kapatın ve tekrar deneyin.')
+      }
+      // Mobilde URL'yi hemen temizleme, kullanıcı indirebilir
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } else {
+      // Masaüstünde normal indirme
+      const link = document.createElement('a')
+      link.href = url
+      link.download = filename
+      link.style.display = 'none'
+      
+      document.body.appendChild(link)
+      
+      try {
+        link.click()
+        // Başarılı olduktan sonra temizle
+        setTimeout(() => {
+          if (document.body.contains(link)) {
+            document.body.removeChild(link)
+          }
+          URL.revokeObjectURL(url)
+        }, 100)
+      } catch (clickError) {
+        // Eğer programatik click çalışmazsa, yeni pencerede aç
+        console.warn('Programmatic click failed, opening in new window:', clickError)
+        window.open(url, '_blank')
+        setTimeout(() => URL.revokeObjectURL(url), 1000)
+      }
+    }
+  } catch (error) {
+    console.error('PDF download error:', error)
+    throw new Error(`PDF indirilemedi: ${error instanceof Error ? error.message : 'Bilinmeyen hata'}`)
+  }
 }
 
 function getPriorityLabel(priority: number): string {
-  const labels: Record<number, string> = {
-    1: 'CRITICAL',
-    2: 'HIGH', 
-    3: 'MEDIUM',
-    4: 'LOW',
-    5: 'VERY LOW',
-  }
-  return labels[priority] || 'UNKNOWN'
-}
-
-function getPriorityColor(priority: number): { r: number; g: number; b: number } {
-  const colors: Record<number, { r: number; g: number; b: number }> = {
-    1: { r: 220, g: 38, b: 38 },   // Red
-    2: { r: 234, g: 88, b: 12 },   // Orange
-    3: { r: 202, g: 138, b: 4 },   // Yellow
-    4: { r: 22, g: 163, b: 74 },   // Green
-    5: { r: 107, g: 114, b: 128 }, // Gray
-  }
-  return colors[priority] || { r: 107, g: 114, b: 128 }
+  const labels: Record<number, string> = { 1: 'CRITICAL', 2: 'HIGH', 3: 'MEDIUM', 4: 'LOW', 5: 'VERY LOW' }
+  return labels[priority] || 'NORMAL'
 }
 
 function formatStatus(status: string): string {
-  return status.split('_').map(word => 
-    word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
-  ).join(' ')
+  return status.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(' ')
 }
 
 function formatDate(date: any): string {
-  if (!date) return 'Not set'
-  
+  if (!date) return '-'
   try {
-    let d: Date
-    if (typeof date === 'string') {
-      d = new Date(date)
-    } else if (typeof date === 'number') {
-      d = new Date(date)
-    } else if (date?.seconds) {
-      d = new Date(date.seconds * 1000)
-    } else if (date instanceof Date) {
-      d = date
-    } else {
-      return 'Invalid date'
-    }
-
-    if (isNaN(d.getTime())) {
-      return 'Invalid date'
-    }
-
-    return d.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-    })
-  } catch {
-    return 'Invalid date'
-  }
-}
-
-// Full date with weekday, e.g., "Sat, Nov 22, 2025"
-function formatFullDate(date: any): string {
-  if (!date) return 'Not set'
-  try {
-    let d: Date
-    if (typeof date === 'string') d = new Date(date)
-    else if (typeof date === 'number') d = new Date(date)
-    else if ((date as any)?.seconds) d = new Date((date as any).seconds * 1000)
-    else if (date instanceof Date) d = date
-    else return 'Invalid date'
-
-    if (isNaN(d.getTime())) return 'Invalid date'
-    return d.toLocaleDateString('en-US', {
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-    })
-  } catch {
-    return 'Invalid date'
-  }
+    const d = new Date(typeof date === 'string' || typeof date === 'number' ? date : (date.seconds * 1000))
+    if (isNaN(d.getTime())) return '-'
+    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+  } catch { return '-' }
 }

@@ -8,6 +8,9 @@ import {
   query,
   serverTimestamp,
   where,
+  doc,
+  updateDoc,
+  getDoc,
 } from 'firebase/firestore'
 
 export type UiTxnType = 'in' | 'out' | 'transfer' | 'adjustment'
@@ -120,4 +123,63 @@ export async function listProducts(workspaceId: string): Promise<ListedProduct[]
   return productsWithStock
 }
 
+export async function getProductByCode(workspaceId: string, code: string): Promise<ListedProduct | null> {
+  const productsCol = collection(db, 'workspaces', workspaceId, 'products')
+
+  // Try finding by SKU first
+  const skuQuery = query(productsCol, where('sku', '==', code), limit(1))
+  const skuSnap = await getDocs(skuQuery)
+
+  if (!skuSnap.empty) {
+    const d = skuSnap.docs[0]
+    const data = d.data() as any
+    const onHand = await getProductOnHand(workspaceId, d.id)
+    return { id: d.id, ...data, qtyOnHand: onHand } as ListedProduct
+  }
+
+  // If not found by SKU, try ID
+  try {
+    const docRef = doc(db, 'workspaces', workspaceId, 'products', code)
+    const docSnap = await getDoc(docRef)
+    if (docSnap.exists()) {
+      const data = docSnap.data() as any
+      const onHand = await getProductOnHand(workspaceId, docSnap.id)
+      return { id: docSnap.id, ...data, qtyOnHand: onHand } as ListedProduct
+    }
+  } catch (e) {
+    // Ignore invalid ID format errors
+  }
+
+  return null
+}
+
+/**
+ * Recalculates qtyOnHand for a specific product based on transaction history
+ */
+export async function recalculateProductStock(workspaceId: string, productId: string): Promise<number> {
+  // Get all transactions for this product (without orderBy to avoid index requirement)
+  const txnsCol = collection(db, 'workspaces', workspaceId, 'stockTxns')
+  const txnsQuery = query(
+    txnsCol,
+    where('productId', '==', productId)
+  )
+  const txnsSnap = await getDocs(txnsQuery)
+
+  // Calculate total from transactions
+  let calculatedQty = 0
+  txnsSnap.docs.forEach(txnDoc => {
+    const txn = txnDoc.data()
+    calculatedQty += Number(txn.qty || 0)
+  })
+
+  // Update the product document
+  const productRef = doc(db, 'workspaces', workspaceId, 'products', productId)
+  await updateDoc(productRef, {
+    qtyOnHand: calculatedQty
+  })
+
+  console.log(`Product ${productId}: Recalculated qtyOnHand = ${calculatedQty} (from ${txnsSnap.size} transactions)`)
+
+  return calculatedQty
+}
 

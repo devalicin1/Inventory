@@ -1,0 +1,21 @@
+import React from 'react';
+
+interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
+    noPadding?: boolean;
+}
+
+export const Card: React.FC<CardProps> = ({
+    children,
+    className = '',
+    noPadding = false,
+    ...props
+}) => {
+    return (
+        <div
+            className={`bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow duration-200 ${noPadding ? '' : 'p-6'} ${className}`}
+            {...props}
+        >
+            {children}
+        </div>
+    );
+};

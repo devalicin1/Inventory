@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import React, { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSessionStore } from '../state/sessionStore'
 import { 
@@ -7,12 +7,13 @@ import {
   listSubcategories, createSubcategory, updateSubcategory, deleteSubcategory,
   listCustomFields, createCustomField, updateCustomField, deleteCustomField,
   listStockReasons, createStockReason, updateStockReason, deleteStockReason,
-  initializeDefaultStockReasons
+  initializeDefaultStockReasons,
+  getReportSettings, updateReportSettings
 } from '../api/settings'
 import { listGroups } from '../api/products'
 
 export function Settings() {
-  const [activeTab, setActiveTab] = useState<'uom' | 'categories' | 'subcategories' | 'custom-fields' | 'stock-reasons'>('uom')
+  const [activeTab, setActiveTab] = useState<'uom' | 'categories' | 'subcategories' | 'custom-fields' | 'stock-reasons' | 'report-settings'>('uom')
   const [showCreate, setShowCreate] = useState(false)
   const [editingItem, setEditingItem] = useState<any>(null)
   const [formData, setFormData] = useState<any>({})
@@ -44,7 +45,14 @@ export function Settings() {
   const { data: groups = [] } = useQuery({
     queryKey: ['groups', workspaceId],
     queryFn: () => listGroups(workspaceId!),
-    enabled: !!workspaceId && activeTab === 'custom-fields'
+    enabled: !!workspaceId && (activeTab === 'custom-fields' || activeTab === 'report-settings')
+  })
+
+  // Report settings queries
+  const { data: reportSettings, isLoading: reportSettingsLoading } = useQuery({
+    queryKey: ['reportSettings', workspaceId],
+    queryFn: () => getReportSettings(workspaceId!),
+    enabled: !!workspaceId && activeTab === 'report-settings'
   })
 
   // Custom fields queries
@@ -288,7 +296,8 @@ export function Settings() {
             { id: 'categories', name: 'Categories', icon: '📁' },
             { id: 'subcategories', name: 'Subcategories', icon: '📂' },
             { id: 'custom-fields', name: 'Custom Fields', icon: '⚙️' },
-            { id: 'stock-reasons', name: 'Stock Reasons', icon: '📋' }
+            { id: 'stock-reasons', name: 'Stock Reasons', icon: '📋' },
+            { id: 'report-settings', name: 'Report Settings', icon: '📊' }
           ].map((tab) => (
             <button
               key={tab.id}
@@ -316,42 +325,62 @@ export function Settings() {
               {activeTab === 'subcategories' && 'Subcategories'}
               {activeTab === 'custom-fields' && 'Custom Fields'}
               {activeTab === 'stock-reasons' && 'Stock Operation Reasons'}
+              {activeTab === 'report-settings' && 'Report Customization'}
             </h2>
-            <div className="flex space-x-2">
-              {activeTab === 'stock-reasons' && stockReasons.length === 0 && (
+            {activeTab !== 'report-settings' && (
+              <div className="flex space-x-2">
+                {activeTab === 'stock-reasons' && stockReasons.length === 0 && (
+                  <button
+                    onClick={async () => {
+                      if (!workspaceId) return
+                      try {
+                        await initializeDefaultStockReasons(workspaceId)
+                        queryClient.invalidateQueries({ queryKey: ['stockReasons', workspaceId] })
+                        alert('Default stock reasons have been initialized!')
+                      } catch (error) {
+                        console.error('Initialize error:', error)
+                        alert('Error initializing default reasons: ' + (error instanceof Error ? error.message : 'Unknown error'))
+                      }
+                    }}
+                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                  >
+                    Initialize Defaults
+                  </button>
+                )}
                 <button
-                  onClick={async () => {
-                    if (!workspaceId) return
-                    try {
-                      await initializeDefaultStockReasons(workspaceId)
-                      queryClient.invalidateQueries({ queryKey: ['stockReasons', workspaceId] })
-                      alert('Default stock reasons have been initialized!')
-                    } catch (error) {
-                      console.error('Initialize error:', error)
-                      alert('Error initializing default reasons: ' + (error instanceof Error ? error.message : 'Unknown error'))
-                    }
+                  onClick={() => {
+                    setShowCreate(true)
+                    setEditingItem(null)
+                    setFormData({})
                   }}
-                  className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
                 >
-                  Initialize Defaults
+                  Add New
                 </button>
-              )}
-              <button
-                onClick={() => {
-                  setShowCreate(true)
-                  setEditingItem(null)
-                  setFormData({})
-                }}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-              >
-                Add New
-              </button>
-            </div>
+              </div>
+            )}
           </div>
         </div>
 
         <div className="p-6">
-          {getCurrentLoading() ? (
+          {activeTab === 'report-settings' ? (
+            <ReportSettingsTab 
+              groups={groups}
+              reportSettings={reportSettings}
+              isLoading={reportSettingsLoading}
+              onSave={async (rawMaterialGroupIds) => {
+                if (!workspaceId) return
+                try {
+                  await updateReportSettings(workspaceId, { rawMaterialGroupIds })
+                  queryClient.invalidateQueries({ queryKey: ['reportSettings', workspaceId] })
+                  alert('Report settings saved successfully!')
+                } catch (error) {
+                  console.error('Save error:', error)
+                  alert('Error saving report settings: ' + (error instanceof Error ? error.message : 'Unknown error'))
+                }
+              }}
+            />
+          ) : getCurrentLoading() ? (
             <div className="animate-pulse space-y-4">
               {[...Array(3)].map((_, i) => (
                 <div key={i} className="h-16 bg-gray-200 rounded"></div>
@@ -565,6 +594,100 @@ export function Settings() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// Report Settings Tab Component
+function ReportSettingsTab({ 
+  groups, 
+  reportSettings, 
+  isLoading,
+  onSave 
+}: { 
+  groups: any[]
+  reportSettings: any
+  isLoading: boolean
+  onSave: (rawMaterialGroupIds: string[]) => void
+}) {
+  const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([])
+
+  React.useEffect(() => {
+    if (reportSettings?.rawMaterialGroupIds) {
+      setSelectedGroupIds(reportSettings.rawMaterialGroupIds)
+    }
+  }, [reportSettings])
+
+  const handleToggleGroup = (groupId: string) => {
+    setSelectedGroupIds(prev => 
+      prev.includes(groupId)
+        ? prev.filter(id => id !== groupId)
+        : [...prev, groupId]
+    )
+  }
+
+  if (isLoading) {
+    return (
+      <div className="animate-pulse space-y-4">
+        {[...Array(3)].map((_, i) => (
+          <div key={i} className="h-16 bg-gray-200 rounded"></div>
+        ))}
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <h3 className="text-sm font-medium text-blue-900 mb-2">Report Customization</h3>
+        <p className="text-sm text-blue-700">
+          Select product folders (groups) that should be treated as raw materials. 
+          Products in these folders will be excluded from reports.
+        </p>
+      </div>
+
+      <div className="space-y-4">
+        <h3 className="text-lg font-semibold text-gray-900">Raw Material Folders</h3>
+        {groups.length === 0 ? (
+          <div className="text-center py-8 text-gray-500">
+            No product folders found. Create folders in the Inventory page first.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {groups.map((group) => (
+              <label
+                key={group.id}
+                className="flex items-center space-x-3 p-4 border border-gray-200 rounded-lg hover:bg-gray-50 cursor-pointer"
+              >
+                <input
+                  type="checkbox"
+                  checked={selectedGroupIds.includes(group.id)}
+                  onChange={() => handleToggleGroup(group.id)}
+                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                />
+                <div className="flex-1">
+                  <span className="text-sm font-medium text-gray-900">{group.name}</span>
+                  {selectedGroupIds.includes(group.id) && (
+                    <span className="ml-2 text-xs text-red-600 font-medium">(Raw Material)</span>
+                  )}
+                </div>
+              </label>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="flex justify-end pt-4 border-t border-gray-200">
+        <button
+          onClick={() => onSave(selectedGroupIds)}
+          className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium flex items-center"
+        >
+          <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+          </svg>
+          Save Settings
+        </button>
+      </div>
     </div>
   )
 }

@@ -82,7 +82,11 @@ export function Returns({ workspaceId }: ReturnsProps) {
     { key: 'date' as keyof ReturnsRow, label: 'Date' },
     { key: 'customer' as keyof ReturnsRow, label: 'Customer' },
     { key: 'orderNo' as keyof ReturnsRow, label: 'Order No' },
-    { key: 'sku' as keyof ReturnsRow, label: 'SKU' },
+    { 
+      key: 'sku' as keyof ReturnsRow, 
+      label: 'SKU',
+      render: (value: string) => value || '-'
+    },
     { 
       key: 'qty' as keyof ReturnsRow, 
       label: 'Qty',

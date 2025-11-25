@@ -57,7 +57,11 @@ export function CycleCountAccuracy({ workspaceId }: CycleCountAccuracyProps) {
   }
 
   const columns = [
-    { key: 'sku' as keyof CycleCountRow, label: 'SKU' },
+    { 
+      key: 'sku' as keyof CycleCountRow, 
+      label: 'SKU',
+      render: (value: string) => value || '-'
+    },
     { key: 'location' as keyof CycleCountRow, label: 'Location' },
     { 
       key: 'systemQty' as keyof CycleCountRow, 

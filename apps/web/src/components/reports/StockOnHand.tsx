@@ -93,54 +93,92 @@ export function StockOnHand({ workspaceId }: StockOnHandProps) {
     }
   }
 
+  // Helper function to clean product names and fix encoding issues
+  const cleanProductName = (name: string | null | undefined): string => {
+    if (!name) return 'Unnamed Product'
+    let cleaned = String(name)
+      .replace(/\uFFFD/g, '') // Remove replacement characters ()
+      .replace(/\u0000/g, '') // Remove null characters
+      .trim()
+    
+    // Try to decode HTML entities if any
+    try {
+      const textarea = document.createElement('textarea')
+      textarea.innerHTML = cleaned
+      cleaned = textarea.value || cleaned
+    } catch (e) {
+      // If decoding fails, use original
+    }
+    
+    // Remove question marks that appear between numbers (likely encoding errors for special characters)
+    // Pattern: " ? " or " ?" or "? " between alphanumeric characters
+    cleaned = cleaned.replace(/\s+\?\s+/g, ' ') // Remove " ? " patterns (space-question-space)
+    cleaned = cleaned.replace(/(\d)\s+\?(\s+\d)/g, '$1$2') // Remove " ? " between numbers
+    cleaned = cleaned.replace(/(\w)\s+\?(\s+\w)/g, '$1$2') // Remove " ? " between words
+    cleaned = cleaned.replace(/\s+\?/g, '') // Remove trailing " ?"
+    cleaned = cleaned.replace(/\?\s+/g, '') // Remove leading "? "
+    cleaned = cleaned.replace(/\s+/g, ' ') // Normalize multiple spaces to single space
+    cleaned = cleaned.trim()
+    
+    return cleaned || 'Unnamed Product'
+  }
+
   const columns = [
-    { key: 'sku' as keyof StockOnHandRow, label: 'SKU' },
-    { key: 'productName' as keyof StockOnHandRow, label: 'Product Name' },
+    { 
+      key: 'sku' as keyof StockOnHandRow, 
+      label: 'SKU',
+      render: (value: string) => value || '-'
+    },
+    { 
+      key: 'productName' as keyof StockOnHandRow, 
+      label: 'Product Name',
+      render: (value: string) => cleanProductName(value)
+    },
     { key: 'location' as keyof StockOnHandRow, label: 'Location' },
     { 
       key: 'soh' as keyof StockOnHandRow, 
       label: 'SOH',
-      render: (value: number) => value.toFixed(2)
+      render: (value: number) => value != null ? value.toFixed(2) : '-'
     },
     { 
       key: 'allocated' as keyof StockOnHandRow, 
       label: 'Allocated',
-      render: (value: number) => value.toFixed(2)
+      render: (value: number) => value != null ? value.toFixed(2) : '-'
     },
     { 
       key: 'available' as keyof StockOnHandRow, 
       label: 'Available',
-      render: (value: number) => value.toFixed(2)
+      render: (value: number) => value != null ? value.toFixed(2) : '-'
     },
     { 
       key: 'onPO' as keyof StockOnHandRow, 
       label: 'On PO',
-      render: (value: number) => value.toFixed(2)
+      render: (value: number) => value != null ? value.toFixed(2) : '-'
     },
     { 
       key: 'min' as keyof StockOnHandRow, 
       label: 'Min',
-      render: (value: number) => value.toFixed(2)
+      render: (value: number) => value != null ? value.toFixed(2) : '-'
     },
     { 
       key: 'max' as keyof StockOnHandRow, 
       label: 'Max',
-      render: (value: number) => value.toFixed(2)
+      render: (value: number) => value != null ? value.toFixed(2) : '-'
     },
     { 
       key: 'safety' as keyof StockOnHandRow, 
       label: 'Safety',
-      render: (value: number) => value.toFixed(2)
+      render: (value: number) => value != null ? value.toFixed(2) : '-'
     },
     { 
       key: 'reorderPoint' as keyof StockOnHandRow, 
       label: 'Reorder Point',
-      render: (value: number) => value.toFixed(2)
+      render: (value: number) => value != null ? value.toFixed(2) : '-'
     },
     { 
       key: 'daysOfCover' as keyof StockOnHandRow, 
       label: 'Days of Cover',
-      render: (value: number) => value.toFixed(1)
+      render: (value: number) => value != null ? value.toFixed(1) : '-'
     },
     {
       key: 'lowStock' as keyof StockOnHandRow,

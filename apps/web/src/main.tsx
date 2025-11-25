@@ -17,6 +17,25 @@ import { Reports } from './routes/Reports'
 import { ProductionScanner } from './components/ProductionScanner'
 import { useSessionStore } from './state/sessionStore'
 
+// Wrapper components to get workspaceId from session
+function ProductionCalendarWrapper() {
+  const { workspaceId } = useSessionStore()
+  if (!workspaceId) return <div>Loading...</div>
+  return <ProductionCalendar workspaceId={workspaceId} />
+}
+
+function ProductionReportsWrapper() {
+  const { workspaceId } = useSessionStore()
+  if (!workspaceId) return <div>Loading...</div>
+  return <ProductionReports workspaceId={workspaceId} />
+}
+
+function ProductionSettingsWrapper() {
+  const { workspaceId } = useSessionStore()
+  if (!workspaceId) return <div>Loading...</div>
+  return <ProductionSettings workspaceId={workspaceId} />
+}
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -45,9 +64,9 @@ const router = createBrowserRouter([
         element: <ProductionLayout />,
         children: [
           { index: true, element: <Production /> },
-          { path: 'calendar', element: <ProductionCalendar workspaceId={'demo-workspace'} /> },
-          { path: 'reports', element: <ProductionReports workspaceId={'demo-workspace'} /> },
-          { path: 'settings', element: <ProductionSettings workspaceId={'demo-workspace'} /> },
+          { path: 'calendar', element: <ProductionCalendarWrapper /> },
+          { path: 'reports', element: <ProductionReportsWrapper /> },
+          { path: 'settings', element: <ProductionSettingsWrapper /> },
         ]
       },
       { path: 'work', element: <Work /> },
