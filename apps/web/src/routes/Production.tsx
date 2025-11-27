@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { DataTable } from '../components/DataTable'
 import { ProductionBoard } from '../components/ProductionBoard'
+import { ProductionReportsTab } from '../components/job-detail/tabs/ProductionReportsTab'
 import { JobDetail } from '../components/JobDetail'
 import { CreateJobForm } from '../components/CreateJobForm'
 import { ConfirmStageChangeModal } from '../components/ConfirmStageChangeModal'
@@ -106,7 +107,7 @@ function ConfirmCompleteModal({
     queryFn: () => allJobRuns.filter(r => r.stageId === job.currentStageId),
     enabled: !!workspaceId && !!job.id && allJobRuns.length > 0
   })
-
+ 
   const currentStageInfo = getStageInfo(job.currentStageId)
   const currentStageInputUOM = currentStageInfo?.inputUOM || ''
   const currentStageOutputUOM = currentStageInfo?.outputUOM || ''
@@ -475,7 +476,7 @@ function RequireReleaseModal({
 
 // Main Production Component
 export function Production() {
-  const [view, setView] = useState<'board' | 'list'>('list')
+  const [view, setView] = useState<'board' | 'list' | 'reports'>('list')
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [fitToScreen, setFitToScreen] = useState(false)
   const [zoom, setZoom] = useState<number>(() => {
@@ -542,12 +543,21 @@ export function Production() {
     return true
   })
 
-  // Open job if ?jobId= is present
+  // Open job if ?jobId= is present or create form if ?action=new
   useEffect(() => {
     try {
       const params = new URLSearchParams(window.location.search)
       const jId = params.get('jobId')
-      if (jId && jobs.length > 0) {
+      const action = params.get('action')
+
+      if (action === 'new') {
+        setShowCreateForm(true)
+        // Clean up URL but keep other params if any
+        const newParams = new URLSearchParams(window.location.search)
+        newParams.delete('action')
+        const newUrl = newParams.toString() ? `${window.location.pathname}?${newParams.toString()}` : window.location.pathname
+        window.history.replaceState({}, '', newUrl)
+      } else if (jId && jobs.length > 0) {
         const match = jobs.find(j => j.id === jId)
         if (match) setSelectedJob(match)
       }
@@ -1026,324 +1036,336 @@ export function Production() {
       {/* Filters Panel */}
       {showFilters && (
         <Card className="bg-gray-50">
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Status</label>
-                  <div className="space-y-2">
-                    {['draft', 'released', 'in_progress', 'blocked', 'done', 'cancelled'].map(status => (
-                      <label key={status} className="flex items-center gap-2 text-sm">
-                        <input
-                          type="checkbox"
-                          checked={filters.status.includes(status)}
-                          onChange={(e) => {
-                            const newStatus = e.target.checked
-                              ? [...filters.status, status]
-                              : filters.status.filter(s => s !== status)
-                            setFilters({ ...filters, status: newStatus })
-                          }}
-                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                        />
-                        <span className="capitalize">{status.replace('_', ' ')}</span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Workcenter</label>
-                  <select
-                    value={filters.workcenterId}
-                    onChange={(e) => setFilters({ ...filters, workcenterId: e.target.value })}
-                    className="w-full rounded-lg border-gray-300 focus:border-blue-500 focus:ring-blue-500 py-2.5"
-                  >
-                    <option value="">All Workcenters</option>
-                    {workcenters.map(wc => (
-                      <option key={wc.id} value={wc.id}>{wc.name}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Assignee</label>
-                  <select
-                    value={filters.assigneeId}
-                    onChange={(e) => setFilters({ ...filters, assigneeId: e.target.value })}
-                    className="w-full rounded-lg border-gray-300 focus:border-blue-500 focus:ring-blue-500 py-2.5"
-                  >
-                    <option value="">All Assignees</option>
-                    {resources.map(resource => (
-                      <option key={resource.id} value={resource.id}>{resource.name}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Due Before</label>
-                  <input
-                    type="date"
-                    value={filters.dueBefore ? filters.dueBefore.toISOString().split('T')[0] : ''}
-                    onChange={(e) => setFilters({ ...filters, dueBefore: e.target.value ? new Date(e.target.value) : undefined })}
-                    className="w-full rounded-lg border-gray-300 focus:border-blue-500 focus:ring-blue-500 py-2.5"
-                  />
-                </div>
-              </div>
-
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mt-4 pt-4 border-t border-gray-200">
-                <button
-                  onClick={clearFilters}
-                  className="text-sm text-gray-600 hover:text-gray-800 transition-colors"
-                >
-                  Clear all filters
-                </button>
-                <span className="text-sm text-gray-500">
-                  Showing {filteredJobs.length} of {jobs.length} jobs
-                </span>
-              </div>
-            </Card>
-          )}
-
-          {/* Primary Stats Grid - Matching Dashboard Style */}
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
-            {/* Total Jobs */}
-            <Card className="relative overflow-hidden border-l-4 border-l-primary-500">
-              <div className="p-1">
-                <div className="flex items-center justify-between">
-                  <p className="truncate text-sm font-medium text-gray-500">Total Jobs</p>
-                  <div className="rounded-md bg-primary-50 p-2">
-                    <ChartBarIcon className="h-5 w-5 text-primary-600" aria-hidden="true" />
-                  </div>
-                </div>
-                <div className="mt-4 flex items-baseline">
-                  {jobsLoading ? (
-                    <div className="h-8 w-16 animate-pulse bg-gray-200 rounded" />
-                  ) : (
-                    <p className="text-3xl font-semibold text-gray-900">{filteredJobs.length}</p>
-                  )}
-                </div>
-                <div className="mt-1">
-                  <p className="text-xs text-gray-500">{filteredJobs.filter(j => j.status === 'in_progress').length} in progress</p>
-                </div>
-              </div>
-            </Card>
-
-            {/* In Progress */}
-            <Card className="relative overflow-hidden border-l-4 border-l-yellow-500">
-              <div className="p-1">
-                <div className="flex items-center justify-between">
-                  <p className="truncate text-sm font-medium text-gray-500">In Progress</p>
-                  <div className="rounded-md bg-yellow-50 p-2">
-                    <ClockIcon className="h-5 w-5 text-yellow-600" aria-hidden="true" />
-                  </div>
-                </div>
-                <div className="mt-4 flex items-baseline">
-                  {jobsLoading ? (
-                    <div className="h-8 w-16 animate-pulse bg-gray-200 rounded" />
-                  ) : (
-                    <p className="text-3xl font-semibold text-gray-900">
-                      {filteredJobs.filter(job => job.status === 'in_progress').length}
-                    </p>
-                  )}
-                </div>
-                <div className="mt-1">
-                  <p className="text-xs text-gray-500">{filteredJobs.filter(j => j.status === 'released').length} ready to start</p>
-                </div>
-              </div>
-            </Card>
-
-            {/* Blocked */}
-            <Card className="relative overflow-hidden border-l-4 border-l-red-500">
-              <div className="p-1">
-                <div className="flex items-center justify-between">
-                  <p className="truncate text-sm font-medium text-gray-500">Blocked</p>
-                  <div className="rounded-md bg-red-50 p-2">
-                    <ExclamationTriangleIcon className="h-5 w-5 text-red-600" aria-hidden="true" />
-                  </div>
-                </div>
-                <div className="mt-4 flex items-baseline">
-                  {jobsLoading ? (
-                    <div className="h-8 w-16 animate-pulse bg-gray-200 rounded" />
-                  ) : (
-                    <p className="text-3xl font-semibold text-gray-900">
-                      {filteredJobs.filter(job => job.status === 'blocked').length}
-                    </p>
-                  )}
-                </div>
-                <div className="mt-1">
-                  <p className="text-xs text-gray-500">Needs attention</p>
-                </div>
-              </div>
-            </Card>
-
-            {/* Completed */}
-            <Card className="relative overflow-hidden border-l-4 border-l-emerald-500">
-              <div className="p-1">
-                <div className="flex items-center justify-between">
-                  <p className="truncate text-sm font-medium text-gray-500">Completed</p>
-                  <div className="rounded-md bg-emerald-50 p-2">
-                    <CheckIcon className="h-5 w-5 text-emerald-600" aria-hidden="true" />
-                  </div>
-                </div>
-                <div className="mt-4 flex items-baseline">
-                  {jobsLoading ? (
-                    <div className="h-8 w-16 animate-pulse bg-gray-200 rounded" />
-                  ) : (
-                    <p className="text-3xl font-semibold text-gray-900">
-                      {filteredJobs.filter(job => job.status === 'done').length}
-                    </p>
-                  )}
-                </div>
-                <div className="mt-1">
-                  <p className="text-xs text-gray-500">
-                    {filteredJobs.filter(j => j.status === 'done' && isThisWeek(new Date(j.updatedAt))).length} this week
-                  </p>
-                </div>
-              </div>
-            </Card>
-          </div>
-
-        {/* Enhanced View Controls */}
-        <Card className="p-4">
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 sm:gap-4">
-            <div className="flex items-center gap-2 w-full lg:w-auto justify-between lg:justify-start">
-              {/* View Toggle */}
-              <div className="flex bg-gray-100 p-1 rounded-lg">
-                <button
-                  onClick={() => setView('board')}
-                  className={`px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm font-medium rounded-md transition-all flex items-center gap-1.5 sm:gap-2 ${view === 'board'
-                    ? 'bg-white text-gray-900 shadow-sm'
-                    : 'text-gray-500 hover:text-gray-700'
-                    }`}
-                >
-                  <Squares2X2Icon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                  <span className="hidden sm:inline">Board</span>
-                </button>
-                <button
-                  onClick={() => setView('list')}
-                  className={`px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm font-medium rounded-md transition-all flex items-center gap-1.5 sm:gap-2 ${view === 'list'
-                    ? 'bg-white text-gray-900 shadow-sm'
-                    : 'text-gray-500 hover:text-gray-700'
-                    }`}
-                >
-                  <ViewColumnsIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                  <span className="hidden sm:inline">List</span>
-                </button>
-              </div>
-
-              {/* View Info */}
-              <div className="text-xs sm:text-sm text-gray-500 hidden sm:block">
-                {view === 'board' ? 'Visual workflow' : 'Detailed list'}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Status</label>
+              <div className="space-y-2">
+                {['draft', 'released', 'in_progress', 'blocked', 'done', 'cancelled'].map(status => (
+                  <label key={status} className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={filters.status.includes(status)}
+                      onChange={(e) => {
+                        const newStatus = e.target.checked
+                          ? [...filters.status, status]
+                          : filters.status.filter(s => s !== status)
+                        setFilters({ ...filters, status: newStatus })
+                      }}
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <span className="capitalize">{status.replace('_', ' ')}</span>
+                  </label>
+                ))}
               </div>
             </div>
 
-            <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
-              {/* Board Controls */}
-              {view === 'board' && (
-                <>
-                  <div className="hidden sm:flex items-center gap-1 bg-gray-50 rounded-lg p-1">
-                    <button
-                      onClick={() => { const z = Math.max(0.5, Math.round((zoom - 0.1) * 10) / 10); setZoom(z); try { localStorage.setItem('boardZoom', String(z)) } catch { } }}
-                      className="p-1.5 sm:p-2 rounded-md text-xs sm:text-sm font-medium text-gray-700 hover:bg-white transition-colors"
-                      title="Zoom out"
-                    >
-                      −
-                    </button>
-                    <span className="px-2 sm:px-3 text-xs sm:text-sm text-gray-700 w-12 sm:w-16 text-center font-medium">{Math.round(zoom * 100)}%</span>
-                    <button
-                      onClick={() => { const z = Math.min(2, Math.round((zoom + 0.1) * 10) / 10); setZoom(z); try { localStorage.setItem('boardZoom', String(z)) } catch { } }}
-                      className="p-1.5 sm:p-2 rounded-md text-xs sm:text-sm font-medium text-gray-700 hover:bg-white transition-colors"
-                      title="Zoom in"
-                    >
-                      +
-                    </button>
-                  </div>
-
-                  <button
-                    onClick={() => setFitToScreen(v => !v)}
-                    className={`px-3 sm:px-4 py-1.5 sm:py-2.5 rounded-lg text-xs sm:text-sm font-medium inline-flex items-center gap-1.5 sm:gap-2 transition-colors ${fitToScreen
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
-                      }`}
-                  >
-                    <span className="hidden sm:inline">{fitToScreen ? 'Fit: On' : 'Fit: Off'}</span>
-                    <span className="sm:hidden">{fitToScreen ? 'Fit' : 'Fit'}</span>
-                  </button>
-                </>
-              )}
-
-              {/* Fullscreen Toggle */}
-              <button
-                onClick={toggleFullscreen}
-                className="px-3 sm:px-4 py-1.5 sm:py-2.5 rounded-lg text-xs sm:text-sm font-medium inline-flex items-center gap-1.5 sm:gap-2 bg-white text-gray-700 border border-gray-300 hover:bg-gray-50 transition-colors"
-                title={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Workcenter</label>
+              <select
+                value={filters.workcenterId}
+                onChange={(e) => setFilters({ ...filters, workcenterId: e.target.value })}
+                className="w-full rounded-lg border-gray-300 focus:border-blue-500 focus:ring-blue-500 py-2.5"
               >
-                {isFullscreen ? (
-                  <ArrowsPointingInIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                ) : (
-                  <ArrowsPointingOutIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                )}
-                <span className="hidden sm:inline">{isFullscreen ? 'Exit' : 'Fullscreen'}</span>
-                <span className="sm:hidden">{isFullscreen ? 'Exit' : 'Full'}</span>
-              </button>
+                <option value="">All Workcenters</option>
+                {workcenters.map(wc => (
+                  <option key={wc.id} value={wc.id}>{wc.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Assignee</label>
+              <select
+                value={filters.assigneeId}
+                onChange={(e) => setFilters({ ...filters, assigneeId: e.target.value })}
+                className="w-full rounded-lg border-gray-300 focus:border-blue-500 focus:ring-blue-500 py-2.5"
+              >
+                <option value="">All Assignees</option>
+                {resources.map(resource => (
+                  <option key={resource.id} value={resource.id}>{resource.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Due Before</label>
+              <input
+                type="date"
+                value={filters.dueBefore ? filters.dueBefore.toISOString().split('T')[0] : ''}
+                onChange={(e) => setFilters({ ...filters, dueBefore: e.target.value ? new Date(e.target.value) : undefined })}
+                className="w-full rounded-lg border-gray-300 focus:border-blue-500 focus:ring-blue-500 py-2.5"
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mt-4 pt-4 border-t border-gray-200">
+            <button
+              onClick={clearFilters}
+              className="text-sm text-gray-600 hover:text-gray-800 transition-colors"
+            >
+              Clear all filters
+            </button>
+            <span className="text-sm text-gray-500">
+              Showing {filteredJobs.length} of {jobs.length} jobs
+            </span>
+          </div>
+        </Card>
+      )}
+
+      {/* Primary Stats Grid - Matching Dashboard Style */}
+      <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
+        {/* Total Jobs */}
+        <Card className="relative overflow-hidden border-l-4 border-l-primary-500">
+          <div className="p-1">
+            <div className="flex items-center justify-between">
+              <p className="truncate text-sm font-medium text-gray-500">Total Jobs</p>
+              <div className="rounded-md bg-primary-50 p-2">
+                <ChartBarIcon className="h-5 w-5 text-primary-600" aria-hidden="true" />
+              </div>
+            </div>
+            <div className="mt-4 flex items-baseline">
+              {jobsLoading ? (
+                <div className="h-8 w-16 animate-pulse bg-gray-200 rounded" />
+              ) : (
+                <p className="text-3xl font-semibold text-gray-900">{filteredJobs.length}</p>
+              )}
+            </div>
+            <div className="mt-1">
+              <p className="text-xs text-gray-500">{filteredJobs.filter(j => j.status === 'in_progress').length} in progress</p>
             </div>
           </div>
         </Card>
 
-        {/* Main Content */}
-        {view === 'board' ? (
-          <div
-            ref={boardRef}
-            className={`bg-white rounded-xl sm:rounded-2xl shadow-sm border border-gray-100 overflow-hidden relative transition-all ${isFullscreen
-              ? 'fixed inset-0 z-50 m-0 rounded-none'
-              : 'h-[calc(100vh-200px)] sm:h-[calc(100vh-280px)] min-h-[400px] sm:min-h-[600px]'
-              }`}
-          >
-            <ProductionBoard
-              workspaceId={workspaceId}
-              onJobClick={setSelectedJob}
-              fitToScreen={fitToScreen}
-              zoom={zoom}
-            />
-
-            {isFullscreen && selectedJob && (
-              <div className="absolute inset-0 z-50 bg-white">
-                <JobDetail
-                  job={selectedJob}
-                  workspaceId={workspaceId}
-                  onClose={() => setSelectedJob(null)}
-                  onDelete={handleDeleteJob}
-                  workcenters={workcenters}
-                  resources={resources}
-                />
-              </div>
-            )}
-          </div>
-        ) : (
-          <>
-            {/* Mobile Search Bar - Sticky for easy access */}
-            <div className="md:hidden sticky top-0 z-10 bg-white rounded-xl shadow-sm border border-gray-100 p-3 mb-3">
-              <div className="relative">
-                <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-                <input
-                  type="text"
-                  placeholder="Search jobs, products, customers..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-10 pr-10 py-2.5 text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                />
-                {searchQuery && (
-                  <button
-                    onClick={() => setSearchQuery('')}
-                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                  >
-                    <XMarkIcon className="h-4 w-4" />
-                  </button>
-                )}
+        {/* In Progress */}
+        <Card className="relative overflow-hidden border-l-4 border-l-yellow-500">
+          <div className="p-1">
+            <div className="flex items-center justify-between">
+              <p className="truncate text-sm font-medium text-gray-500">In Progress</p>
+              <div className="rounded-md bg-yellow-50 p-2">
+                <ClockIcon className="h-5 w-5 text-yellow-600" aria-hidden="true" />
               </div>
             </div>
+            <div className="mt-4 flex items-baseline">
+              {jobsLoading ? (
+                <div className="h-8 w-16 animate-pulse bg-gray-200 rounded" />
+              ) : (
+                <p className="text-3xl font-semibold text-gray-900">
+                  {filteredJobs.filter(job => job.status === 'in_progress').length}
+                </p>
+              )}
+            </div>
+            <div className="mt-1">
+              <p className="text-xs text-gray-500">{filteredJobs.filter(j => j.status === 'released').length} ready to start</p>
+            </div>
+          </div>
+        </Card>
 
-            <div className="bg-white rounded-xl sm:rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-              {/* Mobile Card List View */}
-              <div className="md:hidden space-y-4 p-4">
+        {/* Blocked */}
+        <Card className="relative overflow-hidden border-l-4 border-l-red-500">
+          <div className="p-1">
+            <div className="flex items-center justify-between">
+              <p className="truncate text-sm font-medium text-gray-500">Blocked</p>
+              <div className="rounded-md bg-red-50 p-2">
+                <ExclamationTriangleIcon className="h-5 w-5 text-red-600" aria-hidden="true" />
+              </div>
+            </div>
+            <div className="mt-4 flex items-baseline">
+              {jobsLoading ? (
+                <div className="h-8 w-16 animate-pulse bg-gray-200 rounded" />
+              ) : (
+                <p className="text-3xl font-semibold text-gray-900">
+                  {filteredJobs.filter(job => job.status === 'blocked').length}
+                </p>
+              )}
+            </div>
+            <div className="mt-1">
+              <p className="text-xs text-gray-500">Needs attention</p>
+            </div>
+          </div>
+        </Card>
+
+        {/* Completed */}
+        <Card className="relative overflow-hidden border-l-4 border-l-emerald-500">
+          <div className="p-1">
+            <div className="flex items-center justify-between">
+              <p className="truncate text-sm font-medium text-gray-500">Completed</p>
+              <div className="rounded-md bg-emerald-50 p-2">
+                <CheckIcon className="h-5 w-5 text-emerald-600" aria-hidden="true" />
+              </div>
+            </div>
+            <div className="mt-4 flex items-baseline">
+              {jobsLoading ? (
+                <div className="h-8 w-16 animate-pulse bg-gray-200 rounded" />
+              ) : (
+                <p className="text-3xl font-semibold text-gray-900">
+                  {filteredJobs.filter(job => job.status === 'done').length}
+                </p>
+              )}
+            </div>
+            <div className="mt-1">
+              <p className="text-xs text-gray-500">
+                {filteredJobs.filter(j => j.status === 'done' && isThisWeek(new Date(j.updatedAt))).length} this week
+              </p>
+            </div>
+          </div>
+        </Card>
+      </div>
+
+      {/* Enhanced View Controls */}
+      <Card className="p-4">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 sm:gap-4">
+          <div className="flex items-center gap-2 w-full lg:w-auto justify-between lg:justify-start">
+            {/* View Toggle */}
+            <div className="flex bg-gray-100 p-1 rounded-lg">
+              <button
+                onClick={() => setView('board')}
+                className={`px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm font-medium rounded-md transition-all flex items-center gap-1.5 sm:gap-2 ${view === 'board'
+                  ? 'bg-white text-gray-900 shadow-sm'
+                  : 'text-gray-500 hover:text-gray-700'
+                  }`}
+              >
+                <Squares2X2Icon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                <span className="hidden sm:inline">Board</span>
+              </button>
+              <button
+                onClick={() => setView('list')}
+                className={`px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm font-medium rounded-md transition-all flex items-center gap-1.5 sm:gap-2 ${view === 'list'
+                  ? 'bg-white text-gray-900 shadow-sm'
+                  : 'text-gray-500 hover:text-gray-700'
+                  }`}
+              >
+                <ViewColumnsIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                <span className="hidden sm:inline">List</span>
+              </button>
+              <button
+                onClick={() => setView('reports')}
+                className={`px-2.5 sm:px-3 py-1.5 text-xs sm:text-sm font-medium rounded-md transition-all flex items-center gap-1.5 sm:gap-2 ${view === 'reports'
+                  ? 'bg-white text-gray-900 shadow-sm'
+                  : 'text-gray-500 hover:text-gray-700'
+                  }`}
+              >
+                <ChartBarIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                <span className="hidden sm:inline">Reports</span>
+              </button>
+            </div>
+
+            {/* View Info */}
+            <div className="text-xs sm:text-sm text-gray-500 hidden sm:block">
+              {view === 'board' ? 'Visual workflow' : view === 'list' ? 'Detailed list' : 'Analytics & Reports'}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+            {/* Board Controls */}
+            {view === 'board' && (
+              <>
+                <div className="hidden sm:flex items-center gap-1 bg-gray-50 rounded-lg p-1">
+                  <button
+                    onClick={() => { const z = Math.max(0.5, Math.round((zoom - 0.1) * 10) / 10); setZoom(z); try { localStorage.setItem('boardZoom', String(z)) } catch { } }}
+                    className="p-1.5 sm:p-2 rounded-md text-xs sm:text-sm font-medium text-gray-700 hover:bg-white transition-colors"
+                    title="Zoom out"
+                  >
+                    −
+                  </button>
+                  <span className="px-2 sm:px-3 text-xs sm:text-sm text-gray-700 w-12 sm:w-16 text-center font-medium">{Math.round(zoom * 100)}%</span>
+                  <button
+                    onClick={() => { const z = Math.min(2, Math.round((zoom + 0.1) * 10) / 10); setZoom(z); try { localStorage.setItem('boardZoom', String(z)) } catch { } }}
+                    className="p-1.5 sm:p-2 rounded-md text-xs sm:text-sm font-medium text-gray-700 hover:bg-white transition-colors"
+                    title="Zoom in"
+                  >
+                    +
+                  </button>
+                </div>
+
+                <button
+                  onClick={() => setFitToScreen(v => !v)}
+                  className={`px-3 sm:px-4 py-1.5 sm:py-2.5 rounded-lg text-xs sm:text-sm font-medium inline-flex items-center gap-1.5 sm:gap-2 transition-colors ${fitToScreen
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+                    }`}
+                >
+                  <span className="hidden sm:inline">{fitToScreen ? 'Fit: On' : 'Fit: Off'}</span>
+                  <span className="sm:hidden">{fitToScreen ? 'Fit' : 'Fit'}</span>
+                </button>
+              </>
+            )}
+
+            {/* Fullscreen Toggle */}
+            <button
+              onClick={toggleFullscreen}
+              className="px-3 sm:px-4 py-1.5 sm:py-2.5 rounded-lg text-xs sm:text-sm font-medium inline-flex items-center gap-1.5 sm:gap-2 bg-white text-gray-700 border border-gray-300 hover:bg-gray-50 transition-colors"
+              title={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
+            >
+              {isFullscreen ? (
+                <ArrowsPointingInIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+              ) : (
+                <ArrowsPointingOutIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+              )}
+              <span className="hidden sm:inline">{isFullscreen ? 'Exit' : 'Fullscreen'}</span>
+              <span className="sm:hidden">{isFullscreen ? 'Exit' : 'Full'}</span>
+            </button>
+          </div>
+        </div>
+      </Card>
+
+      {/* Main Content */}
+      {view === 'board' ? (
+        <div
+          ref={boardRef}
+          className={`bg-white rounded-xl sm:rounded-2xl shadow-sm border border-gray-100 overflow-hidden relative transition-all ${isFullscreen
+            ? 'fixed inset-0 z-50 m-0 rounded-none'
+            : 'h-[calc(100vh-200px)] sm:h-[calc(100vh-280px)] min-h-[400px] sm:min-h-[600px]'
+            }`}
+        >
+          <ProductionBoard
+            workspaceId={workspaceId}
+            onJobClick={setSelectedJob}
+            fitToScreen={fitToScreen}
+            zoom={zoom}
+          />
+
+          {isFullscreen && selectedJob && (
+            <div className="absolute inset-0 z-50 bg-white">
+              <JobDetail
+                job={selectedJob}
+                workspaceId={workspaceId}
+                onClose={() => setSelectedJob(null)}
+                onDelete={handleDeleteJob}
+                workcenters={workcenters}
+                resources={resources}
+              />
+            </div>
+          )}
+        </div>
+      ) : view === 'reports' ? (
+        <ProductionReportsTab workspaceId={workspaceId} />
+      ) : (
+        <>
+          {/* Mobile Search Bar - Sticky for easy access */}
+          <div className="md:hidden sticky top-0 z-10 bg-white rounded-xl shadow-sm border border-gray-100 p-3 mb-3">
+            <div className="relative">
+              <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Search jobs, products, customers..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-10 pr-10 py-2.5 text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                >
+                  <XMarkIcon className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl sm:rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+            {/* Mobile Card List View */}
+            <div className="md:hidden space-y-4 p-4">
               {filteredJobs.map((job) => {
                 const isReadyToMove = jobsReadyToMove.some(r => r.job.id === job.id)
                 const stageName = job.status === 'draft' ? '-' : (job.status === 'done' ? 'DONE' : getStageName(job.currentStageId))
@@ -1416,8 +1438,8 @@ export function Production() {
                 )
 
                 return (
-                  <div 
-                    key={job.id} 
+                  <div
+                    key={job.id}
                     className="bg-white p-5 sm:p-4 active:bg-gray-50 transition-colors rounded-lg shadow-sm border border-gray-200"
                   >
                     {/* Top Row: Job Code, Status, Date */}
@@ -1623,102 +1645,102 @@ export function Production() {
               />
             </div>
           </div>
-          </>
-        )}
+        </>
+      )}
 
-        {/* Modals */}
-        {showCreateForm && (
-          <CreateJobForm
-            onSubmit={handleCreateJob}
-            onClose={() => setShowCreateForm(false)}
-            isLoading={createJobMutation.isPending}
-            workflows={workflows}
-            workcenters={workcenters}
-            resources={resources}
-            workspaceId={workspaceId}
-            initialJob={initialJobForCreate || undefined}
-          />
-        )}
+      {/* Modals */}
+      {showCreateForm && (
+        <CreateJobForm
+          onSubmit={handleCreateJob}
+          onClose={() => setShowCreateForm(false)}
+          isLoading={createJobMutation.isPending}
+          workflows={workflows}
+          workcenters={workcenters}
+          resources={resources}
+          workspaceId={workspaceId}
+          initialJob={initialJobForCreate || undefined}
+        />
+      )}
 
-        {!isFullscreen && selectedJob && (
-          <JobDetail
-            job={selectedJob}
-            workspaceId={workspaceId}
-            onClose={() => setSelectedJob(null)}
-            onDelete={handleDeleteJob}
-            workcenters={workcenters}
-            resources={resources}
-          />
-        )}
+      {!isFullscreen && selectedJob && (
+        <JobDetail
+          job={selectedJob}
+          workspaceId={workspaceId}
+          onClose={() => setSelectedJob(null)}
+          onDelete={handleDeleteJob}
+          workcenters={workcenters}
+          resources={resources}
+        />
+      )}
 
-        {confirmMove.open && confirmMove.job && confirmMove.targetStageId && (
-          <ConfirmStageChangeModal
-            job={confirmMove.job}
-            currentStageName={getStageName(confirmMove.job.currentStageId)}
-            targetStageName={confirmMove.targetStageName || 'Next stage'}
-            workcenters={workcenters}
-            workspaceId={workspaceId}
-            workflows={workflows}
-            onCancel={() => setConfirmMove({ open: false })}
-            onCreateRun={async ({ qtyGood, qtyScrap, lot, workcenterId, at }) => {
-              await createProductionRun(workspaceId, confirmMove.job!.id, {
-                stageId: confirmMove.job!.currentStageId,
-                workcenterId,
-                qtyGood,
-                qtyScrap,
-                lot,
-                operatorId: 'current-user',
-                at
-              } as any)
-              // Invalidate allJobRuns to update threshold checks immediately
-              queryClient.invalidateQueries({ queryKey: ['allJobRuns', workspaceId] })
-            }}
-            onConfirm={(note) => { moveJobMutation.mutate({ jobId: confirmMove.job!.id, newStageId: confirmMove.targetStageId!, note }); setConfirmMove({ open: false }) }}
-            onComplete={() => {
-              // Modal handles completion internally, just close it
-              setConfirmMove({ open: false })
-            }}
-          />
-        )}
+      {confirmMove.open && confirmMove.job && confirmMove.targetStageId && (
+        <ConfirmStageChangeModal
+          job={confirmMove.job}
+          currentStageName={getStageName(confirmMove.job.currentStageId)}
+          targetStageName={confirmMove.targetStageName || 'Next stage'}
+          workcenters={workcenters}
+          workspaceId={workspaceId}
+          workflows={workflows}
+          onCancel={() => setConfirmMove({ open: false })}
+          onCreateRun={async ({ qtyGood, qtyScrap, lot, workcenterId, at }) => {
+            await createProductionRun(workspaceId, confirmMove.job!.id, {
+              stageId: confirmMove.job!.currentStageId,
+              workcenterId,
+              qtyGood,
+              qtyScrap,
+              lot,
+              operatorId: 'current-user',
+              at
+            } as any)
+            // Invalidate allJobRuns to update threshold checks immediately
+            queryClient.invalidateQueries({ queryKey: ['allJobRuns', workspaceId] })
+          }}
+          onConfirm={(note) => { moveJobMutation.mutate({ jobId: confirmMove.job!.id, newStageId: confirmMove.targetStageId!, note }); setConfirmMove({ open: false }) }}
+          onComplete={() => {
+            // Modal handles completion internally, just close it
+            setConfirmMove({ open: false })
+          }}
+        />
+      )}
 
-        {confirmComplete.open && confirmComplete.job && (
-          <ConfirmCompleteModal
-            job={confirmComplete.job}
-            workcenters={workcenters}
-            workspaceId={workspaceId}
-            workflows={workflows}
-            onCancel={() => setConfirmComplete({ open: false })}
-            onCreateRun={async ({ qtyGood, qtyScrap, lot, workcenterId, at }) => {
-              await createProductionRun(workspaceId, confirmComplete.job!.id, {
-                stageId: confirmComplete.job!.currentStageId,
-                workcenterId,
-                qtyGood,
-                qtyScrap,
-                lot,
-                operatorId: 'current-user',
-                at
-              } as any)
-              // Invalidate allJobRuns to update threshold checks immediately
-              queryClient.invalidateQueries({ queryKey: ['allJobRuns', workspaceId] })
-            }}
-            onConfirm={() => { handleStatusChange(confirmComplete.job!.id, 'done'); setConfirmComplete({ open: false }) }}
-          />
-        )}
+      {confirmComplete.open && confirmComplete.job && (
+        <ConfirmCompleteModal
+          job={confirmComplete.job}
+          workcenters={workcenters}
+          workspaceId={workspaceId}
+          workflows={workflows}
+          onCancel={() => setConfirmComplete({ open: false })}
+          onCreateRun={async ({ qtyGood, qtyScrap, lot, workcenterId, at }) => {
+            await createProductionRun(workspaceId, confirmComplete.job!.id, {
+              stageId: confirmComplete.job!.currentStageId,
+              workcenterId,
+              qtyGood,
+              qtyScrap,
+              lot,
+              operatorId: 'current-user',
+              at
+            } as any)
+            // Invalidate allJobRuns to update threshold checks immediately
+            queryClient.invalidateQueries({ queryKey: ['allJobRuns', workspaceId] })
+          }}
+          onConfirm={() => { handleStatusChange(confirmComplete.job!.id, 'done'); setConfirmComplete({ open: false }) }}
+        />
+      )}
 
-        {requireRelease.open && requireRelease.job && requireRelease.targetStageId && (
-          <RequireReleaseModal
-            targetStageName={requireRelease.targetStageName || 'Next stage'}
-            onCancel={() => setRequireRelease({ open: false })}
-            onRelease={() => {
-              // Confirm and then release, then reopen move modal
-              if (confirm('Are you sure you want to Release this job?')) {
-                statusMutation.mutate({ jobId: requireRelease.job!.id, status: 'released' })
-                setRequireRelease({ open: false })
-                setConfirmMove({ open: true, job: requireRelease.job!, targetStageId: requireRelease.targetStageId!, targetStageName: requireRelease.targetStageName })
-              }
-            }}
-          />
-        )}
-      </div>
-    )
-  }
+      {requireRelease.open && requireRelease.job && requireRelease.targetStageId && (
+        <RequireReleaseModal
+          targetStageName={requireRelease.targetStageName || 'Next stage'}
+          onCancel={() => setRequireRelease({ open: false })}
+          onRelease={() => {
+            // Confirm and then release, then reopen move modal
+            if (confirm('Are you sure you want to Release this job?')) {
+              statusMutation.mutate({ jobId: requireRelease.job!.id, status: 'released' })
+              setRequireRelease({ open: false })
+              setConfirmMove({ open: true, job: requireRelease.job!, targetStageId: requireRelease.targetStageId!, targetStageName: requireRelease.targetStageName })
+            }
+          }}
+        />
+      )}
+    </div>
+  )
+}

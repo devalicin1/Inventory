@@ -7,7 +7,8 @@ import {
   ExclamationTriangleIcon,
   CheckCircleIcon,
   CalendarIcon,
-  ArrowDownTrayIcon
+  ArrowDownTrayIcon,
+  ChevronDownIcon
 } from '@heroicons/react/24/outline'
 import { Card } from '../components/ui/Card'
 import { Badge } from '../components/ui/Badge'
@@ -23,6 +24,7 @@ import jsPDF from 'jspdf'
 export function Dashboard() {
   const { workspaceId } = useSessionStore()
   const [isExporting, setIsExporting] = useState(false)
+  const [showKPIs, setShowKPIs] = useState(false)
 
   // Fetch products
   const { data: products = [], isLoading: productsLoading } = useQuery({
@@ -53,6 +55,8 @@ export function Dashboard() {
         jobsByStatus: { active: 0, in_progress: 0, done: 0, blocked: 0 },
         recentJobs: [],
         recentLowStock: [],
+        topValueProducts: [],
+        onTimeRate: 100,
       }
     }
 
@@ -102,7 +106,7 @@ export function Dashboard() {
 
     const totalStockValue = products.reduce((sum, p) => {
       const qty = p.qtyOnHand || 0
-      const cost = (p as any).unitCost || 0
+      const cost = (p as any).pricePerBox || 0
       return sum + (qty * cost)
     }, 0)
 
@@ -138,6 +142,28 @@ export function Dashboard() {
       .sort((a, b) => (a.qtyOnHand || 0) - (b.qtyOnHand || 0))
       .slice(0, 5)
 
+    const topValueProducts = products
+      .map(p => ({
+        ...p,
+        totalValue: (p.qtyOnHand || 0) * ((p as any).pricePerBox || 0)
+      }))
+      .sort((a, b) => b.totalValue - a.totalValue)
+      .slice(0, 5)
+
+    const completedJobs = jobs.filter(j => j.status === 'done')
+    const onTimeJobs = completedJobs.filter(j => {
+      const completedAt = (j as any).completedAt
+      const dueDate = (j as any).dueDate
+      if (!completedAt || !dueDate) return true
+      try {
+        const c = completedAt.toDate ? completedAt.toDate() : new Date(completedAt)
+        const d = dueDate.toDate ? dueDate.toDate() : new Date(dueDate)
+        // Compare dates (ignoring time for due date usually, but let's keep it simple)
+        return c.getTime() <= d.getTime()
+      } catch { return true }
+    })
+    const onTimeRate = completedJobs.length > 0 ? Math.round((onTimeJobs.length / completedJobs.length) * 100) : 100
+
     return {
       totalProducts,
       lowStockProducts,
@@ -149,6 +175,8 @@ export function Dashboard() {
       jobsByStatus,
       recentJobs,
       recentLowStock,
+      topValueProducts,
+      onTimeRate,
     }
   }, [products, jobs, workspaceId])
 
@@ -241,7 +269,20 @@ export function Dashboard() {
       </div>
 
       {/* Primary Stats Grid */}
-      <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="space-y-4">
+        {/* Mobile KPI Toggle Button */}
+        <div className="sm:hidden">
+          <button
+            onClick={() => setShowKPIs(!showKPIs)}
+            className="w-full flex items-center justify-between p-4 bg-white rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors"
+          >
+            <span className="text-sm font-medium text-gray-700">View KPIs</span>
+            <ChevronDownIcon className={`h-5 w-5 text-gray-500 transition-transform ${showKPIs ? 'rotate-180' : ''}`} />
+          </button>
+        </div>
+        
+        {/* KPI Cards - Hidden on mobile by default */}
+        <div className={`grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4 ${showKPIs ? '' : 'hidden sm:grid'}`}>
         {/* Total Products */}
         <Card className="relative overflow-hidden border-l-4 border-l-primary-500">
           <div className="p-1">
@@ -343,6 +384,7 @@ export function Dashboard() {
             </div>
           </div>
         </Card>
+        </div>
       </div>
 
       {/* Charts Section */}
@@ -415,9 +457,74 @@ export function Dashboard() {
             )}
           </Card>
 
+          {/* Top Value Products */}
+          <Card noPadding className="overflow-hidden">
+            <div className="border-b border-gray-200 px-6 py-4 flex items-center justify-between bg-gray-50/50">
+              <h3 className="text-base font-semibold leading-6 text-gray-900">Top Value Products</h3>
+              <Link to="/inventory" className="text-sm font-medium text-primary-600 hover:text-primary-700 no-print">
+                View Inventory
+              </Link>
+            </div>
+            {isLoading ? (
+              <div className="p-6 space-y-4">
+                {[1, 2, 3].map(i => (
+                  <div key={i} className="h-12 animate-pulse bg-gray-100 rounded" />
+                ))}
+              </div>
+            ) : stats.topValueProducts.length === 0 ? (
+              <div className="p-12 text-center text-gray-500">
+                <p>No products found</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product</th>
+                      <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Qty</th>
+                      <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Total Value</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {stats.topValueProducts.map((product) => {
+                      // Clean product name to fix encoding issues (question marks)
+                      let productName = product.name || product.sku || 'Unknown Product'
+                      productName = productName
+                        .replace(/\uFFFD/g, "'")
+                        .replace(/[\u0000-\u001F\u007F-\u009F]/g, '')
+                        .replace(/'/g, "'")
+                        .replace(/"/g, '"')
+                        .replace(/"/g, '"')
+                        .replace(/–/g, '-')
+                        .replace(/—/g, '-')
+                        .trim()
+
+                      return (
+                        <tr key={product.id} className="hover:bg-gray-50 transition-colors">
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="flex flex-col">
+                              <span className="text-sm font-medium text-gray-900">{productName}</span>
+                              <span className="text-xs text-gray-500">{product.sku}</span>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-500">
+                            {product.qtyOnHand} {product.uom}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium text-gray-900">
+                            {formatCurrency(product.totalValue)}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+
           {/* Quick Actions Bar */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 no-print">
-            <Link to="/production/new" className="group">
+            <Link to="/production?action=new" className="group">
               <div className="flex flex-col items-center justify-center p-4 bg-white rounded-xl border border-gray-200 shadow-sm hover:border-primary-300 hover:shadow-md transition-all cursor-pointer h-full">
                 <div className="p-2 rounded-full bg-primary-50 group-hover:bg-primary-100 transition-colors mb-3">
                   <CogIcon className="h-6 w-6 text-primary-600" />
@@ -425,7 +532,7 @@ export function Dashboard() {
                 <span className="text-sm font-medium text-gray-900">New Job</span>
               </div>
             </Link>
-            <Link to="/inventory" className="group">
+            <Link to="/inventory?action=new" className="group">
               <div className="flex flex-col items-center justify-center p-4 bg-white rounded-xl border border-gray-200 shadow-sm hover:border-primary-300 hover:shadow-md transition-all cursor-pointer h-full">
                 <div className="p-2 rounded-full bg-blue-50 group-hover:bg-blue-100 transition-colors mb-3">
                   <CubeIcon className="h-6 w-6 text-blue-600" />
@@ -454,6 +561,33 @@ export function Dashboard() {
 
         {/* Sidebar Area - 1/3 width */}
         <div className="space-y-6">
+          {/* Performance Metrics */}
+          <Card className="bg-white">
+            <h3 className="text-base font-semibold text-gray-900 mb-4">Performance Metrics</h3>
+            <div className="space-y-4">
+              <div>
+                <div className="flex justify-between text-sm mb-1">
+                  <span className="text-gray-500">On-Time Delivery</span>
+                  <span className={`font-medium ${stats.onTimeRate >= 90 ? 'text-green-600' : stats.onTimeRate >= 75 ? 'text-amber-600' : 'text-red-600'}`}>
+                    {stats.onTimeRate}%
+                  </span>
+                </div>
+                <div className="w-full bg-gray-100 rounded-full h-2">
+                  <div
+                    className={`h-2 rounded-full ${stats.onTimeRate >= 90 ? 'bg-green-500' : stats.onTimeRate >= 75 ? 'bg-amber-500' : 'bg-red-500'}`}
+                    style={{ width: `${stats.onTimeRate}%` }}
+                  ></div>
+                </div>
+              </div>
+              <div>
+                <div className="flex justify-between text-sm mb-1">
+                  <span className="text-gray-500">Jobs Completed Today</span>
+                  <span className="font-medium text-gray-900">{stats.completedToday}</span>
+                </div>
+              </div>
+            </div>
+          </Card>
+
           {/* Low Stock Widget */}
           <Card noPadding className="h-full flex flex-col">
             <div className="border-b border-gray-200 px-6 py-4 bg-gray-50/50">

@@ -128,8 +128,8 @@ export async function generateJobCreateFormPDFBlob(overrides: JobCreateFormOverr
       // QR Code
       try {
         const qrData = `JobCreate:${overrides.orderNo || ''};Date:${dateStr}`
-        const qrResult = await generateQRCodeDataURL(qrData, { scale: 4 })
-        doc.addImage(qrResult.dataUrl, 'PNG', pageWidth - margin - 12, margin - 2, 14, 14)
+        const qrResult = await generateQRCodeDataURL(qrData, { scale: 6 }) // Increased for better scanning
+        doc.addImage(qrResult.dataUrl, 'PNG', pageWidth - margin - 20, margin - 2, 18, 18) // Increased size
       } catch (e) {}
 
       currentY += 20

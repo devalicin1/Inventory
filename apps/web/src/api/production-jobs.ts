@@ -17,7 +17,7 @@ import {
   DocumentSnapshot,
   setDoc,
 } from 'firebase/firestore'
-import { getDownloadURL, ref, uploadBytes } from 'firebase/storage'
+import { getDownloadURL, ref, uploadBytes, deleteObject } from 'firebase/storage'
 import { createStockTransaction, getProductByCode } from './inventory'
 import { generateQRCodeDataURL } from '../utils/qrcode'
 import { generateBarcodeDataURL } from '../utils/barcode'
@@ -495,6 +495,52 @@ export async function updateJob(
   })
 
   await updateDoc(target, updatePayload as any)
+}
+
+export async function saveJobQr(
+  workspaceId: string,
+  jobId: string,
+  dataUrl: string
+): Promise<string> {
+  // Delete old QR code if exists
+  const oldQrRef = ref(storage, `workspaces/${workspaceId}/jobs/${jobId}/qr.png`)
+  try {
+    await deleteObject(oldQrRef)
+  } catch (err) {
+    // Ignore if file doesn't exist
+    console.log('Old QR code not found or already deleted')
+  }
+
+  // Upload new QR code
+  const qrRef = ref(storage, `workspaces/${workspaceId}/jobs/${jobId}/qr.png`)
+  const res = await fetch(dataUrl)
+  const buf = await res.arrayBuffer()
+  await uploadBytes(qrRef, new Uint8Array(buf), { contentType: 'image/png' })
+  const url = await getDownloadURL(qrRef)
+  
+  // Update job with new QR URL
+  await updateDoc(doc(db, 'workspaces', workspaceId, 'jobs', jobId), {
+    qrUrl: url,
+    updatedAt: serverTimestamp(),
+  } as any)
+  
+  return url
+}
+
+export async function deleteJobQr(
+  workspaceId: string,
+  jobId: string
+): Promise<void> {
+  const qrRef = ref(storage, `workspaces/${workspaceId}/jobs/${jobId}/qr.png`)
+  try {
+    await deleteObject(qrRef)
+  } catch (err) {
+    // Ignore if file doesn't exist
+  }
+  await updateDoc(doc(db, 'workspaces', workspaceId, 'jobs', jobId), {
+    qrUrl: null,
+    updatedAt: serverTimestamp(),
+  } as any)
 }
 
 // Helper function to calculate when threshold was met for a stage

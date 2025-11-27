@@ -1,14 +1,15 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { 
-  listJobs, 
-  listWorkflows, 
-  listWorkcenters, 
+import {
+  listJobs,
+  listWorkflows,
+  listWorkcenters,
   listResources,
   listJobProductionRuns,
-  type ProductionRun
+  type ProductionRun,
+  type Job
 } from '../api/production-jobs'
-import { 
+import {
   ChartBarIcon,
   ClockIcon,
   CheckCircleIcon,
@@ -56,11 +57,12 @@ import {
 
 interface ProductionReportsProps {
   workspaceId: string
+  jobs?: Job[]
 }
 
 type ReportType = 'wip' | 'throughput' | 'onTime' | 'cycleTime' | 'bottleneck' | 'utilization' | 'materialUsage' | 'output' | 'deadlines' | 'stageOutput' | 'efficiency' | 'quality' | 'workcenterPerformance' | 'jobStatus' | 'stageTime'
 
-export function ProductionReports({ workspaceId }: ProductionReportsProps) {
+export function ProductionReports({ workspaceId, jobs: externalJobs }: ProductionReportsProps) {
   const [selectedReport, setSelectedReport] = useState<ReportType>('wip')
   const [dateRange, setDateRange] = useState({
     start: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], // 30 days ago
@@ -71,6 +73,7 @@ export function ProductionReports({ workspaceId }: ProductionReportsProps) {
   const { data: jobsData } = useQuery({
     queryKey: ['jobs', workspaceId],
     queryFn: () => listJobs(workspaceId),
+    enabled: !externalJobs
   })
 
   const { data: workflows = [] } = useQuery({
@@ -88,7 +91,7 @@ export function ProductionReports({ workspaceId }: ProductionReportsProps) {
     queryFn: () => listResources(workspaceId),
   })
 
-  const jobs = jobsData?.jobs || []
+  const jobs = externalJobs || jobsData?.jobs || []
   const filteredJobs = jobs.filter(job => {
     const jobDate = new Date(job.createdAt?.seconds ? job.createdAt.seconds * 1000 : job.createdAt)
     return jobDate >= new Date(dateRange.start) && jobDate <= new Date(dateRange.end)
@@ -256,14 +259,14 @@ export function ProductionReports({ workspaceId }: ProductionReportsProps) {
             <input
               type="date"
               value={dateRange.start}
-              onChange={(e) => setDateRange({...dateRange, start: e.target.value})}
+              onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })}
               className="px-3 py-1 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
             <span className="text-sm text-gray-500">to</span>
             <input
               type="date"
               value={dateRange.end}
-              onChange={(e) => setDateRange({...dateRange, end: e.target.value})}
+              onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })}
               className="px-3 py-1 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
@@ -285,11 +288,10 @@ export function ProductionReports({ workspaceId }: ProductionReportsProps) {
             <button
               key={report.id}
               onClick={() => setSelectedReport(report.id as ReportType)}
-              className={`p-4 rounded-lg border text-left transition-colors ${
-                selectedReport === report.id
+              className={`p-4 rounded-lg border text-left transition-colors ${selectedReport === report.id
                   ? 'border-blue-500 bg-blue-50'
                   : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-              }`}
+                }`}
             >
               <Icon className="h-6 w-6 text-gray-600 mb-2" />
               <h3 className="text-sm font-medium text-gray-900">{report.name}</h3>

@@ -79,33 +79,101 @@ export async function generateQRCodeSVG(text: string, options: QRCodeOptions = {
   }
 }
 
-export function downloadQRCode(dataUrl: string, filename: string): void {
-  try {
-    const link = document.createElement('a')
-    link.href = dataUrl
-    link.download = filename
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-  } catch (error) {
-    console.error('QR kod indirme hatası:', error)
-    throw new Error('QR kod indirilemedi')
-  }
-}
-
-export function copyQRCodeToClipboard(dataUrl: string): Promise<void> {
+export function downloadQRCode(url: string, filename: string): Promise<void> {
   return new Promise((resolve, reject) => {
     try {
-      // Convert data URL to blob
-      fetch(dataUrl)
-        .then(res => res.blob())
-        .then(blob => {
-          const item = new ClipboardItem({ 'image/png': blob })
-          navigator.clipboard.write([item])
-            .then(() => resolve())
-            .catch(reject)
-        })
-        .catch(reject)
+      // If it's already a data URL, use it directly
+      if (url.startsWith('data:')) {
+        const link = document.createElement('a')
+        link.href = url
+        link.download = filename
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+        resolve()
+      } else {
+        // For external URLs (like Firebase Storage), fetch as blob and download
+        fetch(url)
+          .then(response => {
+            if (!response.ok) {
+              throw new Error(`Failed to fetch QR code: ${response.statusText}`)
+            }
+            return response.blob()
+          })
+          .then(blob => {
+            const blobUrl = window.URL.createObjectURL(blob)
+            const link = document.createElement('a')
+            link.href = blobUrl
+            link.download = filename
+            document.body.appendChild(link)
+            link.click()
+            document.body.removeChild(link)
+            // Clean up the blob URL
+            window.URL.revokeObjectURL(blobUrl)
+            resolve()
+          })
+          .catch(error => {
+            console.error('QR kod indirme hatası:', error)
+            reject(new Error('QR kod indirilemedi'))
+          })
+      }
+    } catch (error) {
+      console.error('QR kod indirme hatası:', error)
+      reject(new Error('QR kod indirilemedi'))
+    }
+  })
+}
+
+export function copyQRCodeToClipboard(url: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    try {
+      // If it's already a data URL, use it directly
+      if (url.startsWith('data:')) {
+        fetch(url)
+          .then(res => res.blob())
+          .then(blob => {
+            const item = new ClipboardItem({ 'image/png': blob })
+            return navigator.clipboard.write([item])
+          })
+          .then(() => resolve())
+          .catch(reject)
+      } else {
+        // For external URLs (like Firebase Storage), load via image and convert to canvas
+        const img = new Image()
+        img.crossOrigin = 'anonymous' // Enable CORS for image loading
+        
+        img.onload = () => {
+          try {
+            const canvas = document.createElement('canvas')
+            canvas.width = img.width
+            canvas.height = img.height
+            const ctx = canvas.getContext('2d')
+            if (!ctx) {
+              reject(new Error('Canvas context not available'))
+              return
+            }
+            ctx.drawImage(img, 0, 0)
+            canvas.toBlob((blob) => {
+              if (!blob) {
+                reject(new Error('Failed to convert image to blob'))
+                return
+              }
+              const item = new ClipboardItem({ 'image/png': blob })
+              navigator.clipboard.write([item])
+                .then(() => resolve())
+                .catch(reject)
+            }, 'image/png')
+          } catch (error) {
+            reject(error)
+          }
+        }
+        
+        img.onerror = () => {
+          reject(new Error('Failed to load image. CORS might be blocking the request.'))
+        }
+        
+        img.src = url
+      }
     } catch (error) {
       reject(new Error('QR kod panoya kopyalanamadı'))
     }

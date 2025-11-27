@@ -29,7 +29,8 @@ import {
   CalendarIcon,
   ArchiveBoxIcon,
   ExclamationTriangleIcon,
-  CheckCircleIcon
+  CheckCircleIcon,
+  QrCodeIcon
 } from '@heroicons/react/24/outline'
 import { JobDetailHeader, JobDetailTabs } from './job-detail'
 import {
@@ -40,7 +41,8 @@ import {
   OutputTab,
   PackagingTab,
   HistoryTab,
-  FilesTab
+  FilesTab,
+  QRCodeTab
 } from './job-detail/tabs'
 
 interface JobDetailProps {
@@ -52,7 +54,7 @@ interface JobDetailProps {
   resources?: Array<{ id: string; name: string }>
 }
 
-type TabType = 'overview' | 'tickets' | 'materials' | 'consumptions' | 'output' | 'packaging' | 'history' | 'files'
+type TabType = 'overview' | 'tickets' | 'materials' | 'consumptions' | 'output' | 'packaging' | 'qrcode' | 'history' | 'files'
 
 export function JobDetail({ job, workspaceId, onClose, onDelete, workcenters = [], resources = [] }: JobDetailProps) {
   const [activeTab, setActiveTab] = useState<TabType>('overview')
@@ -170,6 +172,7 @@ export function JobDetail({ job, workspaceId, onClose, onDelete, workcenters = [
     { id: 'consumptions', name: 'Consumptions', icon: ChartBarIcon, count: consumptions.length },
     { id: 'output', name: 'Output', icon: TruckIcon, count: job.output?.length || 0 },
     { id: 'packaging', name: 'Packaging', icon: CubeIcon, count: job.packaging ? 1 : 0 },
+    { id: 'qrcode', name: 'QR Code', icon: QrCodeIcon, count: job.qrUrl ? 1 : 0 },
     { id: 'history', name: 'History', icon: CalendarIcon, count: history.length },
     { id: 'files', name: 'Files', icon: DocumentTextIcon, count: 0 },
   ]
@@ -281,6 +284,15 @@ export function JobDetail({ job, workspaceId, onClose, onDelete, workcenters = [
         <HistoryTab
           history={history}
           workflows={workflows}
+        />
+      )
+    }
+
+    if (activeTab === 'qrcode') {
+      return (
+        <QRCodeTab
+          job={effectiveJob}
+          workspaceId={workspaceId}
         />
       )
     }

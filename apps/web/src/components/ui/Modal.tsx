@@ -11,7 +11,12 @@ interface ModalProps {
 }
 
 export const Modal: React.FC<ModalProps> = ({
-
+    isOpen,
+    onClose,
+    title,
+    children,
+    size = 'md'
+}) => {
     if(!isOpen) return null;
 
     const sizes = {
@@ -22,11 +27,11 @@ export const Modal: React.FC<ModalProps> = ({
     };
 
     return createPortal(
-        <div className="fixed inset-0 z-50 overflow-y-auto">
+        <div className="fixed inset-0 z-[100] overflow-y-auto">
             <div className="flex min-h-screen items-center justify-center px-4 pt-4 pb-20 text-center sm:block sm:p-0">
                 {/* Backdrop */}
                 <div
-                    className="fixed inset-0 bg-gray-900/50 backdrop-blur-sm transition-opacity"
+                    className="fixed inset-0 bg-gray-900/60 backdrop-blur-md transition-opacity"
                     onClick={onClose}
                     aria-hidden="true"
                 />

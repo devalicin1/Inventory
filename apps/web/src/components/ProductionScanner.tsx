@@ -1,6 +1,7 @@
 
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { BrowserMultiFormatReader } from '@zxing/browser'
 import {
   type Job,
   listJobs,
@@ -60,11 +61,20 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
   const [selectedJob, setSelectedJob] = useState<Job | null>(null)
   const [selectedProduct, setSelectedProduct] = useState<ListedProduct | null>(null)
   const [recentScans, setRecentScans] = useState<Array<{ code: string, type: ScannedType, timestamp: Date }>>([])
+  const [lastScannedCode, setLastScannedCode] = useState<string | null>(null)
 
   // Action states
   const [activeAction, setActiveAction] = useState<string | null>(null)
   const [actionData, setActionData] = useState<any>({})
   const [showInventoryPostingModal, setShowInventoryPostingModal] = useState(false)
+
+  // Camera scanning state
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const [isScanning, setIsScanning] = useState(false)
+  const [cameraError, setCameraError] = useState<string | null>(null)
+  const [scanAttempts, setScanAttempts] = useState(0) // Track scan attempts for user feedback
+  const [lastScanTime, setLastScanTime] = useState<number>(0) // Track last successful scan
+  const reader = useRef<BrowserMultiFormatReader | null>(null)
 
   const queryClient = useQueryClient()
 
@@ -252,13 +262,28 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
   const moveStageMutation = useMutation({
     mutationFn: ({ jobId, newStageId, note }: { jobId: string; newStageId: string; note?: string }) =>
       moveJobToStage(workspaceId, jobId, newStageId, 'current-user', note),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['jobs', workspaceId] })
-      queryClient.invalidateQueries({ queryKey: ['job', workspaceId, selectedJob?.id] })
-      // Refresh selected job
+    onSuccess: async () => {
+      // Invalidate queries first
+      await queryClient.invalidateQueries({ queryKey: ['jobs', workspaceId] })
+      await queryClient.invalidateQueries({ queryKey: ['job', workspaceId, selectedJob?.id] })
+      
+      // Fetch fresh data and update selected job
       if (selectedJob) {
-        const updatedJob = jobsData?.jobs?.find(j => j.id === selectedJob.id)
-        if (updatedJob) setSelectedJob(updatedJob)
+        try {
+          const updatedJobs = await queryClient.fetchQuery({ 
+            queryKey: ['jobs', workspaceId],
+            queryFn: () => listJobs(workspaceId)
+          })
+          const updatedJob = updatedJobs?.jobs?.find(j => j.id === selectedJob.id)
+          if (updatedJob) {
+            setSelectedJob(updatedJob)
+          }
+        } catch (error) {
+          console.error('Failed to refresh job after stage move:', error)
+          // Fallback: try to find in current jobsData if available
+          const updatedJob = jobsData?.jobs?.find(j => j.id === selectedJob.id)
+          if (updatedJob) setSelectedJob(updatedJob)
+        }
       }
     },
     onError: (error: any) => {
@@ -269,69 +294,88 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
   const handleScan = async (code: string) => {
     const trimmedCode = code.trim()
     
+    // Prevent duplicate scans within 2 seconds
+    const now = Date.now()
+    if (lastScanTime > 0 && (now - lastScanTime) < 2000) {
+      // Same code scanned too quickly, ignore
+      const recentScan = recentScans[0]
+      if (recentScan && recentScan.code === trimmedCode) {
+        console.log('Duplicate scan ignored:', trimmedCode)
+        return
+      }
+    }
+    setLastScanTime(now)
+    
     // Check workspaceId
     if (!workspaceId) {
-      alert('Workspace ID not available. Please refresh the page.')
       console.error('workspaceId is null or undefined')
       return
     }
     
     // Wait for jobs to load if still loading
     if (jobsLoading) {
-      alert('Loading jobs, please wait...')
+      console.log('Jobs still loading, please wait...')
       return
     }
 
     // Check for errors
     if (jobsError) {
       console.error('Jobs query error:', jobsError)
-      alert(`Error loading jobs: ${jobsError instanceof Error ? jobsError.message : 'Unknown error'}`)
       return
     }
 
-    // 1. Check Jobs - case-insensitive search
+    // 1. Check Jobs - case-insensitive search (by code, sku, or id)
     const jobs = jobsData?.jobs || []
     console.log('Scan attempt:', { 
       code: trimmedCode, 
       workspaceId,
       jobsCount: jobs.length,
-      jobsData: jobsData,
-      jobCodes: jobs.map(j => j.code || '(no code)').slice(0, 10)
+      jobCodes: jobs.map(j => j.code || j.id).slice(0, 5)
     })
     
     const job = jobs.find(j => {
       const jobCode = (j.code || '').trim().toLowerCase()
       const jobSku = (j.sku || '').trim().toLowerCase()
+      const jobId = (j.id || '').trim().toLowerCase()
       const searchCode = trimmedCode.toLowerCase()
-      return jobCode === searchCode || jobSku === searchCode
+      return jobCode === searchCode || jobSku === searchCode || jobId === searchCode
     })
     
     if (job) {
+      console.log('Job found:', job.code || job.id)
       setSelectedJob(job)
       addToHistory(trimmedCode, 'job')
+      setScanAttempts(0) // Reset scan attempts on success
       return
     }
 
-    // 2. Check Products
+    // 2. Check Products - try by SKU first, then ID
     try {
       const product = await getProductByCode(workspaceId, trimmedCode)
       if (product) {
+        console.log('Product found:', product.sku || product.id)
         setSelectedProduct(product)
         addToHistory(trimmedCode, 'product')
+        setScanAttempts(0) // Reset scan attempts on success
         return
       }
     } catch (e) {
       console.error('Product lookup failed', e)
     }
 
-    // 3. Not Found - show helpful message
-    const jobsCount = jobs.length
-    console.log('Scan failed:', { 
+    // 3. Not Found - log but don't spam alerts
+    console.log('Scan not found:', { 
       code: trimmedCode, 
-      jobsCount, 
-      jobCodes: jobs.map(j => j.code).slice(0, 5) 
+      jobsCount: jobs.length,
+      sampleJobCodes: jobs.map(j => j.code || j.id).slice(0, 3)
     })
-    alert(`No job or product found for code: ${trimmedCode}\n\nAvailable jobs: ${jobsCount}`)
+    
+    // Only show alert once per unique code
+    const alreadyShown = recentScans.some(s => s.code === trimmedCode && s.type === 'none')
+    if (!alreadyShown) {
+      addToHistory(trimmedCode, 'none')
+      // Don't show alert, just log - user will see it in the UI
+    }
   }
 
   // Helper functions for job sheet
@@ -635,45 +679,309 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
     }
   }
 
+  // Camera scanning effect
+  useEffect(() => {
+    if (scanMode !== 'camera' || !videoRef.current) {
+      // Stop scanning if mode changed or video ref not available
+      if (reader.current) {
+        try {
+          reader.current.reset()
+        } catch (e) {
+          // Ignore reset errors
+        }
+        reader.current = null
+      }
+      setIsScanning(false)
+      setCameraError(null)
+      return
+    }
+
+    // Check HTTPS requirement for camera access
+    if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+      setCameraError('Camera access requires HTTPS. Please use a secure connection.')
+      setIsScanning(false)
+      return
+    }
+
+    // Initialize reader with hints for better small QR code detection
+    // Import hints from @zxing/library if needed, but BrowserMultiFormatReader should handle it
+    reader.current = new BrowserMultiFormatReader()
+    
+    // Reset scan tracking
+    setScanAttempts(0)
+    setLastScanTime(Date.now())
+    
+    const startScanning = async () => {
+      try {
+        setIsScanning(true)
+        setCameraError(null)
+
+        // First, request camera permission explicitly for mobile devices
+        // Use higher resolution for better small QR code detection while maintaining performance
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ 
+            video: { 
+              facingMode: 'environment', // Prefer back camera on mobile
+              width: { ideal: 1280, min: 640, max: 1920 }, // Higher resolution for small QR codes
+              height: { ideal: 720, min: 480, max: 1080 },
+              frameRate: { ideal: 30, max: 30 } // Limit frame rate for better performance
+            } 
+          })
+          // Stop the stream immediately - we'll use the reader's stream
+          stream.getTracks().forEach(track => track.stop())
+        } catch (permissionError) {
+          if (permissionError instanceof Error) {
+            if (permissionError.name === 'NotAllowedError' || permissionError.name === 'PermissionDeniedError') {
+              throw new Error('Camera permission denied. Please allow camera access in your browser settings and try again.')
+            } else if (permissionError.name === 'NotFoundError' || permissionError.name === 'DevicesNotFoundError') {
+              throw new Error('No camera found on this device.')
+            } else if (permissionError.name === 'NotReadableError' || permissionError.name === 'TrackStartError') {
+              throw new Error('Camera is already in use by another application.')
+            }
+          }
+          throw permissionError
+        }
+        
+        // Wait a bit for video element to be ready
+        await new Promise(resolve => setTimeout(resolve, 100))
+        
+        // List available video input devices
+        const devices = await BrowserMultiFormatReader.listVideoInputDevices()
+        
+        if (devices.length === 0) {
+          throw new Error('No camera found. Please check your device permissions.')
+        }
+
+        // Prefer back camera on mobile (usually the last one), otherwise use first available
+        let deviceId = devices[devices.length - 1]?.deviceId
+        // Try to find back camera explicitly
+        const backCamera = devices.find(d => 
+          d.label.toLowerCase().includes('back') || 
+          d.label.toLowerCase().includes('rear') ||
+          d.label.toLowerCase().includes('environment') ||
+          d.label.toLowerCase().includes('facing back')
+        )
+        if (backCamera) {
+          deviceId = backCamera.deviceId
+        } else if (devices.length > 1) {
+          // On mobile, back camera is often the last device
+          deviceId = devices[devices.length - 1].deviceId
+        } else if (devices.length > 0) {
+          deviceId = devices[0].deviceId
+        }
+
+        if (!deviceId || !videoRef.current) {
+          throw new Error('Camera not available')
+        }
+
+        // Ensure video element has required attributes for mobile
+        if (videoRef.current) {
+          videoRef.current.setAttribute('playsinline', 'true')
+          videoRef.current.setAttribute('webkit-playsinline', 'true')
+          videoRef.current.muted = true
+          videoRef.current.autoplay = true
+        }
+
+        // Start decoding from video device with enhanced detection for small QR codes
+        await reader.current!.decodeFromVideoDevice(
+          deviceId, 
+          videoRef.current, 
+          (result, err) => {
+            if (result) {
+              const scannedCode = result.getText().trim()
+              
+              // Prevent processing the same code multiple times
+              if (lastScannedCode === scannedCode) {
+                return // Ignore duplicate scans
+              }
+              
+              setLastScannedCode(scannedCode)
+              setScanAttempts(0) // Reset on success
+              setLastScanTime(Date.now())
+              handleScan(scannedCode)
+              
+              // Reset lastScannedCode after 3 seconds to allow re-scanning same code
+              setTimeout(() => {
+                setLastScannedCode(null)
+              }, 3000)
+            }
+            if (err) {
+              if (err instanceof Error && err.name === 'NotFoundException') {
+                // NotFoundException is normal when no code is detected
+                // Increment attempts for user feedback
+                setScanAttempts(prev => prev + 1)
+              } else {
+                console.error('Scan error:', err)
+              }
+            }
+          }
+        )
+      } catch (err) {
+        let errorMessage = 'Failed to start camera'
+        
+        if (err instanceof Error) {
+          if (err.message.includes('permission')) {
+            errorMessage = err.message
+          } else if (err.message.includes('No camera')) {
+            errorMessage = err.message
+          } else if (err.message.includes('already in use')) {
+            errorMessage = err.message
+          } else if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+            errorMessage = 'Camera permission denied. Please allow camera access in your browser settings.'
+          } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+            errorMessage = 'No camera found on this device.'
+          } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+            errorMessage = 'Camera is already in use. Please close other applications using the camera.'
+          } else {
+            errorMessage = err.message || errorMessage
+          }
+        }
+        
+        setCameraError(errorMessage)
+        setIsScanning(false)
+        console.error('Camera error:', err)
+      }
+    }
+
+    startScanning()
+
+    // Cleanup function
+    return () => {
+      if (reader.current) {
+        try {
+          reader.current.reset()
+        } catch (e) {
+          // Ignore reset errors
+          console.warn('Error resetting scanner:', e)
+        }
+        reader.current = null
+      }
+      setIsScanning(false)
+      setCameraError(null)
+    }
+  }, [scanMode]) // Re-run when scanMode changes
+
   // --- Render Helpers ---
 
   const renderHeader = () => (
-    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-gray-900">Scanner</h1>
-        <p className="mt-1 text-sm text-gray-500">
-          Scan job codes or product SKUs to view details and perform actions.
-        </p>
+    <div className="flex flex-col gap-4 px-5 sm:px-0 pt-4 sm:pt-0">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-gray-900">Scanner</h1>
+          <p className="mt-1.5 text-xs sm:text-sm text-gray-500">
+            Scan job codes or product SKUs
+          </p>
+        </div>
+        {onClose && (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={onClose}
+            className="flex-shrink-0"
+          >
+            <XMarkIcon className="h-4 w-4 sm:mr-2" />
+            <span className="hidden sm:inline">Close</span>
+          </Button>
+        )}
       </div>
-      {onClose && (
-        <Button
-          variant="secondary"
-          size="sm"
-          onClick={onClose}
-        >
-          <XMarkIcon className="h-4 w-4 mr-2" />
-          Close
-        </Button>
-      )}
     </div>
   )
 
   const renderScannerArea = () => (
-    <Card className="p-6 space-y-4">
-      {/* Camera Placeholder / Toggle */}
-      <div className="bg-gray-900 rounded-xl overflow-hidden shadow-inner aspect-[4/3] relative flex flex-col items-center justify-center text-white">
+    <Card className="p-5 sm:p-6 space-y-5">
+      {/* Camera / Manual Toggle */}
+      <div className="bg-gray-900 rounded-xl overflow-hidden shadow-inner aspect-[4/3] sm:aspect-[4/3] relative flex flex-col items-center justify-center text-white">
         {scanMode === 'camera' ? (
           <>
-            <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
-              <p className="text-sm text-gray-300">Camera View Placeholder</p>
-            </div>
-            <div className="w-64 h-64 border-2 border-white/50 rounded-lg relative z-10">
-              <div className="absolute top-0 left-0 w-4 h-4 border-t-4 border-l-4 border-blue-500 -mt-1 -ml-1"></div>
-              <div className="absolute top-0 right-0 w-4 h-4 border-t-4 border-r-4 border-blue-500 -mt-1 -mr-1"></div>
-              <div className="absolute bottom-0 left-0 w-4 h-4 border-b-4 border-l-4 border-blue-500 -mb-1 -ml-1"></div>
-              <div className="absolute bottom-0 right-0 w-4 h-4 border-b-4 border-r-4 border-blue-500 -mb-1 -mr-1"></div>
-            </div>
-            <p className="mt-4 text-xs text-gray-400">Position code within frame</p>
+            {cameraError ? (
+              <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center p-4 z-20">
+                <ExclamationTriangleIcon className="h-12 w-12 text-red-500 mb-4" />
+                <p className="text-sm text-red-300 text-center mb-2">{cameraError}</p>
+                <button
+                  onClick={async () => {
+                    setCameraError(null)
+                    // Try to restart camera
+                    if (videoRef.current && reader.current) {
+                      try {
+                        reader.current.reset()
+                        reader.current = null
+                        // Wait a bit before restarting
+                        await new Promise(resolve => setTimeout(resolve, 500))
+                        setScanMode('manual')
+                        setTimeout(() => setScanMode('camera'), 100)
+                      } catch (e) {
+                        console.error('Error restarting camera:', e)
+                      }
+                    }
+                  }}
+                  className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
+                >
+                  Retry
+                </button>
+              </div>
+            ) : (
+              <>
+                <video
+                  ref={videoRef}
+                  className="absolute inset-0 w-full h-full object-cover"
+                  playsInline
+                  muted
+                  autoPlay
+                  disablePictureInPicture
+                  controls={false}
+                />
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
+                  <div className={`w-[80%] max-w-[300px] aspect-square border-2 rounded-lg relative transition-all duration-300 ${
+                    scanAttempts > 10 
+                      ? 'border-yellow-400 shadow-lg shadow-yellow-400/50 animate-pulse' 
+                      : 'border-white/70'
+                  }`}>
+                    <div className="absolute top-0 left-0 w-4 h-4 border-t-4 border-l-4 border-blue-500 -mt-1 -ml-1"></div>
+                    <div className="absolute top-0 right-0 w-4 h-4 border-t-4 border-r-4 border-blue-500 -mt-1 -mr-1"></div>
+                    <div className="absolute bottom-0 left-0 w-4 h-4 border-b-4 border-l-4 border-blue-500 -mb-1 -ml-1"></div>
+                    <div className="absolute bottom-0 right-0 w-4 h-4 border-b-4 border-r-4 border-blue-500 -mb-1 -mr-1"></div>
+                  </div>
+                </div>
+                
+                {/* Scanning status and tips */}
+                {isScanning && (
+                  <div className="absolute bottom-3 sm:bottom-4 left-1/2 -translate-x-1/2 z-10 w-[calc(100%-3rem)] max-w-md px-3 sm:px-4">
+                    {scanAttempts > 10 ? (
+                      <div className="bg-yellow-500/90 backdrop-blur-sm px-3 sm:px-4 py-2 sm:py-3 rounded-lg shadow-lg">
+                        <div className="flex items-start gap-2 sm:gap-3">
+                          <InformationCircleIcon className="h-4 w-4 sm:h-5 sm:w-5 text-yellow-900 flex-shrink-0 mt-0.5" />
+                          <div className="flex-1 text-left min-w-0">
+                            <p className="text-xs sm:text-sm font-medium text-yellow-900 mb-1">QR kod bulunamadı</p>
+                            <ul className="text-[10px] sm:text-xs text-yellow-800 space-y-0.5 sm:space-y-1">
+                              <li>• QR kodu kameraya daha yakın tutun</li>
+                              <li>• Işığın yeterli olduğundan emin olun</li>
+                              <li>• QR kodun tamamının görünür olduğundan emin olun</li>
+                              <li>• Kamerayı sabit tutun</li>
+                            </ul>
+                            <button
+                              onClick={() => setScanMode('manual')}
+                              className="mt-1.5 sm:mt-2 text-[10px] sm:text-xs font-semibold text-yellow-900 underline hover:text-yellow-950 touch-target"
+                            >
+                              Manuel giriş yapmak için tıklayın
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ) : scanAttempts > 5 ? (
+                      <div className="bg-orange-500/90 backdrop-blur-sm px-3 sm:px-4 py-2 rounded-lg shadow-lg">
+                        <p className="text-[10px] sm:text-xs text-orange-900 text-center leading-tight">
+                          QR kod aranıyor... Kamerayı sabit tutun ve QR kodu kare içine hizalayın
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="bg-black/60 backdrop-blur-sm px-3 sm:px-4 py-2 rounded-full">
+                        <p className="text-[10px] sm:text-xs text-white text-center">QR kod veya barkod okutun</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
           </>
         ) : (
           <div className="text-center p-6">
@@ -683,28 +991,43 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
         )}
 
         <button
-          onClick={() => setScanMode(prev => prev === 'camera' ? 'manual' : 'camera')}
-          className="absolute bottom-4 right-4 bg-white/10 backdrop-blur-md p-2 rounded-full hover:bg-white/20"
+          onClick={() => {
+            // Stop camera if switching away
+            if (scanMode === 'camera' && reader.current) {
+              try {
+                reader.current.reset()
+              } catch (e) {
+                console.warn('Error stopping camera:', e)
+              }
+              reader.current = null
+            }
+            setScanMode(prev => prev === 'camera' ? 'manual' : 'camera')
+            setCameraError(null)
+          }}
+          className="absolute bottom-3 right-3 sm:bottom-4 sm:right-4 bg-white/10 backdrop-blur-md p-3 sm:p-2 rounded-full hover:bg-white/20 active:bg-white/30 z-20 touch-target"
+          title={scanMode === 'camera' ? 'Switch to Manual Entry' : 'Switch to Camera'}
+          aria-label={scanMode === 'camera' ? 'Switch to Manual Entry' : 'Switch to Camera'}
         >
-          <ArrowPathIcon className="h-5 w-5" />
+          <ArrowPathIcon className="h-5 w-5 sm:h-5 sm:w-5" />
         </button>
       </div>
 
       {/* Manual Input */}
-      <form onSubmit={handleManualSubmit} className="flex gap-2">
+      <form onSubmit={handleManualSubmit} className="flex flex-col sm:flex-row gap-3 sm:gap-2">
         <div className="relative flex-1">
-          <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
+          <MagnifyingGlassIcon className="absolute left-4 sm:left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400 pointer-events-none" />
           <input
             type="text"
             value={manualCode}
             onChange={e => setManualCode(e.target.value)}
             placeholder="Enter Job Code or SKU"
-            className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none shadow-sm text-lg"
+            className="w-full pl-12 pr-4 py-4 sm:py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none shadow-sm text-base sm:text-lg touch-target"
+            autoComplete="off"
           />
         </div>
         <button
           type="submit"
-          className="bg-blue-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-blue-700 shadow-sm active:transform active:scale-95 transition-all"
+          className="bg-blue-600 text-white px-8 py-4 sm:py-3 rounded-lg font-medium hover:bg-blue-700 active:bg-blue-800 shadow-sm active:transform active:scale-95 transition-all touch-target min-h-[48px] sm:min-h-0 text-base"
         >
           Scan
         </button>
@@ -714,28 +1037,48 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
 
   const renderRecentScans = () => (
     <Card>
-      <div className="p-6">
-        <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4">Recent Scans</h3>
-        <div className="space-y-2">
+      <div className="p-5 sm:p-6">
+        <h3 className="text-xs sm:text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4 sm:mb-4">Recent Scans</h3>
+        <div className="space-y-3 max-h-[300px] sm:max-h-none overflow-y-auto">
           {recentScans.length === 0 && (
             <p className="text-sm text-gray-400 italic text-center py-4">No recent scans</p>
           )}
           {recentScans.map((scan, i) => (
             <div
               key={i}
-              onClick={() => handleScan(scan.code)}
-              className="bg-gray-50 p-3 rounded-lg border border-gray-200 flex items-center justify-between shadow-sm hover:bg-gray-100 cursor-pointer transition-colors"
+              onClick={() => scan.type !== 'none' && handleScan(scan.code)}
+              className={`p-4 sm:p-3 rounded-lg border flex items-center justify-between shadow-sm transition-colors touch-target min-h-[64px] sm:min-h-0 ${
+                scan.type === 'none' 
+                  ? 'bg-red-50 border-red-200 cursor-default' 
+                  : 'bg-gray-50 border-gray-200 active:bg-gray-100 cursor-pointer'
+              }`}
             >
-            <div className="flex items-center space-x-3">
-              <div className={`p-2 rounded-full ${scan.type === 'job' ? 'bg-blue-100 text-blue-600' : 'bg-green-100 text-green-600'}`}>
-                {scan.type === 'job' ? <ClockIcon className="h-4 w-4" /> : <CubeIcon className="h-4 w-4" />}
+            <div className="flex items-center space-x-2 sm:space-x-3 flex-1 min-w-0">
+              <div className={`p-2 rounded-full flex-shrink-0 ${
+                scan.type === 'job' 
+                  ? 'bg-blue-100 text-blue-600' 
+                  : scan.type === 'product'
+                  ? 'bg-green-100 text-green-600'
+                  : 'bg-red-100 text-red-600'
+              }`}>
+                {scan.type === 'job' ? (
+                  <ClockIcon className="h-4 w-4" />
+                ) : scan.type === 'product' ? (
+                  <CubeIcon className="h-4 w-4" />
+                ) : (
+                  <ExclamationTriangleIcon className="h-4 w-4" />
+                )}
               </div>
-              <div>
-                <p className="font-medium text-gray-900">{scan.code}</p>
-                <p className="text-xs text-gray-500 capitalize">{scan.type} • {scan.timestamp.toLocaleTimeString()}</p>
+              <div className="flex-1 min-w-0">
+                <p className="font-medium text-gray-900 text-sm sm:text-base truncate">{scan.code}</p>
+                <p className={`text-xs capitalize ${
+                  scan.type === 'none' ? 'text-red-600' : 'text-gray-500'
+                }`}>
+                  {scan.type === 'none' ? 'Not Found' : scan.type} • {scan.timestamp.toLocaleTimeString()}
+                </p>
               </div>
             </div>
-            <ArrowPathIcon className="h-4 w-4 text-gray-400" />
+            {scan.type !== 'none' && <ArrowPathIcon className="h-4 w-4 text-gray-400 flex-shrink-0 ml-2" />}
           </div>
         ))}
         </div>
@@ -758,13 +1101,13 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
     return (
       <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center pointer-events-none">
         <div className="absolute inset-0 bg-black/40 backdrop-blur-sm pointer-events-auto" onClick={resetSelection} />
-        <div className="bg-white w-full max-w-lg rounded-t-2xl sm:rounded-2xl shadow-2xl pointer-events-auto max-h-[90vh] overflow-y-auto flex flex-col relative z-10">
+        <div className="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-2xl shadow-2xl pointer-events-auto max-h-[95vh] sm:max-h-[90vh] overflow-y-auto flex flex-col relative z-10">
           {/* Handle bar for mobile */}
-          <div className="w-full flex justify-center pt-3 pb-1 sm:hidden">
+          <div className="w-full flex justify-center pt-3 pb-2 sm:hidden sticky top-0 bg-white z-10">
             <div className="w-12 h-1.5 bg-gray-300 rounded-full" />
           </div>
 
-          <div className="p-5 border-b border-gray-100">
+          <div className="p-4 sm:p-5 border-b border-gray-100">
             <div className="flex justify-between items-start">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-2">
@@ -780,47 +1123,47 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                     </span>
                   )}
                 </div>
-                <h2 className="text-xl font-bold text-gray-900 truncate">{selectedJob.code}</h2>
-                <p className="text-sm text-gray-500 truncate">{selectedJob.productName}</p>
+                <h2 className="text-lg sm:text-xl font-bold text-gray-900 truncate">{selectedJob.code}</h2>
+                <p className="text-xs sm:text-sm text-gray-500 truncate">{selectedJob.productName}</p>
               </div>
-              <button onClick={resetSelection} className="p-2 bg-gray-100 rounded-full hover:bg-gray-200 flex-shrink-0 ml-2">
+              <button onClick={resetSelection} className="p-2 bg-gray-100 rounded-full active:bg-gray-200 hover:bg-gray-200 flex-shrink-0 ml-2 touch-target">
                 <XMarkIcon className="h-5 w-5 text-gray-500" />
               </button>
             </div>
 
             {/* Job Info Grid */}
-            <div className="grid grid-cols-2 gap-3 mt-4">
-              <div className="bg-gray-50 p-3 rounded-lg">
-                <p className="text-xs text-gray-500 mb-1">Quantity</p>
-                <p className="font-semibold text-gray-900">{selectedJob.quantity} {selectedJob.unit}</p>
+            <div className="grid grid-cols-2 gap-2 sm:gap-3 mt-3 sm:mt-4">
+              <div className="bg-gray-50 p-2.5 sm:p-3 rounded-lg">
+                <p className="text-[10px] sm:text-xs text-gray-500 mb-1">Quantity</p>
+                <p className="font-semibold text-gray-900 text-sm sm:text-base">{selectedJob.quantity} {selectedJob.unit}</p>
               </div>
-              <div className="bg-gray-50 p-3 rounded-lg">
-                <p className="text-xs text-gray-500 mb-1">Current Stage</p>
-                <p className="font-semibold text-gray-900 truncate">{currentStageName}</p>
+              <div className="bg-gray-50 p-2.5 sm:p-3 rounded-lg">
+                <p className="text-[10px] sm:text-xs text-gray-500 mb-1">Current Stage</p>
+                <p className="font-semibold text-gray-900 truncate text-sm sm:text-base">{currentStageName}</p>
               </div>
             </div>
 
             {/* Customer & Due Date */}
-            <div className="grid grid-cols-2 gap-3 mt-3">
+            <div className="grid grid-cols-2 gap-2 sm:gap-3 mt-2 sm:mt-3">
               {selectedJob.customer && (
-                <div className="bg-blue-50 p-3 rounded-lg border border-blue-100">
+                <div className="bg-blue-50 p-2.5 sm:p-3 rounded-lg border border-blue-100">
                   <div className="flex items-center gap-1 mb-1">
                     <BuildingStorefrontIcon className="h-3 w-3 text-blue-600" />
-                    <p className="text-xs text-blue-600 font-medium">Customer</p>
+                    <p className="text-[10px] sm:text-xs text-blue-600 font-medium">Customer</p>
                   </div>
-                  <p className="font-semibold text-blue-900 truncate">{selectedJob.customer.name}</p>
+                  <p className="font-semibold text-blue-900 truncate text-sm sm:text-base">{selectedJob.customer.name}</p>
                   {selectedJob.customer.orderNo && (
-                    <p className="text-xs text-blue-600 mt-0.5">Order: {selectedJob.customer.orderNo}</p>
+                    <p className="text-[10px] sm:text-xs text-blue-600 mt-0.5 truncate">Order: {selectedJob.customer.orderNo}</p>
                   )}
                 </div>
               )}
               {selectedJob.dueDate && (
-                <div className="bg-orange-50 p-3 rounded-lg border border-orange-100">
+                <div className="bg-orange-50 p-2.5 sm:p-3 rounded-lg border border-orange-100">
                   <div className="flex items-center gap-1 mb-1">
                     <CalendarIcon className="h-3 w-3 text-orange-600" />
-                    <p className="text-xs text-orange-600 font-medium">Due Date</p>
+                    <p className="text-[10px] sm:text-xs text-orange-600 font-medium">Due Date</p>
                   </div>
-                  <p className="font-semibold text-orange-900">
+                  <p className="font-semibold text-orange-900 text-sm sm:text-base">
                     {new Date(selectedJob.dueDate.seconds ? selectedJob.dueDate.seconds * 1000 : selectedJob.dueDate).toLocaleDateString()}
                   </p>
                 </div>
@@ -953,7 +1296,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
             </div>
           </div>
 
-          <div className="p-5 space-y-3">
+          <div className="p-4 sm:p-5 space-y-3">
             {!activeAction ? (
               <>
                 {/* Status Management Buttons */}
@@ -966,10 +1309,10 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                             statusMutation.mutate({ jobId: selectedJob.id, status: 'released' })
                           }
                         }}
-                        className="w-full py-3 bg-blue-600 text-white rounded-xl font-semibold shadow-sm hover:bg-blue-700 flex items-center justify-center space-x-2"
+                        className="w-full py-3.5 sm:py-3 bg-blue-600 text-white rounded-xl font-semibold shadow-sm active:bg-blue-800 hover:bg-blue-700 flex items-center justify-center space-x-2 touch-target min-h-[48px]"
                       >
                         <PlayIcon className="h-5 w-5" />
-                        <span>Release Job</span>
+                        <span className="text-base sm:text-base">Release Job</span>
                       </button>
                     )}
 
@@ -984,10 +1327,10 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                             notes: 'Job started via scanner'
                           })
                         }}
-                        className="w-full py-3 bg-green-600 text-white rounded-xl font-semibold shadow-sm hover:bg-green-700 flex items-center justify-center space-x-2"
+                        className="w-full py-3.5 sm:py-3 bg-green-600 text-white rounded-xl font-semibold shadow-sm active:bg-green-800 hover:bg-green-700 flex items-center justify-center space-x-2 touch-target min-h-[48px]"
                       >
                         <PlayIcon className="h-5 w-5" />
-                        <span>Start Production</span>
+                        <span className="text-base sm:text-base">Start Production</span>
                       </button>
                     )}
 
@@ -1001,11 +1344,11 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                             alert('Please enter a block reason to continue.')
                           }
                         }}
-                        className="w-full py-3 bg-red-600 text-white rounded-xl font-semibold shadow-sm hover:bg-red-700 flex items-center justify-center space-x-2"
+                        className="w-full py-3.5 sm:py-3 bg-red-600 text-white rounded-xl font-semibold shadow-sm active:bg-red-800 hover:bg-red-700 flex items-center justify-center space-x-2 touch-target min-h-[48px]"
                         title="Temporarily stop production for this job (e.g., material shortage, machine issue, quality problem)"
                       >
                         <PauseIcon className="h-5 w-5" />
-                        <span>Block Job</span>
+                        <span className="text-base sm:text-base">Block Job</span>
                       </button>
                     )}
 
@@ -1014,10 +1357,10 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                         onClick={() => {
                           statusMutation.mutate({ jobId: selectedJob.id, status: 'in_progress' })
                         }}
-                        className="w-full py-3 bg-green-600 text-white rounded-xl font-semibold shadow-sm hover:bg-green-700 flex items-center justify-center space-x-2"
+                        className="w-full py-3.5 sm:py-3 bg-green-600 text-white rounded-xl font-semibold shadow-sm active:bg-green-800 hover:bg-green-700 flex items-center justify-center space-x-2 touch-target min-h-[48px]"
                       >
                         <PlayIcon className="h-5 w-5" />
-                        <span>Resume Job</span>
+                        <span className="text-base sm:text-base">Resume Job</span>
                       </button>
                     )}
                   </div>
@@ -1052,10 +1395,10 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                         }
                       }}
                       disabled={moveStageMutation.isPending || (requireOutput && isIncomplete)}
-                      className={`w-full py-3 rounded-xl font-semibold shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2 transition-colors ${
+                      className={`w-full py-3.5 sm:py-3 rounded-xl font-semibold shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2 transition-colors touch-target min-h-[48px] sm:min-h-0 ${
                         requireOutput && isIncomplete
                           ? 'bg-gray-400 text-white cursor-not-allowed'
-                          : 'bg-purple-600 text-white hover:bg-purple-700'
+                          : 'bg-purple-600 text-white active:bg-purple-800 hover:bg-purple-700'
                       }`}
                       title={
                         requireOutput && isIncomplete
@@ -1064,27 +1407,27 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                       }
                     >
                       <ArrowRightIcon className="h-5 w-5" />
-                      <span>Move to {nextStage.name}</span>
+                      <span className="text-base sm:text-base">Move to {nextStage.name}</span>
                     </button>
                   )
                 })()}
 
                 {/* Production Actions */}
                 {isInProgress && !isBlocked && (
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-2 gap-2 sm:gap-3">
                     <button
                       onClick={() => setActiveAction('consume')}
-                      className="py-4 bg-white border-2 border-gray-200 text-gray-700 rounded-xl font-semibold hover:bg-gray-50 active:bg-gray-100 flex flex-col items-center justify-center space-y-1"
+                      className="py-4 sm:py-4 bg-white border-2 border-gray-200 text-gray-700 rounded-xl font-semibold active:bg-gray-100 hover:bg-gray-50 flex flex-col items-center justify-center space-y-1 touch-target min-h-[100px] sm:min-h-0"
                     >
-                      <CubeIcon className="h-6 w-6 text-orange-500" />
-                      <span className="text-sm">Consume Material</span>
+                      <CubeIcon className="h-6 w-6 sm:h-6 sm:w-6 text-orange-500" />
+                      <span className="text-xs sm:text-sm">Consume Material</span>
                     </button>
                     <button
                       onClick={() => setActiveAction('produce')}
-                      className="py-4 bg-white border-2 border-gray-200 text-gray-700 rounded-xl font-semibold hover:bg-gray-50 active:bg-gray-100 flex flex-col items-center justify-center space-y-1"
+                      className="py-4 sm:py-4 bg-white border-2 border-gray-200 text-gray-700 rounded-xl font-semibold active:bg-gray-100 hover:bg-gray-50 flex flex-col items-center justify-center space-y-1 touch-target min-h-[100px] sm:min-h-0"
                     >
-                      <CheckCircleIcon className="h-6 w-6 text-blue-500" />
-                      <span className="text-sm">Record Output</span>
+                      <CheckCircleIcon className="h-6 w-6 sm:h-6 sm:w-6 text-blue-500" />
+                      <span className="text-xs sm:text-sm">Record Output</span>
                     </button>
                   </div>
                 )}
@@ -1164,7 +1507,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                   onClick={() => {
                     window.location.href = `/production?jobId=${selectedJob.id}`
                   }}
-                  className="w-full py-2.5 bg-gray-50 border border-gray-200 text-gray-700 rounded-xl font-medium hover:bg-gray-100 flex items-center justify-center space-x-2 text-sm"
+                  className="w-full py-3 sm:py-2.5 bg-gray-50 border border-gray-200 text-gray-700 rounded-xl font-medium active:bg-gray-200 hover:bg-gray-100 flex items-center justify-center space-x-2 text-sm touch-target min-h-[44px] sm:min-h-0"
                 >
                   <InformationCircleIcon className="h-4 w-4" />
                   <span>View Full Details</span>
@@ -1201,8 +1544,8 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
       return (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="font-semibold text-gray-900">Record Consumption</h3>
-            <button onClick={() => { setActiveAction(null); setActionData({}) }} className="text-gray-400 hover:text-gray-600">
+            <h3 className="font-semibold text-gray-900 text-base sm:text-base">Record Consumption</h3>
+            <button onClick={() => { setActiveAction(null); setActionData({}) }} className="text-gray-400 active:text-gray-600 hover:text-gray-600 p-2 -mr-2 touch-target">
               <XMarkIcon className="h-5 w-5" />
             </button>
           </div>
@@ -1210,11 +1553,11 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
           {/* BOM Material Selector */}
           {bomItems.length > 0 && (
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
                 Select Material from BOM
               </label>
               <select
-                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 bg-white"
+                className="w-full p-3.5 sm:p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 bg-white text-base touch-target"
                 value={actionData.bomItemIndex !== undefined ? String(actionData.bomItemIndex) : ''}
                 onChange={async (e) => {
                   const index = e.target.value === '' ? undefined : Number(e.target.value)
@@ -1302,12 +1645,12 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
           )}
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">
               SKU / Material Code {actionData.bomItemIndex === undefined ? '*' : ''}
             </label>
             <input
               placeholder="Enter SKU or scan material"
-              className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+              className="w-full p-3.5 sm:p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-base touch-target"
               value={actionData.sku || ''}
               onChange={e => {
                 setActionData({ 
@@ -1322,14 +1665,14 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
               <p className="mt-1 text-xs text-gray-500 italic">From BOM: {actionData.name || actionData.sku}</p>
             )}
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-col sm:flex-row gap-2">
             <div className="flex-1">
-              <label className="block text-sm font-medium text-gray-700 mb-1">Quantity *</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">Quantity *</label>
               <input
                 type="number"
                 step="0.01"
                 placeholder={selectedBomItem ? `${remainingRequired?.toLocaleString() || 0}` : "0.00"}
-                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                className="w-full p-3.5 sm:p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-base touch-target"
                 value={actionData.qtyUsed || ''}
                 onChange={e => setActionData({ ...actionData, qtyUsed: Number(e.target.value) })}
               />
@@ -1352,21 +1695,21 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                 </p>
               )}
             </div>
-            <div className="w-24">
-              <label className="block text-sm font-medium text-gray-700 mb-1">UOM</label>
+            <div className="w-full sm:w-24">
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">UOM</label>
               <input
                 placeholder="UOM"
-                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                className="w-full p-3.5 sm:p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-base touch-target"
                 value={actionData.uom || ''}
                 onChange={e => setActionData({ ...actionData, uom: e.target.value })}
               />
             </div>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Notes (Optional)</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">Notes (Optional)</label>
             <input
               placeholder="Additional notes"
-              className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+              className="w-full p-3.5 sm:p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-base touch-target"
               value={actionData.notes || ''}
               onChange={e => setActionData({ ...actionData, notes: e.target.value })}
             />
@@ -1417,7 +1760,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                 consumptionMutation.mutate(consumptionData)
               }}
               disabled={consumptionMutation.isPending || !actionData.sku || !actionData.qtyUsed}
-              className={`flex-1 py-3 rounded-lg font-medium transition-colors ${
+              className={`flex-1 py-3.5 sm:py-3 rounded-lg font-medium transition-colors touch-target min-h-[48px] sm:min-h-0 text-base disabled:opacity-50 disabled:cursor-not-allowed ${
                 isInsufficientStock 
                   ? 'bg-red-600 text-white hover:bg-red-700' 
                   : 'bg-orange-600 text-white hover:bg-orange-700'
@@ -1463,8 +1806,8 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
       return (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="font-semibold text-gray-900">Record Production Output</h3>
-            <button onClick={() => { setActiveAction(null); setActionData({}) }} className="text-gray-400 hover:text-gray-600">
+            <h3 className="font-semibold text-gray-900 text-base sm:text-base">Record Production Output</h3>
+            <button onClick={() => { setActiveAction(null); setActionData({}) }} className="text-gray-400 active:text-gray-600 hover:text-gray-600 p-2 -mr-2 touch-target">
               <XMarkIcon className="h-5 w-5" />
             </button>
           </div>
@@ -1521,9 +1864,9 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
           </div>
 
           {/* Input Fields */}
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">
+              <label className="block text-xs sm:text-xs font-medium text-gray-700 mb-1.5">
                 Good Qty ({currentStageInputUOM || 'sheets'})
                 {currentStageInputUOM && currentStageOutputUOM && currentStageInputUOM !== currentStageOutputUOM && numberUp > 0 && (
                   <span className="text-xs text-gray-500 ml-1 block">
@@ -1536,14 +1879,14 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                 min={0}
                 step="0.01"
                 placeholder="0.00"
-                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                className="w-full p-3.5 sm:p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-base touch-target"
                 value={qtyGood || ''}
                 onChange={e => setActionData({ ...actionData, qtyGood: Number(e.target.value) })}
                 autoFocus
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">
+              <label className="block text-xs sm:text-xs font-medium text-gray-700 mb-1.5">
                 Scrap Qty ({currentStageInputUOM || 'sheets'})
               </label>
               <input
@@ -1551,29 +1894,29 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                 min={0}
                 step="0.01"
                 placeholder="0.00"
-                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                className="w-full p-3.5 sm:p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-base touch-target"
                 value={qtyScrap || ''}
                 onChange={e => setActionData({ ...actionData, qtyScrap: Number(e.target.value) })}
               />
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">Date & Time</label>
+              <label className="block text-xs sm:text-xs font-medium text-gray-700 mb-1.5">Date & Time</label>
               <input
                 type="datetime-local"
                 value={actionData.runDateTime || ''}
                 onChange={e => setActionData({ ...actionData, runDateTime: e.target.value })}
-                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                className="w-full p-3.5 sm:p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-base touch-target"
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">Workcenter</label>
+              <label className="block text-xs sm:text-xs font-medium text-gray-700 mb-1.5">Workcenter</label>
               <select
                 value={actionData.workcenterId || selectedJob?.workcenterId || ''}
                 onChange={e => setActionData({ ...actionData, workcenterId: e.target.value || undefined })}
-                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                className="w-full p-3.5 sm:p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-base touch-target bg-white"
               >
                 <option value="">Unspecified</option>
                 {workcenters.map(w => (
@@ -1584,11 +1927,11 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Lot Number</label>
+            <label className="block text-xs sm:text-xs font-medium text-gray-700 mb-1.5">Lot Number</label>
             <input
               type="text"
               placeholder="Optional"
-              className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              className="w-full p-3.5 sm:p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-base touch-target"
               value={actionData.lot || ''}
               onChange={e => setActionData({ ...actionData, lot: e.target.value })}
             />
@@ -1603,11 +1946,11 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
 
           {/* Notes */}
           <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Notes (Optional)</label>
+            <label className="block text-xs sm:text-xs font-medium text-gray-700 mb-1.5">Notes (Optional)</label>
             <textarea
               placeholder="Add a reason or note for this action..."
               rows={2}
-              className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"
+              className="w-full p-3.5 sm:p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none text-base touch-target"
               value={actionData.notes || ''}
               onChange={e => setActionData({ ...actionData, notes: e.target.value })}
             />
@@ -1617,7 +1960,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
           <div className="flex gap-2 pt-2">
             <button
               onClick={() => { setActiveAction(null); setActionData({}) }}
-              className="flex-1 py-3 bg-gray-100 rounded-lg font-medium hover:bg-gray-200 transition-colors"
+              className="flex-1 py-3.5 sm:py-3 bg-gray-100 rounded-lg font-medium active:bg-gray-300 hover:bg-gray-200 transition-colors touch-target min-h-[48px] sm:min-h-0 text-base"
             >
               Cancel
             </button>
@@ -1654,10 +1997,10 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                 })
               }}
               disabled={productionMutation.isPending || !qtyGood || qtyGood <= 0 || isOverLimit}
-              className={`flex-1 py-3 rounded-lg font-medium transition-colors ${
+              className={`flex-1 py-3.5 sm:py-3 rounded-lg font-medium transition-colors touch-target min-h-[48px] sm:min-h-0 text-base disabled:opacity-50 disabled:cursor-not-allowed ${
                 isOverLimit
-                  ? 'bg-red-600 text-white hover:bg-red-700 cursor-not-allowed opacity-50'
-                  : 'bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed'
+                  ? 'bg-red-600 text-white active:bg-red-800 hover:bg-red-700 cursor-not-allowed opacity-50'
+                  : 'bg-green-600 text-white active:bg-green-800 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed'
               }`}
             >
               {productionMutation.isPending ? 'Recording...' : isOverLimit ? 'Over Limit' : 'Add Record'}
@@ -1676,12 +2019,12 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
     return (
       <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center pointer-events-none">
         <div className="absolute inset-0 bg-black/40 backdrop-blur-sm pointer-events-auto" onClick={resetSelection} />
-        <div className="bg-white w-full max-w-lg rounded-t-2xl sm:rounded-2xl shadow-2xl pointer-events-auto max-h-[90vh] overflow-y-auto flex flex-col relative z-10">
-          <div className="w-full flex justify-center pt-3 pb-1 sm:hidden">
+        <div className="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-2xl shadow-2xl pointer-events-auto max-h-[95vh] sm:max-h-[90vh] overflow-y-auto flex flex-col relative z-10">
+          <div className="w-full flex justify-center pt-3 pb-2 sm:hidden sticky top-0 bg-white z-10">
             <div className="w-12 h-1.5 bg-gray-300 rounded-full" />
           </div>
 
-          <div className="p-5 border-b border-gray-100">
+          <div className="p-4 sm:p-5 border-b border-gray-100">
             <div className="flex gap-4">
               {/* Product Image */}
               <div className="flex-shrink-0">
@@ -1724,18 +2067,18 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
             </div>
 
             {/* Stock & Price Info */}
-            <div className="grid grid-cols-2 gap-3 mt-4">
-              <div className="bg-blue-50 p-3 rounded-lg border border-blue-100">
-                <p className="text-xs text-blue-600 uppercase tracking-wide font-medium">On Hand</p>
-                <p className="text-2xl font-bold text-blue-900">{selectedProduct.qtyOnHand || 0}</p>
-                <p className="text-xs text-blue-600">{selectedProduct.uom || 'Units'}</p>
+            <div className="grid grid-cols-2 gap-2 sm:gap-3 mt-3 sm:mt-4">
+              <div className="bg-blue-50 p-2.5 sm:p-3 rounded-lg border border-blue-100">
+                <p className="text-[10px] sm:text-xs text-blue-600 uppercase tracking-wide font-medium">On Hand</p>
+                <p className="text-xl sm:text-2xl font-bold text-blue-900">{selectedProduct.qtyOnHand || 0}</p>
+                <p className="text-[10px] sm:text-xs text-blue-600">{selectedProduct.uom || 'Units'}</p>
               </div>
-              <div className="bg-gray-50 p-3 rounded-lg border border-gray-200">
-                <p className="text-xs text-gray-500 uppercase tracking-wide font-medium">Unit Price</p>
-                <p className="text-2xl font-bold text-gray-900">
+              <div className="bg-gray-50 p-2.5 sm:p-3 rounded-lg border border-gray-200">
+                <p className="text-[10px] sm:text-xs text-gray-500 uppercase tracking-wide font-medium">Unit Price</p>
+                <p className="text-xl sm:text-2xl font-bold text-gray-900">
                   £{((selectedProduct as any).pricePerBox || 0).toFixed(2)}
                 </p>
-                <p className="text-xs text-gray-500">
+                <p className="text-[10px] sm:text-xs text-gray-500">
                   Total: £{((selectedProduct.qtyOnHand || 0) * ((selectedProduct as any).pricePerBox || 0)).toFixed(2)}
                 </p>
               </div>
@@ -1747,36 +2090,36 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                 // Navigate to product details - you'll need to implement this based on your routing
                 window.location.href = `/inventory?productId=${selectedProduct.id}`
               }}
-              className="w-full mt-3 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-medium text-sm transition-colors flex items-center justify-center gap-2"
+              className="w-full mt-3 py-3 sm:py-2.5 bg-gray-100 active:bg-gray-200 hover:bg-gray-200 text-gray-700 rounded-lg font-medium text-sm transition-colors flex items-center justify-center gap-2 touch-target min-h-[44px] sm:min-h-0"
             >
               <MagnifyingGlassIcon className="w-4 h-4" />
               View Full Details
             </button>
           </div>
 
-          <div className="p-5 space-y-3">
+          <div className="p-4 sm:p-5 space-y-3">
             {!activeAction ? (
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-3 gap-2 sm:gap-3">
                 <button
                   onClick={() => setActiveAction('in')}
-                  className="py-4 bg-green-50 border border-green-100 text-green-700 rounded-xl font-medium hover:bg-green-100 flex flex-col items-center justify-center space-y-1"
+                  className="py-4 sm:py-4 bg-green-50 border border-green-100 text-green-700 rounded-xl font-medium active:bg-green-100 hover:bg-green-100 flex flex-col items-center justify-center space-y-1 touch-target min-h-[100px] sm:min-h-0"
                 >
-                  <ArrowDownTrayIcon className="h-6 w-6" />
-                  <span>Receive</span>
+                  <ArrowDownTrayIcon className="h-6 w-6 sm:h-6 sm:w-6" />
+                  <span className="text-xs sm:text-sm">Receive</span>
                 </button>
                 <button
                   onClick={() => setActiveAction('out')}
-                  className="py-4 bg-red-50 border border-red-100 text-red-700 rounded-xl font-medium hover:bg-red-100 flex flex-col items-center justify-center space-y-1"
+                  className="py-4 sm:py-4 bg-red-50 border border-red-100 text-red-700 rounded-xl font-medium active:bg-red-100 hover:bg-red-100 flex flex-col items-center justify-center space-y-1 touch-target min-h-[100px] sm:min-h-0"
                 >
-                  <ArrowUpTrayIcon className="h-6 w-6" />
-                  <span>Ship/Use</span>
+                  <ArrowUpTrayIcon className="h-6 w-6 sm:h-6 sm:w-6" />
+                  <span className="text-xs sm:text-sm">Ship/Use</span>
                 </button>
                 <button
                   onClick={() => setActiveAction('adjust')}
-                  className="py-4 bg-gray-50 border border-gray-100 text-gray-700 rounded-xl font-medium hover:bg-gray-100 flex flex-col items-center justify-center space-y-1"
+                  className="py-4 sm:py-4 bg-gray-50 border border-gray-100 text-gray-700 rounded-xl font-medium active:bg-gray-100 hover:bg-gray-100 flex flex-col items-center justify-center space-y-1 touch-target min-h-[100px] sm:min-h-0"
                 >
-                  <AdjustmentsHorizontalIcon className="h-6 w-6" />
-                  <span>Adjust</span>
+                  <AdjustmentsHorizontalIcon className="h-6 w-6 sm:h-6 sm:w-6" />
+                  <span className="text-xs sm:text-sm">Adjust</span>
                 </button>
               </div>
             ) : (
@@ -1804,25 +2147,25 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
 
     return (
       <div className="space-y-4">
-        <h3 className="font-semibold text-gray-900">{title}</h3>
+        <h3 className="font-semibold text-gray-900 text-base sm:text-base">{title}</h3>
 
         {/* Quantity Input */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Quantity</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1.5">Quantity</label>
           <input
             type="number"
             placeholder="Enter quantity"
             autoFocus
-            className="w-full p-3 border border-gray-300 rounded-lg text-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            className="w-full p-3.5 sm:p-3 border border-gray-300 rounded-lg text-base sm:text-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 touch-target"
             onChange={e => setActionData({ ...actionData, qty: Number(e.target.value) })}
           />
         </div>
 
         {/* Reason Dropdown */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Reason *</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1.5">Reason *</label>
           <select
-            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            className="w-full p-3.5 sm:p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-base touch-target bg-white"
             onChange={e => setActionData({ ...actionData, reason: e.target.value })}
             value={actionData.reason || ''}
           >
@@ -1835,11 +2178,11 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
 
         {/* Notes / Reference */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Notes / Reference</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1.5">Notes / Reference</label>
           <input
             type="text"
             placeholder="Optional notes or reference"
-            className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            className="w-full p-3.5 sm:p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-base touch-target"
             onChange={e => setActionData({ ...actionData, reference: e.target.value })}
           />
         </div>
@@ -1851,7 +2194,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
               setActiveAction(null)
               setActionData({})
             }}
-            className="flex-1 py-3 bg-gray-100 rounded-lg font-medium hover:bg-gray-200 transition-colors"
+            className="flex-1 py-3.5 sm:py-3 bg-gray-100 rounded-lg font-medium active:bg-gray-300 hover:bg-gray-200 transition-colors touch-target min-h-[48px] sm:min-h-0 text-base"
           >
             Cancel
           </button>
@@ -1870,7 +2213,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
               })
             }}
             disabled={!actionData.qty || !actionData.reason}
-            className={`flex-1 py-3 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${btnColor} hover:opacity-90`}
+            className={`flex-1 py-3.5 sm:py-3 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed touch-target min-h-[48px] sm:min-h-0 text-base ${btnColor} active:opacity-80 hover:opacity-90`}
           >
             Confirm
           </button>
@@ -1885,9 +2228,9 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-5 sm:space-y-8 pb-6 sm:pb-0">
       {renderHeader()}
-      <div className="max-w-2xl mx-auto space-y-6">
+      <div className="max-w-2xl mx-auto space-y-5 sm:space-y-6 px-4 sm:px-0">
         {renderScannerArea()}
         {renderRecentScans()}
       </div>
@@ -1909,6 +2252,24 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
             setShowInventoryPostingModal(false)
             // Refresh job data
             await queryClient.invalidateQueries({ queryKey: ['jobs', workspaceId] })
+            // CRITICAL: Invalidate inventory queries to refresh stock after posting
+            // This ensures inventory UI shows updated quantities
+            queryClient.invalidateQueries({ queryKey: ['products', workspaceId] })
+            queryClient.invalidateQueries({ queryKey: ['stockTxns', workspaceId] })
+            queryClient.invalidateQueries({ queryKey: ['productOnHand', workspaceId] })
+            // Dispatch custom event to notify ProductDetails (for any open product)
+            if (selectedJob.sku) {
+              try {
+                const product = await getProductByCode(workspaceId, selectedJob.sku)
+                if (product) {
+                  queryClient.invalidateQueries({ queryKey: ['stockTxns', workspaceId, product.id] })
+                  queryClient.invalidateQueries({ queryKey: ['productOnHand', workspaceId, product.id] })
+                  window.dispatchEvent(new CustomEvent('stockTransactionCreated', { detail: { productId: product.id } }))
+                }
+              } catch (e) {
+                console.error('Failed to refresh product after job completion:', e)
+              }
+            }
             const updatedJobs = await queryClient.fetchQuery({ 
               queryKey: ['jobs', workspaceId],
               queryFn: () => listJobs(workspaceId)

@@ -68,6 +68,7 @@ export function Inventory() {
   const [itemsPerPage, setItemsPerPage] = useState(10)
   const [showMobileSidebar, setShowMobileSidebar] = useState(false)
   const [showMobileActions, setShowMobileActions] = useState(false)
+  const [showKPIs, setShowKPIs] = useState(false)
   const qc = useQueryClient()
   const { workspaceId, userId } = useSessionStore()
 
@@ -85,12 +86,20 @@ export function Inventory() {
 
   const isLoading = productsLoading || groupsLoading
 
-  // Auto-open product details from URL parameter
+  // Auto-open product details from URL parameter or create form
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const productId = params.get('productId')
+    const action = params.get('action')
 
-    if (productId && products.length > 0 && !selectedProduct) {
+    if (action === 'new') {
+      setShowCreate(true)
+      // Clean up URL
+      const newParams = new URLSearchParams(window.location.search)
+      newParams.delete('action')
+      const newUrl = newParams.toString() ? `${window.location.pathname}?${newParams.toString()}` : window.location.pathname
+      window.history.replaceState({}, '', newUrl)
+    } else if (productId && products.length > 0 && !selectedProduct) {
       const product = products.find(p => p.id === productId)
       if (product) {
         setSelectedProduct(product)
@@ -476,781 +485,806 @@ export function Inventory() {
 
   return (
     <div className="space-y-8">
-          {/* Header Section - Matching Dashboard Style */}
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight text-gray-900">Inventory Management</h1>
-              <p className="mt-1 text-sm text-gray-500">
-                Manage your product catalog, track stock levels, and monitor inventory performance.
-              </p>
-            </div>
-            <div className="flex items-center gap-3 flex-wrap">
-              {/* Mobile Menu Button */}
-              <button
-                onClick={() => setShowMobileSidebar(!showMobileSidebar)}
-                className="sm:hidden p-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-              >
-                <Bars3Icon className="h-5 w-5 text-gray-700" />
-              </button>
-              
-              {/* Mobile Actions Menu */}
-              <div className="sm:hidden relative">
-                <button
-                  onClick={() => setShowMobileActions(!showMobileActions)}
-                  className="p-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-                >
-                  <EllipsisVerticalIcon className="h-5 w-5 text-gray-700" />
-                </button>
-                {showMobileActions && (
-                  <>
-                    <div className="fixed inset-0 z-40" onClick={() => setShowMobileActions(false)}></div>
-                    <div className="absolute right-0 top-full mt-2 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-50">
-                      <button
-                        onClick={() => {
-                          setShowScanner(true)
-                          setShowMobileActions(false)
-                        }}
-                        className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
-                      >
-                        <QrCodeIcon className="h-4 w-4" />
-                        Scan
-                      </button>
-                      <button
-                        onClick={() => {
-                          setShowImport(true)
-                          setShowMobileActions(false)
-                        }}
-                        className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
-                      >
-                        <ArrowUpTrayIcon className="h-4 w-4" />
-                        Import
-                      </button>
-                      <button
-                        onClick={() => {
-                          downloadCSV('inventory.csv', toCSV(products))
-                          setShowMobileActions(false)
-                        }}
-                        className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
-                      >
-                        <ArrowDownTrayIcon className="h-4 w-4" />
-                        Export
-                      </button>
-                      {duplicateProducts.length > 0 && (
-                        <button
-                          onClick={() => {
-                            setShowDuplicates(true)
-                            setShowMobileActions(false)
-                          }}
-                          className="w-full text-left px-4 py-2 text-sm text-amber-700 hover:bg-amber-50 flex items-center gap-2"
-                        >
-                          <ExclamationCircleIcon className="h-4 w-4" />
-                          Duplicates ({duplicateProducts.length})
-                        </button>
-                      )}
-                    </div>
-                  </>
-                )}
-              </div>
+      {/* Header Section - Matching Dashboard Style */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-gray-900">Inventory Management</h1>
+          <p className="mt-1 text-sm text-gray-500">
+            Manage your product catalog, track stock levels, and monitor inventory performance.
+          </p>
+        </div>
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* Mobile Menu Button */}
+          <button
+            onClick={() => setShowMobileSidebar(!showMobileSidebar)}
+            className="sm:hidden p-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+          >
+            <Bars3Icon className="h-5 w-5 text-gray-700" />
+          </button>
 
-              {/* Desktop Action Buttons */}
-              <div className="hidden sm:flex items-center gap-3">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => setShowFilters(!showFilters)}
-                >
-                  <FunnelIcon className="h-4 w-4 mr-2" />
-                  Filters
-                  {(statusFilter !== 'all' || lowStockFilter) && (
-                    <span className="ml-2 bg-blue-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
-                      {(statusFilter !== 'all' ? 1 : 0) + (lowStockFilter ? 1 : 0)}
-                    </span>
-                  )}
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => setShowImport(true)}
-                >
-                  <ArrowUpTrayIcon className="h-4 w-4 mr-2" />
-                  Import
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => downloadCSV('inventory.csv', toCSV(products))}
-                >
-                  <ArrowDownTrayIcon className="h-4 w-4 mr-2" />
-                  Export
-                </Button>
-                {duplicateProducts.length > 0 && (
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => setShowDuplicates(true)}
-                    className="bg-amber-50 border-amber-300 text-amber-700 hover:bg-amber-100"
-                  >
-                    <ExclamationCircleIcon className="h-4 w-4 mr-2" />
-                    Duplicates
-                    <span className="ml-2 bg-amber-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
-                      {duplicateProducts.length}
-                    </span>
-                  </Button>
-                )}
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => setShowScanner(true)}
-                >
-                  <QrCodeIcon className="h-4 w-4 mr-2" />
-                  Scan
-                </Button>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  onClick={() => setShowCreate(true)}
-                >
-                  <PlusIcon className="h-4 w-4 mr-2" />
-                  New Product
-                </Button>
-              </div>
-            </div>
-          </div>
-
-          {/* Search Bar */}
-          <div className="relative">
-            <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Search products by name, SKU, or ID..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-10 pr-10 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors text-sm"
-            />
-            {searchTerm && (
-              <button
-                onClick={() => setSearchTerm('')}
-                className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
-              >
-                <XMarkIcon className="h-5 w-5" />
-              </button>
-            )}
-          </div>
-
-          {/* Filters Panel */}
-          {showFilters && (
-            <Card className="bg-gray-50">
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Status</label>
-                  <select
-                    value={statusFilter}
-                    onChange={(e) => setStatusFilter(e.target.value)}
-                    className="w-full rounded-lg border-gray-300 focus:border-primary-500 focus:ring-primary-500 py-2 text-sm"
-                  >
-                    <option value="all">All Status</option>
-                    <option value="active">Active</option>
-                    <option value="draft">Draft</option>
-                    <option value="inactive">Inactive</option>
-                  </select>
-                </div>
-
-                <div className="flex items-end">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={lowStockFilter}
-                      onChange={(e) => setLowStockFilter(e.target.checked)}
-                      className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-                    />
-                    <span className="text-sm font-medium text-gray-700">Show Low Stock Only</span>
-                  </label>
-                </div>
-              </div>
-
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mt-4 pt-4 border-t border-gray-200">
-                <button
-                  onClick={() => {
-                    setStatusFilter('all')
-                    setLowStockFilter(false)
-                  }}
-                  className="text-sm text-gray-600 hover:text-gray-800 transition-colors"
-                >
-                  Clear all filters
-                </button>
-                <span className="text-sm text-gray-500">
-                  Showing {filteredProducts.length} of {products.length} products
-                </span>
-              </div>
-            </Card>
-          )}
-
-          {/* Primary Stats Grid - Matching Dashboard Style */}
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
-            {/* Total Products */}
-            <Card className="relative overflow-hidden border-l-4 border-l-primary-500">
-              <div className="p-1">
-                <div className="flex items-center justify-between">
-                  <p className="truncate text-sm font-medium text-gray-500">Total Products</p>
-                  <div className="rounded-md bg-primary-50 p-2">
-                    <CubeIcon className="h-5 w-5 text-primary-600" aria-hidden="true" />
+          {/* Mobile Actions Menu */}
+          <div className="sm:hidden relative">
+            <button
+              onClick={() => setShowMobileActions(!showMobileActions)}
+              className="p-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+            >
+              <EllipsisVerticalIcon className="h-5 w-5 text-gray-700" />
+            </button>
+            {showMobileActions && (
+              <>
+                <div className="fixed inset-0 z-40 bg-black/20" onClick={() => setShowMobileActions(false)}></div>
+                <div className="fixed bottom-0 left-0 right-0 z-50 bg-white rounded-t-2xl shadow-2xl border-t border-gray-200 sm:hidden"
+                     style={{
+                       maxHeight: '50vh'
+                     }}>
+                  {/* Handle bar */}
+                  <div className="w-full flex justify-center pt-3 pb-2">
+                    <div className="w-12 h-1.5 bg-gray-300 rounded-full" />
                   </div>
-                </div>
-                <div className="mt-4 flex items-baseline">
-                  {isLoading ? (
-                    <div className="h-8 w-16 animate-pulse bg-gray-200 rounded" />
-                  ) : (
-                    <p className="text-3xl font-semibold text-gray-900">{stats.totalProducts}</p>
-                  )}
-                </div>
-                <div className="mt-1">
-                  <p className="text-xs text-gray-500">{stats.activeCount} active products</p>
-                </div>
-              </div>
-            </Card>
-
-            {/* Low Stock */}
-            <Card className={`relative overflow-hidden border-l-4 ${stats.lowStockCount > 0 ? 'border-l-amber-500' : 'border-l-green-500'}`}>
-              <div className="p-1">
-                <div className="flex items-center justify-between">
-                  <p className="truncate text-sm font-medium text-gray-500">Low Stock Items</p>
-                  <div className={`rounded-md p-2 ${stats.lowStockCount > 0 ? 'bg-amber-50' : 'bg-green-50'}`}>
-                    <ExclamationTriangleIcon className={`h-5 w-5 ${stats.lowStockCount > 0 ? 'text-amber-600' : 'text-green-600'}`} aria-hidden="true" />
-                  </div>
-                </div>
-                <div className="mt-4 flex items-baseline">
-                  {isLoading ? (
-                    <div className="h-8 w-16 animate-pulse bg-gray-200 rounded" />
-                  ) : (
-                    <>
-                      <p className="text-3xl font-semibold text-gray-900">{stats.lowStockCount}</p>
-                      {stats.outOfStockCount > 0 && (
-                        <span className="ml-2 text-sm font-medium text-red-600">
-                          ({stats.outOfStockCount} out)
-                        </span>
-                      )}
-                    </>
-                  )}
-                </div>
-                <div className="mt-1">
-                  <p className="text-xs text-gray-500">Items below reorder point</p>
-                </div>
-              </div>
-            </Card>
-
-            {/* Inventory Value */}
-            <Card className="relative overflow-hidden border-l-4 border-l-emerald-500">
-              <div className="p-1">
-                <div className="flex items-center justify-between">
-                  <p className="truncate text-sm font-medium text-gray-500">Inventory Value</p>
-                  <div className="rounded-md bg-emerald-50 p-2">
-                    <CurrencyDollarIcon className="h-5 w-5 text-emerald-600" aria-hidden="true" />
-                  </div>
-                </div>
-                <div className="mt-4 flex items-baseline">
-                  {isLoading ? (
-                    <div className="h-8 w-24 animate-pulse bg-gray-200 rounded" />
-                  ) : (
-                    <p className="text-3xl font-semibold text-gray-900">
-                      £{stats.inventoryValue.toLocaleString('en-GB', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
-                    </p>
-                  )}
-                </div>
-                <div className="mt-1">
-                  <p className="text-xs text-gray-500">Total asset value</p>
-                </div>
-              </div>
-            </Card>
-
-            {/* Active Products */}
-            <Card className="relative overflow-hidden border-l-4 border-l-blue-500">
-              <div className="p-1">
-                <div className="flex items-center justify-between">
-                  <p className="truncate text-sm font-medium text-gray-500">Active Products</p>
-                  <div className="rounded-md bg-blue-50 p-2">
-                    <CheckCircleIcon className="h-5 w-5 text-blue-600" aria-hidden="true" />
-                  </div>
-                </div>
-                <div className="mt-4 flex items-baseline">
-                  {isLoading ? (
-                    <div className="h-8 w-16 animate-pulse bg-gray-200 rounded" />
-                  ) : (
-                    <p className="text-3xl font-semibold text-gray-900">{stats.activeCount}</p>
-                  )}
-                </div>
-                <div className="mt-1">
-                  <p className="text-xs text-gray-500">
-                    {stats.totalProducts > 0 ? Math.round((stats.activeCount / stats.totalProducts) * 100) : 0}% of total
-                  </p>
-                </div>
-              </div>
-            </Card>
-          </div>
-
-          {/* Main Content Grid */}
-          <div className="grid grid-cols-1 lg:grid-cols-20 gap-6">
-          {/* Mobile Sidebar Overlay */}
-          {showMobileSidebar && (
-            <>
-              <div
-                className="fixed inset-0 bg-black/50 z-40 lg:hidden"
-                onClick={() => setShowMobileSidebar(false)}
-              ></div>
-              <aside className="fixed inset-y-0 left-0 w-72 bg-white shadow-xl z-50 lg:hidden overflow-y-auto">
-                <div className="p-4 border-b border-gray-200 flex items-center justify-between">
-                  <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-                    <FolderIcon className="h-5 w-5 text-blue-600" />
-                    Folders
-                  </h3>
-                  <button
-                    onClick={() => setShowMobileSidebar(false)}
-                    className="p-2 text-gray-400 hover:text-gray-600 rounded-lg transition-colors"
-                  >
-                    <XMarkIcon className="h-5 w-5" />
-                  </button>
-                </div>
-                <div className="p-4">
-                  <div className="flex items-center justify-between mb-4">
-                    <span className="text-sm font-medium text-gray-700">Product Folders</span>
+                  
+                  {/* Menu items */}
+                  <div className="px-4 pb-4 space-y-1 overflow-y-auto" style={{ maxHeight: 'calc(50vh - 60px)' }}>
                     <button
-                      onClick={async () => {
-                        const name = prompt('New folder name?')
-                        if (!name) return
-                        await createGroup(workspaceId!, name)
-                        qc.invalidateQueries({ queryKey: ['groups', workspaceId] })
-                        setShowMobileSidebar(false)
-                      }}
-                      className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                      title="New folder"
-                    >
-                      <FolderPlusIcon className="h-4 w-4" />
-                    </button>
-                  </div>
-
-                  <div
-                    className="space-y-1 max-h-[calc(100vh-200px)] overflow-y-auto"
-                    onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }}
-                    onDrop={async (e) => {
-                      const data = e.dataTransfer.getData('text/plain')
-                      try {
-                        const parsed = JSON.parse(data)
-                        if (parsed?.type === 'group' && parsed?.id) {
-                          await moveGroupParent(workspaceId!, parsed.id, null)
-                          qc.invalidateQueries({ queryKey: ['groups', workspaceId] })
-                        }
-                      } catch { }
-                    }}
-                  >
-                    {/* All Products */}
-                    <div
-                      className={`flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition-colors ${selectedGroup === ''
-                        ? 'bg-blue-50 border border-blue-200 text-blue-700'
-                        : 'hover:bg-gray-50 text-gray-700'
-                        }`}
                       onClick={() => {
-                        setSelectedGroup('')
-                        setShowMobileSidebar(false)
+                        setShowScanner(true)
+                        setShowMobileActions(false)
                       }}
+                      className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 rounded-lg flex items-center gap-3 transition-colors"
                     >
-                      <ArchiveBoxIcon className="h-4 w-4 text-gray-500" />
-                      <span className="text-sm font-medium flex-1">All Products</span>
-                      <span className="text-xs text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">
-                        {products.length}
-                      </span>
-                    </div>
-
-                    {/* Folder Tree */}
-                    <FolderTree groups={groups} />
+                      <QrCodeIcon className="h-5 w-5" />
+                      <span>Scan</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowImport(true)
+                        setShowMobileActions(false)
+                      }}
+                      className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 rounded-lg flex items-center gap-3 transition-colors"
+                    >
+                      <ArrowUpTrayIcon className="h-5 w-5" />
+                      <span>Import</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        downloadCSV('inventory.csv', toCSV(products))
+                        setShowMobileActions(false)
+                      }}
+                      className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 rounded-lg flex items-center gap-3 transition-colors"
+                    >
+                      <ArrowDownTrayIcon className="h-5 w-5" />
+                      <span>Export</span>
+                    </button>
+                    {duplicateProducts.length > 0 && (
+                      <button
+                        onClick={() => {
+                          setShowDuplicates(true)
+                          setShowMobileActions(false)
+                        }}
+                        className="w-full text-left px-4 py-3 text-sm text-amber-700 hover:bg-amber-50 rounded-lg flex items-center gap-3 transition-colors"
+                      >
+                        <ExclamationCircleIcon className="h-5 w-5" />
+                        <span>Duplicates ({duplicateProducts.length})</span>
+                      </button>
+                    )}
                   </div>
                 </div>
-              </aside>
-            </>
-          )}
-
-          {/* Enhanced Sidebar - Desktop */}
-          <aside className="hidden lg:block lg:col-span-5 min-w-[280px]">
-            <Card className="h-full">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-                  <FolderIcon className="h-5 w-5 text-blue-600" />
-                  Product Folders
-                </h3>
-                <button
-                  onClick={async () => {
-                    const name = prompt('New folder name?')
-                    if (!name) return
-                    await createGroup(workspaceId!, name)
-                    qc.invalidateQueries({ queryKey: ['groups', workspaceId] })
-                  }}
-                  className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                  title="New folder"
-                >
-                  <FolderPlusIcon className="h-4 w-4" />
-                </button>
-              </div>
-
-              <div
-                className="space-y-1 max-h-[calc(100vh-400px)] overflow-y-auto"
-                onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }}
-                onDrop={async (e) => {
-                  const data = e.dataTransfer.getData('text/plain')
-                  try {
-                    const parsed = JSON.parse(data)
-                    if (parsed?.type === 'group' && parsed?.id) {
-                      await moveGroupParent(workspaceId!, parsed.id, null)
-                      qc.invalidateQueries({ queryKey: ['groups', workspaceId] })
-                    }
-                  } catch { }
-                }}
-              >
-                {/* All Products */}
-                <div
-                  className={`flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition-colors ${selectedGroup === ''
-                    ? 'bg-blue-50 border border-blue-200 text-blue-700'
-                    : 'hover:bg-gray-50 text-gray-700'
-                    }`}
-                  onClick={() => setSelectedGroup('')}
-                >
-                  <ArchiveBoxIcon className="h-4 w-4 text-gray-500" />
-                  <span className="text-sm font-medium flex-1">All Products</span>
-                  <span className="text-xs text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">
-                    {products.length}
-                  </span>
-                </div>
-
-                {/* Folder Tree */}
-                <FolderTree groups={groups} />
-              </div>
-            </Card>
-          </aside>
-
-          {/* Main Content */}
-          <section className="lg:col-span-15">
-            {/* Bulk Actions */}
-            {selectedIds.length > 0 && (
-              <Card className="bg-blue-50 border-blue-200 mb-6">
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <div className="bg-blue-100 text-blue-800 px-2 sm:px-3 py-1 sm:py-1.5 rounded-full text-xs sm:text-sm font-medium">
-                      {selectedIds.length} product{selectedIds.length !== 1 ? 's' : ''} selected
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-                    <select
-                      className="text-xs sm:text-sm border border-gray-300 rounded-lg px-2 sm:px-3 py-1 sm:py-1.5 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 flex-1 sm:flex-none min-w-0"
-                      onChange={async (e) => {
-                        const target = e.target.value
-                        if (!target) return
-                        await Promise.all(selectedIds.map(id => moveProductToGroup(workspaceId!, id, target || null)))
-                        setSelectedIds([])
-                        qc.invalidateQueries({ queryKey: ['products', workspaceId] })
-                        e.currentTarget.selectedIndex = 0
-                      }}
-                    >
-                      <option value="">Move to folder...</option>
-                      <option value="">No Folder</option>
-                      {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
-                    </select>
-
-                    <button
-                      className="text-xs sm:text-sm px-2 sm:px-3 py-1 sm:py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-                      onClick={async () => {
-                        await Promise.all(selectedIds.map(id => setProductStatus(workspaceId!, id, 'active')))
-                        setSelectedIds([])
-                        qc.invalidateQueries({ queryKey: ['products', workspaceId] })
-                      }}
-                    >
-                      Activate
-                    </button>
-
-                    <button
-                      className="text-xs sm:text-sm px-2 sm:px-3 py-1 sm:py-1.5 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
-                      onClick={async () => {
-                        await Promise.all(selectedIds.map(id => setProductStatus(workspaceId!, id, 'draft')))
-                        setSelectedIds([])
-                        qc.invalidateQueries({ queryKey: ['products', workspaceId] })
-                      }}
-                    >
-                      Draft
-                    </button>
-
-                    <button
-                      className="text-xs sm:text-sm px-2 sm:px-3 py-1 sm:py-1.5 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors flex items-center gap-1"
-                      onClick={async () => {
-                        if (!confirm(`Delete ${selectedIds.length} product(s)? This action cannot be undone.`)) return
-                        await Promise.all(selectedIds.map(id => deleteProduct(workspaceId!, id)))
-                        setSelectedIds([])
-                        qc.invalidateQueries({ queryKey: ['products', workspaceId] })
-                      }}
-                    >
-                      <TrashIcon className="h-3 w-3" />
-                      <span className="hidden sm:inline">Delete</span>
-                    </button>
-
-                    <button
-                      onClick={() => setSelectedIds([])}
-                      className="text-xs sm:text-sm px-2 sm:px-3 py-1 sm:py-1.5 text-gray-600 hover:text-gray-800"
-                    >
-                      Clear
-                    </button>
-                  </div>
-                </div>
-              </Card>
+              </>
             )}
+          </div>
 
-            {/* Products Table - Desktop */}
-            <Card noPadding className="hidden md:block overflow-hidden">
-              <DataTable
-                data={paginatedProducts}
-                columns={columns}
-                onRowClick={setSelectedProduct}
-                selectable
-                getId={(p) => (p as any).id}
-                selectedIds={selectedIds}
-                onToggleSelect={(id, _item, checked) => {
-                  setSelectedIds(prev => checked ? Array.from(new Set([...prev, id])) : prev.filter(x => x !== id))
-                }}
-                onToggleSelectAll={(checked) => {
-                  setSelectedIds(checked ? paginatedProducts.map((p: any) => p.id) : [])
-                }}
-                renderActions={(item) => (
-                  <div className="flex items-center justify-end gap-3">
-                    <button
-                      onClick={() => setSelectedProduct(item)}
-                      className="text-blue-600 hover:text-blue-900 font-medium text-sm px-3 py-1.5 rounded-lg hover:bg-blue-50 transition-colors flex items-center gap-1"
-                    >
-                      <EyeIcon className="h-3 w-3" />
-                      View
-                    </button>
+          {/* Desktop Action Buttons */}
+          <div className="hidden sm:flex items-center gap-3">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setShowFilters(!showFilters)}
+            >
+              <FunnelIcon className="h-4 w-4 mr-2" />
+              Filters
+              {(statusFilter !== 'all' || lowStockFilter) && (
+                <span className="ml-2 bg-blue-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                  {(statusFilter !== 'all' ? 1 : 0) + (lowStockFilter ? 1 : 0)}
+                </span>
+              )}
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setShowImport(true)}
+            >
+              <ArrowUpTrayIcon className="h-4 w-4 mr-2" />
+              Import
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => downloadCSV('inventory.csv', toCSV(products))}
+            >
+              <ArrowDownTrayIcon className="h-4 w-4 mr-2" />
+              Export
+            </Button>
+            {duplicateProducts.length > 0 && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setShowDuplicates(true)}
+                className="bg-amber-50 border-amber-300 text-amber-700 hover:bg-amber-100"
+              >
+                <ExclamationCircleIcon className="h-4 w-4 mr-2" />
+                Duplicates
+                <span className="ml-2 bg-amber-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+                  {duplicateProducts.length}
+                </span>
+              </Button>
+            )}
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setShowScanner(true)}
+            >
+              <QrCodeIcon className="h-4 w-4 mr-2" />
+              Scan
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => setShowCreate(true)}
+            >
+              <PlusIcon className="h-4 w-4 mr-2" />
+              New Product
+            </Button>
+          </div>
+        </div>
+      </div>
 
-                    <button
-                      onClick={async () => {
-                        const next = (item as any).status === 'active' ? 'draft' : 'active'
-                        await setProductStatus(workspaceId!, (item as any).id, next as any)
-                        qc.invalidateQueries({ queryKey: ['products', workspaceId] })
-                      }}
-                      className="text-gray-600 hover:text-gray-900 text-sm px-3 py-1.5 rounded-lg hover:bg-gray-50 transition-colors"
-                    >
-                      {(item as any).status === 'active' ? 'Make Draft' : 'Activate'}
-                    </button>
+      {/* Search Bar */}
+      <div className="relative">
+        <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+        <input
+          type="text"
+          placeholder="Search products by name, SKU, or ID..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          className="w-full pl-10 pr-10 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors text-sm"
+        />
+        {searchTerm && (
+          <button
+            onClick={() => setSearchTerm('')}
+            className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+          >
+            <XMarkIcon className="h-5 w-5" />
+          </button>
+        )}
+      </div>
 
-                    <button
-                      onClick={async () => {
-                        if (!confirm('Are you sure you want to delete this product?')) return
-                        await deleteProduct(workspaceId!, (item as any).id)
-                        qc.invalidateQueries({ queryKey: ['products', workspaceId] })
-                      }}
-                      className="text-red-600 hover:text-red-900 text-sm px-3 py-1.5 rounded-lg hover:bg-red-50 transition-colors flex items-center gap-1"
-                    >
-                      <TrashIcon className="h-3 w-3" />
-                      Delete
-                    </button>
-                  </div>
-                )}
-              />
-            </Card>
+      {/* Filters Panel */}
+      {showFilters && (
+        <Card className="bg-gray-50">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Status</label>
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="w-full rounded-lg border-gray-300 focus:border-primary-500 focus:ring-primary-500 py-2 text-sm"
+              >
+                <option value="all">All Status</option>
+                <option value="active">Active</option>
+                <option value="draft">Draft</option>
+                <option value="inactive">Inactive</option>
+              </select>
+            </div>
 
-            {/* Products Cards - Mobile */}
-            <div className="md:hidden space-y-3 pb-4">
-              {paginatedProducts.length === 0 ? (
-                <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-8">
-                  <div className="text-center">
-                    <div className="mx-auto h-12 w-12 text-gray-400">
-                      <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" className="h-12 w-12">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
-                      </svg>
-                    </div>
-                    <h3 className="mt-2 text-sm font-medium text-gray-900">No products</h3>
-                    <p className="mt-1 text-sm text-gray-500">Get started by creating a new product.</p>
-                  </div>
-                </div>
+            <div className="flex items-end">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={lowStockFilter}
+                  onChange={(e) => setLowStockFilter(e.target.checked)}
+                  className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                />
+                <span className="text-sm font-medium text-gray-700">Show Low Stock Only</span>
+              </label>
+            </div>
+          </div>
+
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mt-4 pt-4 border-t border-gray-200">
+            <button
+              onClick={() => {
+                setStatusFilter('all')
+                setLowStockFilter(false)
+              }}
+              className="text-sm text-gray-600 hover:text-gray-800 transition-colors"
+            >
+              Clear all filters
+            </button>
+            <span className="text-sm text-gray-500">
+              Showing {filteredProducts.length} of {products.length} products
+            </span>
+          </div>
+        </Card>
+      )}
+
+      {/* Primary Stats Grid - Matching Dashboard Style */}
+      <div className="space-y-4">
+        {/* Mobile KPI Toggle Button */}
+        <div className="sm:hidden">
+          <button
+            onClick={() => setShowKPIs(!showKPIs)}
+            className="w-full flex items-center justify-between p-4 bg-white rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors"
+          >
+            <span className="text-sm font-medium text-gray-700">View KPIs</span>
+            <ChevronDownIcon className={`h-5 w-5 text-gray-500 transition-transform ${showKPIs ? 'rotate-180' : ''}`} />
+          </button>
+        </div>
+        
+        {/* KPI Cards - Hidden on mobile by default */}
+        <div className={`grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4 ${showKPIs ? 'block' : 'hidden sm:grid'}`}>
+        {/* Total Products */}
+        <Card className="relative overflow-hidden border-l-4 border-l-primary-500">
+          <div className="p-1">
+            <div className="flex items-center justify-between">
+              <p className="truncate text-sm font-medium text-gray-500">Total Products</p>
+              <div className="rounded-md bg-primary-50 p-2">
+                <CubeIcon className="h-5 w-5 text-primary-600" aria-hidden="true" />
+              </div>
+            </div>
+            <div className="mt-4 flex items-baseline">
+              {isLoading ? (
+                <div className="h-8 w-16 animate-pulse bg-gray-200 rounded" />
+              ) : (
+                <p className="text-3xl font-semibold text-gray-900">{stats.totalProducts}</p>
+              )}
+            </div>
+            <div className="mt-1">
+              <p className="text-xs text-gray-500">{stats.activeCount} active products</p>
+            </div>
+          </div>
+        </Card>
+
+        {/* Low Stock */}
+        <Card className={`relative overflow-hidden border-l-4 ${stats.lowStockCount > 0 ? 'border-l-amber-500' : 'border-l-green-500'}`}>
+          <div className="p-1">
+            <div className="flex items-center justify-between">
+              <p className="truncate text-sm font-medium text-gray-500">Low Stock Items</p>
+              <div className={`rounded-md p-2 ${stats.lowStockCount > 0 ? 'bg-amber-50' : 'bg-green-50'}`}>
+                <ExclamationTriangleIcon className={`h-5 w-5 ${stats.lowStockCount > 0 ? 'text-amber-600' : 'text-green-600'}`} aria-hidden="true" />
+              </div>
+            </div>
+            <div className="mt-4 flex items-baseline">
+              {isLoading ? (
+                <div className="h-8 w-16 animate-pulse bg-gray-200 rounded" />
               ) : (
                 <>
-                  {/* Select All on Mobile */}
-                  <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-3">
-                    <label className="flex items-center gap-3 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={paginatedProducts.length > 0 && selectedIds.length === paginatedProducts.length}
-                        onChange={(e) => {
-                          setSelectedIds(e.target.checked ? paginatedProducts.map((p: any) => p.id) : [])
-                        }}
-                        className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500 focus:ring-offset-0"
-                      />
-                      <span className="text-sm font-semibold text-gray-900">Select All ({paginatedProducts.length})</span>
-                    </label>
-                  </div>
-
-                  {paginatedProducts.map((item: any) => {
-                    const isSelected = selectedIds.includes(item.id)
-                    const qtyOnHand = item.qtyOnHand || 0
-                    const isLowStock = qtyOnHand < item.minStock
-                    const isOutOfStock = qtyOnHand === 0
-
-                    return (
-                      <div
-                        key={item.id}
-                        className={`bg-white rounded-xl shadow-sm border-2 transition-all duration-200 ${isSelected
-                            ? 'border-blue-500 shadow-md bg-blue-50/50'
-                            : 'border-gray-100 hover:border-gray-200 hover:shadow-md'
-                          } ${isOutOfStock ? 'ring-2 ring-red-100' : isLowStock ? 'ring-2 ring-orange-100' : ''}`}
-                      >
-                        <div className="p-4">
-                          {/* Header Section */}
-                          <div className="flex items-start gap-3 mb-3">
-                            <input
-                              type="checkbox"
-                              checked={isSelected}
-                              onChange={(e) => {
-                                e.stopPropagation()
-                                setSelectedIds(prev =>
-                                  e.target.checked
-                                    ? Array.from(new Set([...prev, item.id]))
-                                    : prev.filter(x => x !== item.id)
-                                )
-                              }}
-                              onClick={(e) => e.stopPropagation()}
-                              className="w-5 h-5 mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500 focus:ring-offset-0 shrink-0"
-                            />
-
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-start justify-between gap-2 mb-1">
-                                <h3
-                                  className="text-base font-bold text-gray-900 leading-tight line-clamp-2 cursor-pointer hover:text-blue-600 transition-colors"
-                                  onClick={() => setSelectedProduct(item)}
-                                >
-                                  {(() => {
-                                    const name = item.name || 'Unnamed Product'
-                                    // Clean up encoding issues - remove replacement characters and invalid unicode
-                                    let cleaned = name
-                                      .replace(/\uFFFD/g, '') // Remove replacement characters
-                                      .replace(/\u0000/g, '') // Remove null characters
-                                      .trim()
-
-                                    // Try to decode HTML entities if any
-                                    try {
-                                      const textarea = document.createElement('textarea')
-                                      textarea.innerHTML = cleaned
-                                      cleaned = textarea.value || cleaned
-                                    } catch (e) {
-                                      // If decoding fails, use original
-                                    }
-
-                                    return cleaned || name
-                                  })()}
-                                </h3>
-                                <span className={`px-2.5 py-1 rounded-lg text-xs font-semibold shrink-0 flex items-center gap-1 ${item.status === 'active'
-                                    ? 'bg-green-100 text-green-800 border border-green-200'
-                                    : item.status === 'draft'
-                                      ? 'bg-gray-100 text-gray-800 border border-gray-200'
-                                      : 'bg-red-100 text-red-800 border border-red-200'
-                                  }`}>
-                                  {item.status === 'active' && <CheckCircleIcon className="h-3 w-3" />}
-                                  {item.status?.charAt(0).toUpperCase() + item.status?.slice(1)}
-                                </span>
-                              </div>
-                              <div className="flex items-center gap-2 mt-1">
-                                <p className="text-xs text-gray-500 font-mono">SKU: {item.sku}</p>
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Stock Information Card */}
-                          <div className={`rounded-lg p-3 mb-3 ${isOutOfStock
-                              ? 'bg-red-50 border border-red-200'
-                              : isLowStock
-                                ? 'bg-orange-50 border border-orange-200'
-                                : 'bg-gray-50 border border-gray-200'
-                            }`}>
-                            <div className="flex items-center justify-between mb-2">
-                              <span className="text-xs font-medium text-gray-600">Stock Level</span>
-                              {isOutOfStock && (
-                                <span className="px-2 py-0.5 bg-red-100 text-red-700 rounded-full text-[10px] font-semibold">
-                                  OUT OF STOCK
-                                </span>
-                              )}
-                              {!isOutOfStock && isLowStock && (
-                                <span className="px-2 py-0.5 bg-orange-100 text-orange-700 rounded-full text-[10px] font-semibold">
-                                  LOW STOCK
-                                </span>
-                              )}
-                            </div>
-                            <div className="grid grid-cols-2 gap-3">
-                              <div>
-                                <div className="text-[10px] text-gray-500 mb-0.5 font-medium">On Hand</div>
-                                <div className={`text-lg font-bold ${isOutOfStock
-                                    ? 'text-red-600'
-                                    : isLowStock
-                                      ? 'text-orange-600'
-                                      : 'text-gray-900'
-                                  }`}>
-                                  {qtyOnHand.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                </div>
-                              </div>
-                              <div>
-                                <div className="text-[10px] text-gray-500 mb-0.5 font-medium">Min Stock</div>
-                                <div className="text-lg font-bold text-gray-700">
-                                  {(item.minStock || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                </div>
-                              </div>
-                            </div>
-                            <div className="mt-2 pt-2 border-t border-gray-200">
-                              <div className="flex items-center justify-between">
-                                <span className="text-[10px] text-gray-500 font-medium">Unit</span>
-                                <span className="text-xs font-semibold text-gray-700">{item.uom || 'N/A'}</span>
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Action Buttons */}
-                          <div className="flex items-center gap-2 pt-2 border-t border-gray-100">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                setSelectedProduct(item)
-                              }}
-                              className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors active:scale-95"
-                            >
-                              <EyeIcon className="h-4 w-4" />
-                              View
-                            </button>
-                            <button
-                              onClick={async (e) => {
-                                e.stopPropagation()
-                                const next = item.status === 'active' ? 'draft' : 'active'
-                                await setProductStatus(workspaceId!, item.id, next as any)
-                                qc.invalidateQueries({ queryKey: ['products', workspaceId] })
-                              }}
-                              className="flex-1 px-3 py-2 text-sm font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors active:scale-95"
-                            >
-                              {item.status === 'active' ? 'Draft' : 'Activate'}
-                            </button>
-                            <button
-                              onClick={async (e) => {
-                                e.stopPropagation()
-                                if (!confirm('Are you sure you want to delete this product?')) return
-                                await deleteProduct(workspaceId!, item.id)
-                                qc.invalidateQueries({ queryKey: ['products', workspaceId] })
-                              }}
-                              className="flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors active:scale-95"
-                            >
-                              <TrashIcon className="h-4 w-4" />
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    )
-                  })}
+                  <p className="text-3xl font-semibold text-gray-900">{stats.lowStockCount}</p>
+                  {stats.outOfStockCount > 0 && (
+                    <span className="ml-2 text-sm font-medium text-red-600">
+                      ({stats.outOfStockCount} out)
+                    </span>
+                  )}
                 </>
               )}
             </div>
+            <div className="mt-1">
+              <p className="text-xs text-gray-500">Items below reorder point</p>
+            </div>
+          </div>
+        </Card>
 
-            {/* Pagination */}
-            {filteredProducts.length > 0 && (
-              <Card className="mt-6">
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                  <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+        {/* Inventory Value */}
+        <Card className="relative overflow-hidden border-l-4 border-l-emerald-500">
+          <div className="p-1">
+            <div className="flex items-center justify-between">
+              <p className="truncate text-sm font-medium text-gray-500">Inventory Value</p>
+              <div className="rounded-md bg-emerald-50 p-2">
+                <CurrencyDollarIcon className="h-5 w-5 text-emerald-600" aria-hidden="true" />
+              </div>
+            </div>
+            <div className="mt-4 flex items-baseline">
+              {isLoading ? (
+                <div className="h-8 w-24 animate-pulse bg-gray-200 rounded" />
+              ) : (
+                <p className="text-3xl font-semibold text-gray-900">
+                  £{stats.inventoryValue.toLocaleString('en-GB', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                </p>
+              )}
+            </div>
+            <div className="mt-1">
+              <p className="text-xs text-gray-500">Total asset value</p>
+            </div>
+          </div>
+        </Card>
+
+        {/* Active Products */}
+        <Card className="relative overflow-hidden border-l-4 border-l-blue-500">
+          <div className="p-1">
+            <div className="flex items-center justify-between">
+              <p className="truncate text-sm font-medium text-gray-500">Active Products</p>
+              <div className="rounded-md bg-blue-50 p-2">
+                <CheckCircleIcon className="h-5 w-5 text-blue-600" aria-hidden="true" />
+              </div>
+            </div>
+            <div className="mt-4 flex items-baseline">
+              {isLoading ? (
+                <div className="h-8 w-16 animate-pulse bg-gray-200 rounded" />
+              ) : (
+                <p className="text-3xl font-semibold text-gray-900">{stats.activeCount}</p>
+              )}
+            </div>
+            <div className="mt-1">
+              <p className="text-xs text-gray-500">
+                {stats.totalProducts > 0 ? Math.round((stats.activeCount / stats.totalProducts) * 100) : 0}% of total
+              </p>
+            </div>
+          </div>
+        </Card>
+        </div>
+      </div>
+
+      {/* Main Content Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-20 gap-6">
+        {/* Mobile Sidebar Overlay */}
+        {showMobileSidebar && (
+          <>
+            <div
+              className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+              onClick={() => setShowMobileSidebar(false)}
+            ></div>
+            <aside className="fixed inset-y-0 left-0 w-72 bg-white shadow-xl z-50 lg:hidden overflow-y-auto">
+              <div className="p-4 border-b border-gray-200 flex items-center justify-between">
+                <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                  <FolderIcon className="h-5 w-5 text-blue-600" />
+                  Folders
+                </h3>
+                <button
+                  onClick={() => setShowMobileSidebar(false)}
+                  className="p-2 text-gray-400 hover:text-gray-600 rounded-lg transition-colors"
+                >
+                  <XMarkIcon className="h-5 w-5" />
+                </button>
+              </div>
+              <div className="p-4">
+                <div className="flex items-center justify-between mb-4">
+                  <span className="text-sm font-medium text-gray-700">Product Folders</span>
+                  <button
+                    onClick={async () => {
+                      const name = prompt('New folder name?')
+                      if (!name) return
+                      await createGroup(workspaceId!, name)
+                      qc.invalidateQueries({ queryKey: ['groups', workspaceId] })
+                      setShowMobileSidebar(false)
+                    }}
+                    className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                    title="New folder"
+                  >
+                    <FolderPlusIcon className="h-4 w-4" />
+                  </button>
+                </div>
+
+                <div
+                  className="space-y-1 max-h-[calc(100vh-200px)] overflow-y-auto"
+                  onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }}
+                  onDrop={async (e) => {
+                    const data = e.dataTransfer.getData('text/plain')
+                    try {
+                      const parsed = JSON.parse(data)
+                      if (parsed?.type === 'group' && parsed?.id) {
+                        await moveGroupParent(workspaceId!, parsed.id, null)
+                        qc.invalidateQueries({ queryKey: ['groups', workspaceId] })
+                      }
+                    } catch { }
+                  }}
+                >
+                  {/* All Products */}
+                  <div
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition-colors ${selectedGroup === ''
+                      ? 'bg-blue-50 border border-blue-200 text-blue-700'
+                      : 'hover:bg-gray-50 text-gray-700'
+                      }`}
+                    onClick={() => {
+                      setSelectedGroup('')
+                      setShowMobileSidebar(false)
+                    }}
+                  >
+                    <ArchiveBoxIcon className="h-4 w-4 text-gray-500" />
+                    <span className="text-sm font-medium flex-1">All Products</span>
+                    <span className="text-xs text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">
+                      {products.length}
+                    </span>
+                  </div>
+
+                  {/* Folder Tree */}
+                  <FolderTree groups={groups} />
+                </div>
+              </div>
+            </aside>
+          </>
+        )}
+
+        {/* Enhanced Sidebar - Desktop */}
+        <aside className="hidden lg:block lg:col-span-5 min-w-[280px]">
+          <Card className="h-full">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                <FolderIcon className="h-5 w-5 text-blue-600" />
+                Product Folders
+              </h3>
+              <button
+                onClick={async () => {
+                  const name = prompt('New folder name?')
+                  if (!name) return
+                  await createGroup(workspaceId!, name)
+                  qc.invalidateQueries({ queryKey: ['groups', workspaceId] })
+                }}
+                className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                title="New folder"
+              >
+                <FolderPlusIcon className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div
+              className="space-y-1 max-h-[calc(100vh-400px)] overflow-y-auto"
+              onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }}
+              onDrop={async (e) => {
+                const data = e.dataTransfer.getData('text/plain')
+                try {
+                  const parsed = JSON.parse(data)
+                  if (parsed?.type === 'group' && parsed?.id) {
+                    await moveGroupParent(workspaceId!, parsed.id, null)
+                    qc.invalidateQueries({ queryKey: ['groups', workspaceId] })
+                  }
+                } catch { }
+              }}
+            >
+              {/* All Products */}
+              <div
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition-colors ${selectedGroup === ''
+                  ? 'bg-blue-50 border border-blue-200 text-blue-700'
+                  : 'hover:bg-gray-50 text-gray-700'
+                  }`}
+                onClick={() => setSelectedGroup('')}
+              >
+                <ArchiveBoxIcon className="h-4 w-4 text-gray-500" />
+                <span className="text-sm font-medium flex-1">All Products</span>
+                <span className="text-xs text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">
+                  {products.length}
+                </span>
+              </div>
+
+              {/* Folder Tree */}
+              <FolderTree groups={groups} />
+            </div>
+          </Card>
+        </aside>
+
+        {/* Main Content */}
+        <section className="lg:col-span-15">
+          {/* Bulk Actions */}
+          {selectedIds.length > 0 && (
+            <Card className="bg-blue-50 border-blue-200 mb-6">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="bg-blue-100 text-blue-800 px-2 sm:px-3 py-1 sm:py-1.5 rounded-full text-xs sm:text-sm font-medium">
+                    {selectedIds.length} product{selectedIds.length !== 1 ? 's' : ''} selected
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                  <select
+                    className="text-xs sm:text-sm border border-gray-300 rounded-lg px-2 sm:px-3 py-1 sm:py-1.5 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 flex-1 sm:flex-none min-w-0"
+                    onChange={async (e) => {
+                      const target = e.target.value
+                      if (!target) return
+                      await Promise.all(selectedIds.map(id => moveProductToGroup(workspaceId!, id, target || null)))
+                      setSelectedIds([])
+                      qc.invalidateQueries({ queryKey: ['products', workspaceId] })
+                      e.currentTarget.selectedIndex = 0
+                    }}
+                  >
+                    <option value="">Move to folder...</option>
+                    <option value="">No Folder</option>
+                    {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                  </select>
+
+                  <button
+                    className="text-xs sm:text-sm px-2 sm:px-3 py-1 sm:py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                    onClick={async () => {
+                      await Promise.all(selectedIds.map(id => setProductStatus(workspaceId!, id, 'active')))
+                      setSelectedIds([])
+                      qc.invalidateQueries({ queryKey: ['products', workspaceId] })
+                    }}
+                  >
+                    Activate
+                  </button>
+
+                  <button
+                    className="text-xs sm:text-sm px-2 sm:px-3 py-1 sm:py-1.5 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+                    onClick={async () => {
+                      await Promise.all(selectedIds.map(id => setProductStatus(workspaceId!, id, 'draft')))
+                      setSelectedIds([])
+                      qc.invalidateQueries({ queryKey: ['products', workspaceId] })
+                    }}
+                  >
+                    Draft
+                  </button>
+
+                  <button
+                    className="text-xs sm:text-sm px-2 sm:px-3 py-1 sm:py-1.5 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors flex items-center gap-1"
+                    onClick={async () => {
+                      if (!confirm(`Delete ${selectedIds.length} product(s)? This action cannot be undone.`)) return
+                      await Promise.all(selectedIds.map(id => deleteProduct(workspaceId!, id)))
+                      setSelectedIds([])
+                      qc.invalidateQueries({ queryKey: ['products', workspaceId] })
+                    }}
+                  >
+                    <TrashIcon className="h-3 w-3" />
+                    <span className="hidden sm:inline">Delete</span>
+                  </button>
+
+                  <button
+                    onClick={() => setSelectedIds([])}
+                    className="text-xs sm:text-sm px-2 sm:px-3 py-1 sm:py-1.5 text-gray-600 hover:text-gray-800"
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+            </Card>
+          )}
+
+          {/* Products Table - Desktop */}
+          <Card noPadding className="hidden md:block overflow-hidden">
+            <DataTable
+              data={paginatedProducts}
+              columns={columns}
+              onRowClick={setSelectedProduct}
+              selectable
+              getId={(p) => (p as any).id}
+              selectedIds={selectedIds}
+              onToggleSelect={(id, _item, checked) => {
+                setSelectedIds(prev => checked ? Array.from(new Set([...prev, id])) : prev.filter(x => x !== id))
+              }}
+              onToggleSelectAll={(checked) => {
+                setSelectedIds(checked ? paginatedProducts.map((p: any) => p.id) : [])
+              }}
+              renderActions={(item) => (
+                <div className="flex items-center justify-end gap-3">
+                  <button
+                    onClick={() => setSelectedProduct(item)}
+                    className="text-blue-600 hover:text-blue-900 font-medium text-sm px-3 py-1.5 rounded-lg hover:bg-blue-50 transition-colors flex items-center gap-1"
+                  >
+                    <EyeIcon className="h-3 w-3" />
+                    View
+                  </button>
+
+                  <button
+                    onClick={async () => {
+                      const next = (item as any).status === 'active' ? 'draft' : 'active'
+                      await setProductStatus(workspaceId!, (item as any).id, next as any)
+                      qc.invalidateQueries({ queryKey: ['products', workspaceId] })
+                    }}
+                    className="text-gray-600 hover:text-gray-900 text-sm px-3 py-1.5 rounded-lg hover:bg-gray-50 transition-colors"
+                  >
+                    {(item as any).status === 'active' ? 'Make Draft' : 'Activate'}
+                  </button>
+
+                  <button
+                    onClick={async () => {
+                      if (!confirm('Are you sure you want to delete this product?')) return
+                      await deleteProduct(workspaceId!, (item as any).id)
+                      qc.invalidateQueries({ queryKey: ['products', workspaceId] })
+                    }}
+                    className="text-red-600 hover:text-red-900 text-sm px-3 py-1.5 rounded-lg hover:bg-red-50 transition-colors flex items-center gap-1"
+                  >
+                    <TrashIcon className="h-3 w-3" />
+                    Delete
+                  </button>
+                </div>
+              )}
+            />
+          </Card>
+
+          {/* Products Cards - Mobile */}
+          <div className="md:hidden space-y-3 pb-4">
+            {paginatedProducts.length === 0 ? (
+              <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-8">
+                <div className="text-center">
+                  <div className="mx-auto h-12 w-12 text-gray-400">
+                    <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" className="h-12 w-12">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
+                    </svg>
+                  </div>
+                  <h3 className="mt-2 text-sm font-medium text-gray-900">No products</h3>
+                  <p className="mt-1 text-sm text-gray-500">Get started by creating a new product.</p>
+                </div>
+              </div>
+            ) : (
+              <>
+                {/* Select All on Mobile */}
+                <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-3">
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={paginatedProducts.length > 0 && selectedIds.length === paginatedProducts.length}
+                      onChange={(e) => {
+                        setSelectedIds(e.target.checked ? paginatedProducts.map((p: any) => p.id) : [])
+                      }}
+                      className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500 focus:ring-offset-0"
+                    />
+                    <span className="text-sm font-semibold text-gray-900">Select All ({paginatedProducts.length})</span>
+                  </label>
+                </div>
+
+                {paginatedProducts.map((item: any) => {
+                  const isSelected = selectedIds.includes(item.id)
+                  const qtyOnHand = item.qtyOnHand || 0
+                  const isLowStock = qtyOnHand < item.minStock
+                  const isOutOfStock = qtyOnHand === 0
+
+                  return (
+                    <div
+                      key={item.id}
+                      className={`bg-white rounded-xl shadow-sm border-2 transition-all duration-200 ${isSelected
+                        ? 'border-blue-500 shadow-md bg-blue-50/50'
+                        : 'border-gray-100 hover:border-gray-200 hover:shadow-md'
+                        } ${isOutOfStock ? 'ring-2 ring-red-100' : isLowStock ? 'ring-2 ring-orange-100' : ''}`}
+                    >
+                      <div className="p-4">
+                        {/* Header Section */}
+                        <div className="flex items-start gap-3 mb-3">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={(e) => {
+                              e.stopPropagation()
+                              setSelectedIds(prev =>
+                                e.target.checked
+                                  ? Array.from(new Set([...prev, item.id]))
+                                  : prev.filter(x => x !== item.id)
+                              )
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                            className="w-5 h-5 mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500 focus:ring-offset-0 shrink-0"
+                          />
+
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-start justify-between gap-2 mb-1">
+                              <h3
+                                className="text-base font-bold text-gray-900 leading-tight line-clamp-2 cursor-pointer hover:text-blue-600 transition-colors"
+                                onClick={() => setSelectedProduct(item)}
+                              >
+                                {(() => {
+                                  const name = item.name || 'Unnamed Product'
+                                  // Clean up encoding issues - remove replacement characters and invalid unicode
+                                  let cleaned = name
+                                    .replace(/\uFFFD/g, '') // Remove replacement characters
+                                    .replace(/\u0000/g, '') // Remove null characters
+                                    .trim()
+
+                                  // Try to decode HTML entities if any
+                                  try {
+                                    const textarea = document.createElement('textarea')
+                                    textarea.innerHTML = cleaned
+                                    cleaned = textarea.value || cleaned
+                                  } catch (e) {
+                                    // If decoding fails, use original
+                                  }
+
+                                  return cleaned || name
+                                })()}
+                              </h3>
+                              <span className={`px-2.5 py-1 rounded-lg text-xs font-semibold shrink-0 flex items-center gap-1 ${item.status === 'active'
+                                ? 'bg-green-100 text-green-800 border border-green-200'
+                                : item.status === 'draft'
+                                  ? 'bg-gray-100 text-gray-800 border border-gray-200'
+                                  : 'bg-red-100 text-red-800 border border-red-200'
+                                }`}>
+                                {item.status === 'active' && <CheckCircleIcon className="h-3 w-3" />}
+                                {item.status?.charAt(0).toUpperCase() + item.status?.slice(1)}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 mt-1">
+                              <p className="text-xs text-gray-500 font-mono">SKU: {item.sku}</p>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Stock Information Card */}
+                        <div className={`rounded-lg p-3 mb-3 ${isOutOfStock
+                          ? 'bg-red-50 border border-red-200'
+                          : isLowStock
+                            ? 'bg-orange-50 border border-orange-200'
+                            : 'bg-gray-50 border border-gray-200'
+                          }`}>
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs font-medium text-gray-600">Stock Level</span>
+                            {isOutOfStock && (
+                              <span className="px-2 py-0.5 bg-red-100 text-red-700 rounded-full text-[10px] font-semibold">
+                                OUT OF STOCK
+                              </span>
+                            )}
+                            {!isOutOfStock && isLowStock && (
+                              <span className="px-2 py-0.5 bg-orange-100 text-orange-700 rounded-full text-[10px] font-semibold">
+                                LOW STOCK
+                              </span>
+                            )}
+                          </div>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <div className="text-[10px] text-gray-500 mb-0.5 font-medium">On Hand</div>
+                              <div className={`text-lg font-bold ${isOutOfStock
+                                ? 'text-red-600'
+                                : isLowStock
+                                  ? 'text-orange-600'
+                                  : 'text-gray-900'
+                                }`}>
+                                {qtyOnHand.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </div>
+                            </div>
+                            <div>
+                              <div className="text-[10px] text-gray-500 mb-0.5 font-medium">Min Stock</div>
+                              <div className="text-lg font-bold text-gray-700">
+                                {(item.minStock || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="mt-2 pt-2 border-t border-gray-200">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] text-gray-500 font-medium">Unit</span>
+                              <span className="text-xs font-semibold text-gray-700">{item.uom || 'N/A'}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Action Buttons */}
+                        <div className="flex items-center gap-2 pt-2 border-t border-gray-100">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setSelectedProduct(item)
+                            }}
+                            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors active:scale-95"
+                          >
+                            <EyeIcon className="h-4 w-4" />
+                            View
+                          </button>
+                          <button
+                            onClick={async (e) => {
+                              e.stopPropagation()
+                              const next = item.status === 'active' ? 'draft' : 'active'
+                              await setProductStatus(workspaceId!, item.id, next as any)
+                              qc.invalidateQueries({ queryKey: ['products', workspaceId] })
+                            }}
+                            className="flex-1 px-3 py-2 text-sm font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors active:scale-95"
+                          >
+                            {item.status === 'active' ? 'Draft' : 'Activate'}
+                          </button>
+                          <button
+                            onClick={async (e) => {
+                              e.stopPropagation()
+                              if (!confirm('Are you sure you want to delete this product?')) return
+                              await deleteProduct(workspaceId!, item.id)
+                              qc.invalidateQueries({ queryKey: ['products', workspaceId] })
+                            }}
+                            className="flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors active:scale-95"
+                          >
+                            <TrashIcon className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </>
+            )}
+          </div>
+
+          {/* Pagination */}
+          {filteredProducts.length > 0 && (
+            <Card className="mt-6">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
                   <div className="text-xs sm:text-sm text-gray-700">
                     Showing <span className="font-medium">{startIndex + 1}</span> to{' '}
                     <span className="font-medium">{Math.min(endIndex, filteredProducts.length)}</span> of{' '}
@@ -1321,69 +1355,69 @@ export function Inventory() {
                     <ChevronRightIcon className="w-3 h-3 sm:w-4 sm:h-4" />
                   </button>
                 </div>
-                </div>
-              </Card>
-            )}
-          </section>
-        </div>
-
-        {/* Modals */}
-        {selectedProduct && (
-          <ProductDetails
-            product={selectedProduct as any}
-            onClose={() => setSelectedProduct(null)}
-            onSaved={() => qc.invalidateQueries({ queryKey: ['products', workspaceId] })}
-          />
-        )}
-
-        {showScanner && (
-          <Scanner
-            onScan={handleScan}
-            onClose={() => setShowScanner(false)}
-          />
-        )}
-
-        {showCreate && workspaceId && (
-          <ProductForm
-            workspaceId={workspaceId}
-            groups={groups}
-            onCreated={() => qc.invalidateQueries({ queryKey: ['products', workspaceId] })}
-            onClose={() => setShowCreate(false)}
-          />
-        )}
-
-        {showImport && (
-          <ImportModal
-            workspaceId={workspaceId!}
-            userId={userId}
-            products={products}
-            groups={groups}
-            onClose={() => setShowImport(false)}
-            onSuccess={() => {
-              qc.invalidateQueries({ queryKey: ['products', workspaceId] })
-              setShowImport(false)
-            }}
-          />
-        )}
-
-        {showDuplicates && (
-          <DuplicatesModal
-            duplicates={duplicateProducts}
-            groups={groups}
-            onClose={() => setShowDuplicates(false)}
-            onView={(product) => {
-              setSelectedProduct(product)
-              setShowDuplicates(false)
-            }}
-            onDelete={async (productId) => {
-              await deleteProduct(workspaceId!, productId)
-              qc.invalidateQueries({ queryKey: ['products', workspaceId] })
-            }}
-          />
-        )}
+              </div>
+            </Card>
+          )}
+        </section>
       </div>
-    )
-  }
+
+      {/* Modals */}
+      {selectedProduct && (
+        <ProductDetails
+          product={selectedProduct as any}
+          onClose={() => setSelectedProduct(null)}
+          onSaved={() => qc.invalidateQueries({ queryKey: ['products', workspaceId] })}
+        />
+      )}
+
+      {showScanner && (
+        <Scanner
+          onScan={handleScan}
+          onClose={() => setShowScanner(false)}
+        />
+      )}
+
+      {showCreate && workspaceId && (
+        <ProductForm
+          workspaceId={workspaceId}
+          groups={groups}
+          onCreated={() => qc.invalidateQueries({ queryKey: ['products', workspaceId] })}
+          onClose={() => setShowCreate(false)}
+        />
+      )}
+
+      {showImport && (
+        <ImportModal
+          workspaceId={workspaceId!}
+          userId={userId}
+          products={products}
+          groups={groups}
+          onClose={() => setShowImport(false)}
+          onSuccess={() => {
+            qc.invalidateQueries({ queryKey: ['products', workspaceId] })
+            setShowImport(false)
+          }}
+        />
+      )}
+
+      {showDuplicates && (
+        <DuplicatesModal
+          duplicates={duplicateProducts}
+          groups={groups}
+          onClose={() => setShowDuplicates(false)}
+          onView={(product) => {
+            setSelectedProduct(product)
+            setShowDuplicates(false)
+          }}
+          onDelete={async (productId) => {
+            await deleteProduct(workspaceId!, productId)
+            qc.invalidateQueries({ queryKey: ['products', workspaceId] })
+          }}
+        />
+      )}
+    </div>
+  )
+}
 
 // Duplicates Modal Component
 function DuplicatesModal({

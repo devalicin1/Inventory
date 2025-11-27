@@ -128,8 +128,8 @@ export async function generateJobPDFBlob(job: Job): Promise<Blob> {
 
       try {
         const qrCodeText = job.code || job.id
-        const qrResult = await generateQRCodeDataURL(qrCodeText, { scale: 3 }) // Küçültüldü
-        doc.addImage(qrResult.dataUrl, 'PNG', pageWidth - margin - 10, margin - 1, 10, 10) // Küçültüldü
+        const qrResult = await generateQRCodeDataURL(qrCodeText, { scale: 6 }) // Increased for better scanning
+        doc.addImage(qrResult.dataUrl, 'PNG', pageWidth - margin - 18, margin - 1, 16, 16) // Increased size
       } catch (e) {}
 
       currentY += 16 // Küçültüldü

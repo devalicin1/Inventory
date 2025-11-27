@@ -115,6 +115,30 @@ export const ConfirmInventoryPostingModal: FC<Props> = ({ job, workspaceId, prod
         queryClient.invalidateQueries({ queryKey: ['jobConsumptions', workspaceId, job.id] })
       }
 
+      // CRITICAL: Invalidate inventory queries to refresh stock after posting
+      // This ensures inventory UI shows updated quantities
+      queryClient.invalidateQueries({ queryKey: ['products', workspaceId] })
+      // Invalidate stock transactions and on-hand for all products that were posted
+      for (const r of rows) {
+        if (!r.selected) continue
+        const product = (r.productId ? products.find(p => p.id === r.productId) : undefined) || products.find(p => p.sku === r.sku)
+        if (product) {
+          queryClient.invalidateQueries({ queryKey: ['stockTxns', workspaceId, product.id] })
+          queryClient.invalidateQueries({ queryKey: ['productOnHand', workspaceId, product.id] })
+        }
+      }
+      // Also invalidate all stockTxns and productOnHand queries to ensure any open ProductDetails refreshes
+      queryClient.invalidateQueries({ queryKey: ['stockTxns', workspaceId] })
+      queryClient.invalidateQueries({ queryKey: ['productOnHand', workspaceId] })
+      // Dispatch custom event to notify ProductDetails (for any open product)
+      for (const r of rows) {
+        if (!r.selected) continue
+        const product = (r.productId ? products.find(p => p.id === r.productId) : undefined) || products.find(p => p.sku === r.sku)
+        if (product) {
+          window.dispatchEvent(new CustomEvent('stockTransactionCreated', { detail: { productId: product.id } }))
+        }
+      }
+
       onClose()
       // Call onSuccess callback if provided (for completing job after successful posting)
       if (onSuccess) {
