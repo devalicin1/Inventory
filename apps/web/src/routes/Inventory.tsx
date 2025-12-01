@@ -1521,6 +1521,22 @@ export function Inventory() {
           {/* Floating Action Buttons - Mobile Only */}
           <div className="md:hidden fixed bottom-20 right-4 flex flex-col gap-3 z-40" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
             <button
+              onClick={() => {
+                // Scroll to top and focus search input
+                window.scrollTo({ top: 0, behavior: 'smooth' })
+                setTimeout(() => {
+                  const searchInput = document.querySelector('input[placeholder*="Search"]') as HTMLInputElement
+                  if (searchInput) {
+                    searchInput.focus()
+                  }
+                }, 300)
+              }}
+              className="w-14 h-14 bg-purple-600 text-white rounded-full shadow-lg flex items-center justify-center active:scale-95 transition-transform"
+              title="Search"
+            >
+              <MagnifyingGlassIcon className="h-7 w-7" />
+            </button>
+            <button
               onClick={() => setShowScanner(true)}
               className="w-14 h-14 bg-blue-600 text-white rounded-full shadow-lg flex items-center justify-center active:scale-95 transition-transform"
               title="Scan"
