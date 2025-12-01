@@ -1,6 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { createBrowserRouter, RouterProvider } from 'react-router-dom'
+import { createBrowserRouter, RouterProvider, useNavigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import './index.css'
 import App from './App.tsx'
@@ -48,8 +48,20 @@ const queryClient = new QueryClient({
 
 function ScannerPage() {
   const { workspaceId } = useSessionStore()
+  const navigate = useNavigate()
+
   if (!workspaceId) return null
-  return <ProductionScanner workspaceId={workspaceId} />
+
+  const handleClose = () => {
+    // Try to go back if there is history, otherwise go to dashboard
+    if (window.history.length > 1) {
+      navigate(-1)
+    } else {
+      navigate('/')
+    }
+  }
+
+  return <ProductionScanner workspaceId={workspaceId} onClose={handleClose} />
 }
 
 const router = createBrowserRouter([
