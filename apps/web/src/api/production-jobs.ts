@@ -1,6 +1,7 @@
 import { db, storage } from '../lib/firebase'
 import {
   addDoc,
+  arrayUnion,
   collection,
   deleteDoc,
   doc,
@@ -156,6 +157,16 @@ export interface JobInput {
   requireOutputToAdvance?: boolean  // If true, moving to the next stage requires at least one production run in the current stage
 }
 
+export interface JobAttachment {
+  id: string
+  name: string
+  url: string
+  fileType: string          // mime-based: pdf, image, other
+  category?: string         // business type: invoice, artwork, etc.
+  size?: number
+  uploadedAt?: any
+}
+
 export interface Job extends JobInput {
   id: string
   createdAt: any
@@ -164,6 +175,80 @@ export interface Job extends JobInput {
   totalValue?: number
   qrUrl?: string
   barcodeUrl?: string
+  jobPdfUrl?: string
+  attachments?: JobAttachment[]
+}
+
+export async function uploadJobAttachment(
+  workspaceId: string,
+  jobId: string,
+  file: File,
+  category: string
+): Promise<JobAttachment> {
+  const ext = file.name.split('.').pop() || ''
+  const baseName = file.name.replace(/\.[^/.]+$/, '')
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const safeName = `${baseName}_${timestamp}.${ext}`
+
+  const fileRef = ref(storage, `workspaces/${workspaceId}/jobs/${jobId}/files/${safeName}`)
+
+  await uploadBytes(fileRef, file, { contentType: file.type || undefined })
+  const url = await getDownloadURL(fileRef)
+
+  const fileType =
+    file.type === 'application/pdf'
+      ? 'pdf'
+      : file.type.startsWith('image/')
+      ? 'image'
+      : 'other'
+
+  const attachment: JobAttachment = {
+    id: fileRef.name,
+    name: file.name,
+    url,
+    fileType,
+    category,
+    size: file.size,
+    // Use ISO date string instead of serverTimestamp to avoid nested sentinel in arrayUnion
+    uploadedAt: new Date().toISOString(),
+  } as JobAttachment
+
+  await updateDoc(doc(db, 'workspaces', workspaceId, 'jobs', jobId), {
+    attachments: arrayUnion(attachment as any),
+    updatedAt: serverTimestamp(),
+  } as any)
+
+  return attachment
+}
+
+export async function deleteJobAttachment(
+  workspaceId: string,
+  jobId: string,
+  attachment: JobAttachment
+): Promise<void> {
+  // Delete from storage
+  const fileRef = ref(storage, `workspaces/${workspaceId}/jobs/${jobId}/files/${attachment.id}`)
+  try {
+    await deleteObject(fileRef)
+  } catch (err) {
+    // File might not exist in storage, continue to remove from Firestore
+    console.warn('File not found in storage:', err)
+  }
+
+  // Remove from Firestore attachments array
+  // We need to get the current job, filter out the attachment, and update
+  const jobRef = doc(db, 'workspaces', workspaceId, 'jobs', jobId)
+  const jobSnap = await getDoc(jobRef)
+  if (!jobSnap.exists()) return
+
+  const jobData = jobSnap.data()
+  const currentAttachments: JobAttachment[] = jobData.attachments || []
+  const updatedAttachments = currentAttachments.filter(a => a.id !== attachment.id)
+
+  await updateDoc(jobRef, {
+    attachments: updatedAttachments,
+    updatedAt: serverTimestamp(),
+  } as any)
 }
 
 export interface Ticket {
@@ -567,7 +652,6 @@ async function calculateThresholdMetAt(
     const workflowSnap = await getDoc(doc(workflowsRef, jobData.workflowId))
     const workflow = workflowSnap.exists() ? workflowSnap.data() : null
     const stageInfo = workflow?.stages?.find((s: any) => s.id === stageId)
-    const stageInputUOM = stageInfo?.inputUOM || ''
     const stageOutputUOM = stageInfo?.outputUOM || ''
     const numberUp = jobData.productionSpecs?.numberUp || 1
 
@@ -581,19 +665,10 @@ async function calculateThresholdMetAt(
     if (previousStageId) {
       // Get previous stage info
       const previousStageInfo = workflow?.stages?.find((s: any) => s.id === previousStageId)
-      const previousStageInputUOM = previousStageInfo?.inputUOM || ''
       const previousStageOutputUOM = previousStageInfo?.outputUOM || ''
 
       // Get previous stage runs
       const previousStageRuns = allRuns.filter((r: any) => r.stageId === previousStageId)
-
-      // Convert previous stage runs to output UOM
-      const convertPreviousToOutputUOM = (qtyInInputUOM: number): number => {
-        if (previousStageInputUOM === 'sheets' && previousStageOutputUOM === 'cartoon' && numberUp > 0) {
-          return qtyInInputUOM * numberUp
-        }
-        return qtyInInputUOM
-      }
 
       // Calculate previous stage total output (runs are already in output UOM after conversion)
       const previousStageTotalOutput = previousStageRuns.reduce((sum: number, r: any) => {

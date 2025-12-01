@@ -12,12 +12,10 @@ import {
   ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
-  CalendarIcon,
   ClockIcon,
   CheckCircleIcon,
   PresentationChartLineIcon,
   BoltIcon,
-  UserGroupIcon,
   ArrowTrendingUpIcon,
   ArrowTrendingDownIcon
 } from '@heroicons/react/24/outline'
@@ -35,16 +33,13 @@ import {
   Legend,
   ComposedChart,
   Area,
-  AreaChart,
-  Line,
-  LineChart
+  AreaChart
 } from 'recharts'
 import { 
   listJobs, 
   listWorkflows, 
   listWorkcenters, 
-  listCustomers,
-  type Job
+  listCustomers
 } from '../../../api/production-jobs'
 import { toCSV, downloadCSV } from '../../../utils/csv'
 
@@ -203,7 +198,7 @@ export function ProductionReportsTab({ workspaceId }: ProductionReportsTabProps)
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<string[]>([])
   const [stageFilter, setStageFilter] = useState<string>('')
-  const [priorityFilter, setPriorityFilter] = useState<number[]>([])
+  const [priorityFilter, _setPriorityFilter] = useState<number[]>([])
   const [workflowFilter, setWorkflowFilter] = useState<string>('')
   const [workcenterFilter, setWorkcenterFilter] = useState<string>('')
   const [customerFilter, setCustomerFilter] = useState<string>('')
@@ -353,7 +348,8 @@ export function ProductionReportsTab({ workspaceId }: ProductionReportsTabProps)
       if (job.stageProgress && Array.isArray(job.stageProgress)) {
         const entry = job.stageProgress.find((p: any) => p.stageId === stageId)
         if (entry?.date) {
-            const entryDate = new Date(entry.date.seconds ? entry.date.seconds * 1000 : entry.date)
+            const dateValue = entry.date as any
+            const entryDate = new Date(dateValue?.seconds ? dateValue.seconds * 1000 : dateValue)
             const days = (now.getTime() - entryDate.getTime()) / (1000 * 60 * 60 * 24)
             stat.avgDaysInStage += days
         }
@@ -675,7 +671,7 @@ export function ProductionReportsTab({ workspaceId }: ProductionReportsTabProps)
   }
 
   return (
-    <div className="min-h-screen bg-slate-50/50 p-6 space-y-6 font-sans text-slate-600">
+    <div className="min-h-screen bg-slate-50/50 p-5 sm:p-8 space-y-5 sm:space-y-6 font-sans text-slate-600">
       
       {/* Header Section */}
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4">
@@ -947,7 +943,7 @@ export function ProductionReportsTab({ workspaceId }: ProductionReportsTabProps)
                           paddingAngle={4}
                           dataKey="count"
                         >
-                          {statusStats.map((entry, index) => (
+                          {statusStats.map((_entry, index) => (
                             <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} strokeWidth={0} />
                           ))}
                         </Pie>

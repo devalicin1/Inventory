@@ -798,6 +798,28 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
               setLastScannedCode(scannedCode)
               setScanAttempts(0) // Reset on success
               setLastScanTime(Date.now())
+              
+              // Stop camera immediately after successful scan
+              if (reader.current) {
+                try {
+                  reader.current.reset()
+                } catch (e) {
+                  console.warn('Error resetting scanner:', e)
+                }
+              }
+              
+              // Stop all video tracks to ensure camera is fully closed
+              if (videoRef.current) {
+                const stream = videoRef.current.srcObject as MediaStream
+                if (stream) {
+                  stream.getTracks().forEach(track => {
+                    track.stop()
+                  })
+                  videoRef.current.srcObject = null
+                }
+              }
+              
+              setIsScanning(false)
               handleScan(scannedCode)
               
               // Reset lastScannedCode after 3 seconds to allow re-scanning same code
@@ -856,6 +878,18 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
         }
         reader.current = null
       }
+      
+      // Stop all video tracks to ensure camera is fully closed
+      if (videoRef.current) {
+        const stream = videoRef.current.srcObject as MediaStream
+        if (stream) {
+          stream.getTracks().forEach(track => {
+            track.stop()
+          })
+          videoRef.current.srcObject = null
+        }
+      }
+      
       setIsScanning(false)
       setCameraError(null)
     }
@@ -864,7 +898,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
   // --- Render Helpers ---
 
   const renderHeader = () => (
-    <div className="flex flex-col gap-4 px-5 sm:px-0 pt-4 sm:pt-0">
+    <div className="flex flex-col gap-4 pt-4 sm:pt-0">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-gray-900">Scanner</h1>
@@ -2230,7 +2264,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
   return (
     <div className="space-y-5 sm:space-y-8 pb-6 sm:pb-0">
       {renderHeader()}
-      <div className="max-w-2xl mx-auto space-y-5 sm:space-y-6 px-4 sm:px-0">
+      <div className="max-w-2xl mx-auto space-y-5 sm:space-y-6">
         {renderScannerArea()}
         {renderRecentScans()}
       </div>

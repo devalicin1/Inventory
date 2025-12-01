@@ -98,8 +98,29 @@ export function Scanner({ onScan, onClose }: ScannerProps) {
           (result, err) => {
             if (result) {
               setScanAttempts(0) // Reset on success
-              onScan(result.getText())
+              
+              // Stop camera immediately after successful scan
+              if (reader.current) {
+                try {
+                  reader.current.reset()
+                } catch (e) {
+                  console.warn('Error resetting scanner:', e)
+                }
+              }
+              
+              // Stop all video tracks to ensure camera is fully closed
+              if (videoRef.current) {
+                const stream = videoRef.current.srcObject as MediaStream
+                if (stream) {
+                  stream.getTracks().forEach(track => {
+                    track.stop()
+                  })
+                  videoRef.current.srcObject = null
+                }
+              }
+              
               setIsScanning(false)
+              onScan(result.getText())
             }
             if (err) {
               if (err instanceof Error && err.name === 'NotFoundException') {
@@ -149,6 +170,17 @@ export function Scanner({ onScan, onClose }: ScannerProps) {
           // Ignore reset errors
         }
         reader.current = null
+      }
+      
+      // Stop all video tracks to ensure camera is fully closed
+      if (videoRef.current) {
+        const stream = videoRef.current.srcObject as MediaStream
+        if (stream) {
+          stream.getTracks().forEach(track => {
+            track.stop()
+          })
+          videoRef.current.srcObject = null
+        }
       }
     }
   }, [onScan])
