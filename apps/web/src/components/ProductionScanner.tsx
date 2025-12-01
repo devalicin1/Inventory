@@ -44,8 +44,6 @@ import {
   BuildingStorefrontIcon,
   InformationCircleIcon
 } from '@heroicons/react/24/outline'
-import { Card } from './ui/Card'
-import { Button } from './ui/Button'
 
 interface ProductionScannerProps {
   workspaceId: string
@@ -898,60 +896,67 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
   // --- Render Helpers ---
 
   const renderHeader = () => (
-    <div className="flex flex-col gap-4 pt-4 sm:pt-0">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-gray-900">Scanner</h1>
-          <p className="mt-1.5 text-xs sm:text-sm text-gray-500">
-            Scan job codes or product SKUs
-          </p>
+    <div className="flex items-center justify-between px-1">
+      <div className="flex items-center gap-3">
+        <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-500/25">
+          <QrCodeIcon className="h-7 w-7 text-white" />
         </div>
-        {onClose && (
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={onClose}
-            className="flex-shrink-0"
-          >
-            <XMarkIcon className="h-4 w-4 sm:mr-2" />
-            <span className="hidden sm:inline">Close</span>
-          </Button>
-        )}
+        <div>
+          <h1 className="text-2xl sm:text-2xl font-bold tracking-tight text-gray-900">Scanner</h1>
+          <p className="text-sm text-gray-500">Scan jobs or products</p>
+        </div>
       </div>
+      {onClose && (
+        <button
+          onClick={onClose}
+          className="w-12 h-12 bg-gray-100 rounded-2xl flex items-center justify-center active:bg-gray-200 transition-colors"
+        >
+          <XMarkIcon className="h-6 w-6 text-gray-600" />
+        </button>
+      )}
     </div>
   )
 
   const renderScannerArea = () => (
-    <Card className="p-5 sm:p-6 space-y-5">
-      {/* Camera / Manual Toggle */}
-      <div className="bg-gray-900 rounded-xl overflow-hidden shadow-inner aspect-[4/3] sm:aspect-[4/3] relative flex flex-col items-center justify-center text-white">
+    <div className="space-y-4">
+      {/* Camera View - Full Width, Larger for Mobile */}
+      <div className="bg-gray-900 rounded-3xl overflow-hidden shadow-2xl aspect-[3/4] sm:aspect-[4/3] relative flex flex-col items-center justify-center text-white">
         {scanMode === 'camera' ? (
           <>
             {cameraError ? (
-              <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center p-4 z-20">
-                <ExclamationTriangleIcon className="h-12 w-12 text-red-500 mb-4" />
-                <p className="text-sm text-red-300 text-center mb-2">{cameraError}</p>
-                <button
-                  onClick={async () => {
-                    setCameraError(null)
-                    // Try to restart camera
-                    if (videoRef.current && reader.current) {
-                      try {
-                        reader.current.reset()
-                        reader.current = null
-                        // Wait a bit before restarting
-                        await new Promise(resolve => setTimeout(resolve, 500))
-                        setScanMode('manual')
-                        setTimeout(() => setScanMode('camera'), 100)
-                      } catch (e) {
-                        console.error('Error restarting camera:', e)
+              <div className="absolute inset-0 bg-black/90 flex flex-col items-center justify-center p-6 z-20">
+                <div className="w-20 h-20 bg-red-500/20 rounded-full flex items-center justify-center mb-6">
+                  <ExclamationTriangleIcon className="h-10 w-10 text-red-400" />
+                </div>
+                <p className="text-base text-red-300 text-center mb-2 font-medium">{cameraError}</p>
+                <p className="text-sm text-gray-400 text-center mb-6">Grant camera permission or use manual entry</p>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setScanMode('manual')}
+                    className="px-6 py-3.5 bg-gray-700 text-white rounded-xl font-semibold text-base active:bg-gray-600"
+                  >
+                    Manual Entry
+                  </button>
+                  <button
+                    onClick={async () => {
+                      setCameraError(null)
+                      if (videoRef.current && reader.current) {
+                        try {
+                          reader.current.reset()
+                          reader.current = null
+                          await new Promise(resolve => setTimeout(resolve, 500))
+                          setScanMode('manual')
+                          setTimeout(() => setScanMode('camera'), 100)
+                        } catch (e) {
+                          console.error('Error restarting camera:', e)
+                        }
                       }
-                    }
-                  }}
-                  className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
-                >
-                  Retry
-                </button>
+                    }}
+                    className="px-6 py-3.5 bg-blue-600 text-white rounded-xl font-semibold text-base active:bg-blue-700"
+                  >
+                    Retry
+                  </button>
+                </div>
               </div>
             ) : (
               <>
@@ -964,69 +969,93 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                   disablePictureInPicture
                   controls={false}
                 />
+                {/* Scan Frame Overlay */}
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
-                  <div className={`w-[80%] max-w-[300px] aspect-square border-2 rounded-lg relative transition-all duration-300 ${
-                    scanAttempts > 10 
-                      ? 'border-yellow-400 shadow-lg shadow-yellow-400/50 animate-pulse' 
-                      : 'border-white/70'
+                  {/* Dark overlay outside scan area */}
+                  <div className="absolute inset-0 bg-black/40" />
+                  
+                  {/* Scan area */}
+                  <div className={`w-[75%] max-w-[280px] aspect-square relative z-10 transition-all duration-300 ${
+                    scanAttempts > 10 ? 'animate-pulse' : ''
                   }`}>
-                    <div className="absolute top-0 left-0 w-4 h-4 border-t-4 border-l-4 border-blue-500 -mt-1 -ml-1"></div>
-                    <div className="absolute top-0 right-0 w-4 h-4 border-t-4 border-r-4 border-blue-500 -mt-1 -mr-1"></div>
-                    <div className="absolute bottom-0 left-0 w-4 h-4 border-b-4 border-l-4 border-blue-500 -mb-1 -ml-1"></div>
-                    <div className="absolute bottom-0 right-0 w-4 h-4 border-b-4 border-r-4 border-blue-500 -mb-1 -mr-1"></div>
+                    {/* Clear center */}
+                    <div className="absolute inset-0 bg-transparent rounded-2xl" style={{ 
+                      boxShadow: '0 0 0 9999px rgba(0,0,0,0.5)' 
+                    }} />
+                    
+                    {/* Corner brackets */}
+                    <div className={`absolute -top-1 -left-1 w-10 h-10 border-t-4 border-l-4 rounded-tl-xl transition-colors duration-300 ${
+                      scanAttempts > 10 ? 'border-yellow-400' : 'border-blue-400'
+                    }`} />
+                    <div className={`absolute -top-1 -right-1 w-10 h-10 border-t-4 border-r-4 rounded-tr-xl transition-colors duration-300 ${
+                      scanAttempts > 10 ? 'border-yellow-400' : 'border-blue-400'
+                    }`} />
+                    <div className={`absolute -bottom-1 -left-1 w-10 h-10 border-b-4 border-l-4 rounded-bl-xl transition-colors duration-300 ${
+                      scanAttempts > 10 ? 'border-yellow-400' : 'border-blue-400'
+                    }`} />
+                    <div className={`absolute -bottom-1 -right-1 w-10 h-10 border-b-4 border-r-4 rounded-br-xl transition-colors duration-300 ${
+                      scanAttempts > 10 ? 'border-yellow-400' : 'border-blue-400'
+                    }`} />
+                    
+                    {/* Scanning line animation */}
+                    {isScanning && scanAttempts <= 10 && (
+                      <div className="absolute inset-x-2 top-1/2 h-0.5 bg-gradient-to-r from-transparent via-blue-400 to-transparent animate-pulse" />
+                    )}
                   </div>
                 </div>
                 
-                {/* Scanning status and tips */}
-                {isScanning && (
-                  <div className="absolute bottom-3 sm:bottom-4 left-1/2 -translate-x-1/2 z-10 w-[calc(100%-3rem)] max-w-md px-3 sm:px-4">
-                    {scanAttempts > 10 ? (
-                      <div className="bg-yellow-500/90 backdrop-blur-sm px-3 sm:px-4 py-2 sm:py-3 rounded-lg shadow-lg">
-                        <div className="flex items-start gap-2 sm:gap-3">
-                          <InformationCircleIcon className="h-4 w-4 sm:h-5 sm:w-5 text-yellow-900 flex-shrink-0 mt-0.5" />
-                          <div className="flex-1 text-left min-w-0">
-                            <p className="text-xs sm:text-sm font-medium text-yellow-900 mb-1">QR kod bulunamadı</p>
-                            <ul className="text-[10px] sm:text-xs text-yellow-800 space-y-0.5 sm:space-y-1">
-                              <li>• QR kodu kameraya daha yakın tutun</li>
-                              <li>• Işığın yeterli olduğundan emin olun</li>
-                              <li>• QR kodun tamamının görünür olduğundan emin olun</li>
-                              <li>• Kamerayı sabit tutun</li>
-                            </ul>
-                            <button
-                              onClick={() => setScanMode('manual')}
-                              className="mt-1.5 sm:mt-2 text-[10px] sm:text-xs font-semibold text-yellow-900 underline hover:text-yellow-950 touch-target"
-                            >
-                              Manuel giriş yapmak için tıklayın
-                            </button>
-                          </div>
+                {/* Scanning status - Bottom */}
+                <div className="absolute bottom-0 left-0 right-0 z-20 p-4">
+                  {scanAttempts > 10 ? (
+                    <div className="bg-yellow-500 px-5 py-4 rounded-2xl shadow-lg">
+                      <div className="flex items-start gap-3">
+                        <InformationCircleIcon className="h-6 w-6 text-yellow-900 flex-shrink-0 mt-0.5" />
+                        <div className="flex-1 text-left">
+                          <p className="text-sm font-bold text-yellow-900 mb-2">QR code not found</p>
+                          <ul className="text-xs text-yellow-800 space-y-1">
+                            <li>• Move code closer to camera</li>
+                            <li>• Ensure good lighting</li>
+                            <li>• Hold steady</li>
+                          </ul>
+                          <button
+                            onClick={() => setScanMode('manual')}
+                            className="mt-3 w-full py-2.5 bg-yellow-900/20 rounded-xl text-sm font-bold text-yellow-900 active:bg-yellow-900/30"
+                          >
+                            Use Manual Entry
+                          </button>
                         </div>
                       </div>
-                    ) : scanAttempts > 5 ? (
-                      <div className="bg-orange-500/90 backdrop-blur-sm px-3 sm:px-4 py-2 rounded-lg shadow-lg">
-                        <p className="text-[10px] sm:text-xs text-orange-900 text-center leading-tight">
-                          QR kod aranıyor... Kamerayı sabit tutun ve QR kodu kare içine hizalayın
-                        </p>
-                      </div>
-                    ) : (
-                      <div className="bg-black/60 backdrop-blur-sm px-3 sm:px-4 py-2 rounded-full">
-                        <p className="text-[10px] sm:text-xs text-white text-center">QR kod veya barkod okutun</p>
-                      </div>
-                    )}
-                  </div>
-                )}
+                    </div>
+                  ) : scanAttempts > 5 ? (
+                    <div className="bg-orange-500/95 backdrop-blur px-5 py-3 rounded-2xl">
+                      <p className="text-sm text-white text-center font-medium">
+                        🔍 Searching... Hold steady
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="bg-black/70 backdrop-blur px-5 py-3 rounded-2xl">
+                      <p className="text-sm text-white text-center font-medium">
+                        📷 Align QR code or barcode in frame
+                      </p>
+                    </div>
+                  )}
+                </div>
               </>
             )}
           </>
         ) : (
-          <div className="text-center p-6">
-            <QrCodeIcon className="h-16 w-16 mx-auto text-gray-600 mb-2" />
-            <p className="text-gray-400">Manual Entry Mode</p>
+          <div className="text-center p-8 flex flex-col items-center justify-center h-full">
+            <div className="w-24 h-24 bg-gray-800 rounded-3xl flex items-center justify-center mb-4">
+              <QrCodeIcon className="h-14 w-14 text-gray-500" />
+            </div>
+            <p className="text-gray-400 text-lg font-medium mb-2">Manual Entry Mode</p>
+            <p className="text-gray-500 text-sm">Type code in the field below</p>
           </div>
         )}
 
+        {/* Mode Toggle Button */}
         <button
           onClick={() => {
-            // Stop camera if switching away
             if (scanMode === 'camera' && reader.current) {
               try {
                 reader.current.reset()
@@ -1038,86 +1067,102 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
             setScanMode(prev => prev === 'camera' ? 'manual' : 'camera')
             setCameraError(null)
           }}
-          className="absolute bottom-3 right-3 sm:bottom-4 sm:right-4 bg-white/10 backdrop-blur-md p-3 sm:p-2 rounded-full hover:bg-white/20 active:bg-white/30 z-20 touch-target"
-          title={scanMode === 'camera' ? 'Switch to Manual Entry' : 'Switch to Camera'}
-          aria-label={scanMode === 'camera' ? 'Switch to Manual Entry' : 'Switch to Camera'}
+          className="absolute top-4 right-4 bg-white/20 backdrop-blur-md p-4 rounded-2xl active:bg-white/30 z-20 transition-all"
+          title={scanMode === 'camera' ? 'Switch to manual entry' : 'Switch to camera'}
+          aria-label={scanMode === 'camera' ? 'Switch to manual entry' : 'Switch to camera'}
         >
-          <ArrowPathIcon className="h-5 w-5 sm:h-5 sm:w-5" />
+          {scanMode === 'camera' ? (
+            <MagnifyingGlassIcon className="h-6 w-6 text-white" />
+          ) : (
+            <QrCodeIcon className="h-6 w-6 text-white" />
+          )}
         </button>
       </div>
 
-      {/* Manual Input */}
-      <form onSubmit={handleManualSubmit} className="flex flex-col sm:flex-row gap-3 sm:gap-2">
-        <div className="relative flex-1">
-          <MagnifyingGlassIcon className="absolute left-4 sm:left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400 pointer-events-none" />
+      {/* Manual Input - Large & Touch Friendly */}
+      <form onSubmit={handleManualSubmit} className="space-y-3">
+        <div className="relative">
+          <MagnifyingGlassIcon className="absolute left-5 top-1/2 -translate-y-1/2 h-6 w-6 text-gray-400 pointer-events-none" />
           <input
             type="text"
             value={manualCode}
             onChange={e => setManualCode(e.target.value)}
-            placeholder="Enter Job Code or SKU"
-            className="w-full pl-12 pr-4 py-4 sm:py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none shadow-sm text-base sm:text-lg touch-target"
+            placeholder="Enter job code or SKU..."
+            className="w-full pl-14 pr-5 py-5 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 outline-none text-lg font-medium placeholder:text-gray-400 bg-white shadow-sm"
             autoComplete="off"
           />
         </div>
         <button
           type="submit"
-          className="bg-blue-600 text-white px-8 py-4 sm:py-3 rounded-lg font-medium hover:bg-blue-700 active:bg-blue-800 shadow-sm active:transform active:scale-95 transition-all touch-target min-h-[48px] sm:min-h-0 text-base"
+          disabled={!manualCode.trim()}
+          className="w-full bg-gradient-to-r from-blue-500 to-blue-600 text-white py-5 rounded-2xl font-bold text-lg shadow-lg shadow-blue-500/30 active:scale-[0.98] transition-all disabled:opacity-50 disabled:shadow-none disabled:active:scale-100"
         >
-          Scan
+          <div className="flex items-center justify-center gap-3">
+            <MagnifyingGlassIcon className="h-6 w-6" />
+            <span>Search</span>
+          </div>
         </button>
       </form>
-    </Card>
+    </div>
   )
 
   const renderRecentScans = () => (
-    <Card>
-      <div className="p-5 sm:p-6">
-        <h3 className="text-xs sm:text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4 sm:mb-4">Recent Scans</h3>
-        <div className="space-y-3 max-h-[300px] sm:max-h-none overflow-y-auto">
-          {recentScans.length === 0 && (
-            <p className="text-sm text-gray-400 italic text-center py-4">No recent scans</p>
-          )}
-          {recentScans.map((scan, i) => (
-            <div
-              key={i}
-              onClick={() => scan.type !== 'none' && handleScan(scan.code)}
-              className={`p-4 sm:p-3 rounded-lg border flex items-center justify-between shadow-sm transition-colors touch-target min-h-[64px] sm:min-h-0 ${
-                scan.type === 'none' 
-                  ? 'bg-red-50 border-red-200 cursor-default' 
-                  : 'bg-gray-50 border-gray-200 active:bg-gray-100 cursor-pointer'
-              }`}
-            >
-            <div className="flex items-center space-x-2 sm:space-x-3 flex-1 min-w-0">
-              <div className={`p-2 rounded-full flex-shrink-0 ${
-                scan.type === 'job' 
-                  ? 'bg-blue-100 text-blue-600' 
-                  : scan.type === 'product'
-                  ? 'bg-green-100 text-green-600'
-                  : 'bg-red-100 text-red-600'
-              }`}>
-                {scan.type === 'job' ? (
-                  <ClockIcon className="h-4 w-4" />
-                ) : scan.type === 'product' ? (
-                  <CubeIcon className="h-4 w-4" />
-                ) : (
-                  <ExclamationTriangleIcon className="h-4 w-4" />
-                )}
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="font-medium text-gray-900 text-sm sm:text-base truncate">{scan.code}</p>
-                <p className={`text-xs capitalize ${
-                  scan.type === 'none' ? 'text-red-600' : 'text-gray-500'
-                }`}>
-                  {scan.type === 'none' ? 'Not Found' : scan.type} • {scan.timestamp.toLocaleTimeString()}
-                </p>
-              </div>
+    <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
+      <div className="p-5 border-b border-gray-100">
+        <h3 className="text-base font-bold text-gray-900">Recent Scans</h3>
+      </div>
+      <div className="divide-y divide-gray-100 max-h-[400px] overflow-y-auto">
+        {recentScans.length === 0 && (
+          <div className="p-8 text-center">
+            <div className="w-16 h-16 bg-gray-100 rounded-2xl flex items-center justify-center mx-auto mb-3">
+              <ClockIcon className="h-8 w-8 text-gray-400" />
             </div>
-            {scan.type !== 'none' && <ArrowPathIcon className="h-4 w-4 text-gray-400 flex-shrink-0 ml-2" />}
+            <p className="text-gray-500 font-medium">No scans yet</p>
+            <p className="text-gray-400 text-sm mt-1">Scans will appear here</p>
+          </div>
+        )}
+        {recentScans.map((scan, i) => (
+          <div
+            key={i}
+            onClick={() => scan.type !== 'none' && handleScan(scan.code)}
+            className={`p-4 flex items-center gap-4 transition-colors ${
+              scan.type === 'none' 
+                ? 'bg-red-50 cursor-default' 
+                : 'active:bg-gray-50 cursor-pointer'
+            }`}
+          >
+            <div className={`w-14 h-14 rounded-2xl flex items-center justify-center flex-shrink-0 ${
+              scan.type === 'job' 
+                ? 'bg-blue-100' 
+                : scan.type === 'product'
+                ? 'bg-green-100'
+                : 'bg-red-100'
+            }`}>
+              {scan.type === 'job' ? (
+                <ClockIcon className="h-7 w-7 text-blue-600" />
+              ) : scan.type === 'product' ? (
+                <CubeIcon className="h-7 w-7 text-green-600" />
+              ) : (
+                <ExclamationTriangleIcon className="h-7 w-7 text-red-600" />
+              )}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="font-bold text-gray-900 text-base truncate">{scan.code}</p>
+              <p className={`text-sm ${
+                scan.type === 'none' ? 'text-red-600 font-medium' : 'text-gray-500'
+              }`}>
+                {scan.type === 'none' ? 'Not Found' : scan.type === 'job' ? 'Job' : 'Product'} • {scan.timestamp.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+              </p>
+            </div>
+            {scan.type !== 'none' && (
+              <div className="w-10 h-10 bg-gray-100 rounded-xl flex items-center justify-center flex-shrink-0">
+                <ArrowPathIcon className="h-5 w-5 text-gray-500" />
+              </div>
+            )}
           </div>
         ))}
-        </div>
       </div>
-    </Card>
+    </div>
   )
 
   // --- Job Action Sheet ---
@@ -1132,72 +1177,88 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
     const isInProgress = selectedJob.status === 'in_progress'
     const isDone = selectedJob.status === 'done'
 
+    const getStatusLabel = (status: string) => {
+      switch (status) {
+        case 'draft': return 'Draft'
+        case 'released': return 'Released'
+        case 'in_progress': return 'In Progress'
+        case 'blocked': return 'Blocked'
+        case 'done': return 'Completed'
+        case 'cancelled': return 'Cancelled'
+        default: return status
+      }
+    }
+
     return (
       <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center pointer-events-none">
-        <div className="absolute inset-0 bg-black/40 backdrop-blur-sm pointer-events-auto" onClick={resetSelection} />
-        <div className="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-2xl shadow-2xl pointer-events-auto max-h-[95vh] sm:max-h-[90vh] overflow-y-auto flex flex-col relative z-10">
+        <div className="absolute inset-0 bg-black/50 backdrop-blur-sm pointer-events-auto" onClick={resetSelection} />
+        <div className="bg-white w-full max-w-lg rounded-t-[2rem] sm:rounded-3xl shadow-2xl pointer-events-auto max-h-[95vh] sm:max-h-[90vh] overflow-y-auto flex flex-col relative z-10">
           {/* Handle bar for mobile */}
-          <div className="w-full flex justify-center pt-3 pb-2 sm:hidden sticky top-0 bg-white z-10">
-            <div className="w-12 h-1.5 bg-gray-300 rounded-full" />
+          <div className="w-full flex justify-center pt-3 pb-1 sm:hidden sticky top-0 bg-white z-10 rounded-t-[2rem]">
+            <div className="w-14 h-1.5 bg-gray-300 rounded-full" />
           </div>
 
-          <div className="p-4 sm:p-5 border-b border-gray-100">
+          <div className="p-5 sm:p-6 border-b border-gray-100">
             <div className="flex justify-between items-start">
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                <div className="flex flex-wrap items-center gap-2 mb-3">
+                  <span className="inline-flex items-center px-3 py-1.5 rounded-xl text-xs font-bold bg-blue-100 text-blue-700">
                     JOB
                   </span>
-                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(selectedJob.status)}`}>
-                    {selectedJob.status.replace('_', ' ').toUpperCase()}
+                  <span className={`inline-flex items-center px-3 py-1.5 rounded-xl text-xs font-bold ${getStatusColor(selectedJob.status)}`}>
+                    {getStatusLabel(selectedJob.status)}
                   </span>
-                  {selectedJob.priority && (
-                    <span className={`text-xs font-semibold ${getPriorityColor(selectedJob.priority)}`}>
-                      Priority {selectedJob.priority}
+                  {selectedJob.priority && selectedJob.priority <= 2 && (
+                    <span className="inline-flex items-center px-3 py-1.5 rounded-xl text-xs font-bold bg-red-100 text-red-700">
+                      🔥 Priority
                     </span>
                   )}
                 </div>
-                <h2 className="text-lg sm:text-xl font-bold text-gray-900 truncate">{selectedJob.code}</h2>
-                <p className="text-xs sm:text-sm text-gray-500 truncate">{selectedJob.productName}</p>
+                <h2 className="text-2xl font-bold text-gray-900 mb-1">{selectedJob.code}</h2>
+                <p className="text-base text-gray-600 line-clamp-2">{selectedJob.productName}</p>
               </div>
-              <button onClick={resetSelection} className="p-2 bg-gray-100 rounded-full active:bg-gray-200 hover:bg-gray-200 flex-shrink-0 ml-2 touch-target">
-                <XMarkIcon className="h-5 w-5 text-gray-500" />
+              <button 
+                onClick={resetSelection} 
+                className="w-12 h-12 bg-gray-100 rounded-2xl flex items-center justify-center active:bg-gray-200 flex-shrink-0 ml-3"
+              >
+                <XMarkIcon className="h-6 w-6 text-gray-600" />
               </button>
             </div>
 
-            {/* Job Info Grid */}
-            <div className="grid grid-cols-2 gap-2 sm:gap-3 mt-3 sm:mt-4">
-              <div className="bg-gray-50 p-2.5 sm:p-3 rounded-lg">
-                <p className="text-[10px] sm:text-xs text-gray-500 mb-1">Quantity</p>
-                <p className="font-semibold text-gray-900 text-sm sm:text-base">{selectedJob.quantity} {selectedJob.unit}</p>
+            {/* Job Info Grid - Larger for Mobile */}
+            <div className="grid grid-cols-2 gap-3 mt-4">
+              <div className="bg-gradient-to-br from-gray-50 to-gray-100 p-4 rounded-2xl">
+                <p className="text-xs text-gray-500 mb-1 font-medium">Quantity</p>
+                <p className="font-bold text-gray-900 text-xl">{selectedJob.quantity?.toLocaleString()}</p>
+                <p className="text-sm text-gray-600">{selectedJob.unit}</p>
               </div>
-              <div className="bg-gray-50 p-2.5 sm:p-3 rounded-lg">
-                <p className="text-[10px] sm:text-xs text-gray-500 mb-1">Current Stage</p>
-                <p className="font-semibold text-gray-900 truncate text-sm sm:text-base">{currentStageName}</p>
+              <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-4 rounded-2xl">
+                <p className="text-xs text-blue-600 mb-1 font-medium">Current Stage</p>
+                <p className="font-bold text-blue-900 text-lg truncate">{currentStageName}</p>
               </div>
             </div>
 
             {/* Customer & Due Date */}
-            <div className="grid grid-cols-2 gap-2 sm:gap-3 mt-2 sm:mt-3">
+            <div className="grid grid-cols-2 gap-3 mt-3">
               {selectedJob.customer && (
-                <div className="bg-blue-50 p-2.5 sm:p-3 rounded-lg border border-blue-100">
-                  <div className="flex items-center gap-1 mb-1">
-                    <BuildingStorefrontIcon className="h-3 w-3 text-blue-600" />
-                    <p className="text-[10px] sm:text-xs text-blue-600 font-medium">Customer</p>
+                <div className="bg-gradient-to-br from-indigo-50 to-indigo-100 p-4 rounded-2xl">
+                  <div className="flex items-center gap-2 mb-1">
+                    <BuildingStorefrontIcon className="h-4 w-4 text-indigo-600" />
+                    <p className="text-xs text-indigo-600 font-medium">Customer</p>
                   </div>
-                  <p className="font-semibold text-blue-900 truncate text-sm sm:text-base">{selectedJob.customer.name}</p>
+                  <p className="font-bold text-indigo-900 truncate">{selectedJob.customer.name}</p>
                   {selectedJob.customer.orderNo && (
-                    <p className="text-[10px] sm:text-xs text-blue-600 mt-0.5 truncate">Order: {selectedJob.customer.orderNo}</p>
+                    <p className="text-xs text-indigo-600 mt-1 truncate">Order: {selectedJob.customer.orderNo}</p>
                   )}
                 </div>
               )}
               {selectedJob.dueDate && (
-                <div className="bg-orange-50 p-2.5 sm:p-3 rounded-lg border border-orange-100">
-                  <div className="flex items-center gap-1 mb-1">
-                    <CalendarIcon className="h-3 w-3 text-orange-600" />
-                    <p className="text-[10px] sm:text-xs text-orange-600 font-medium">Due Date</p>
+                <div className="bg-gradient-to-br from-orange-50 to-orange-100 p-4 rounded-2xl">
+                  <div className="flex items-center gap-2 mb-1">
+                    <CalendarIcon className="h-4 w-4 text-orange-600" />
+                    <p className="text-xs text-orange-600 font-medium">Due Date</p>
                   </div>
-                  <p className="font-semibold text-orange-900 text-sm sm:text-base">
+                  <p className="font-bold text-orange-900">
                     {new Date(selectedJob.dueDate.seconds ? selectedJob.dueDate.seconds * 1000 : selectedJob.dueDate).toLocaleDateString()}
                   </p>
                 </div>
@@ -1330,12 +1391,12 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
             </div>
           </div>
 
-          <div className="p-4 sm:p-5 space-y-3">
+          <div className="p-5 sm:p-6 space-y-4">
             {!activeAction ? (
               <>
-                {/* Status Management Buttons */}
+                {/* Primary Action - Large, Prominent Button */}
                 {!isDone && (
-                  <div className="space-y-2">
+                  <div className="space-y-3">
                     {!isReleased && !isInProgress && (
                       <button
                         onClick={() => {
@@ -1343,10 +1404,10 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                             statusMutation.mutate({ jobId: selectedJob.id, status: 'released' })
                           }
                         }}
-                        className="w-full py-3.5 sm:py-3 bg-blue-600 text-white rounded-xl font-semibold shadow-sm active:bg-blue-800 hover:bg-blue-700 flex items-center justify-center space-x-2 touch-target min-h-[48px]"
+                        className="w-full py-5 bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-2xl font-bold shadow-lg shadow-blue-500/30 active:scale-[0.98] transition-all flex items-center justify-center gap-3"
                       >
-                        <PlayIcon className="h-5 w-5" />
-                        <span className="text-base sm:text-base">Release Job</span>
+                        <PlayIcon className="h-7 w-7" />
+                        <span className="text-lg">Release Job</span>
                       </button>
                     )}
 
@@ -1358,31 +1419,13 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                             stageId: selectedJob.currentStageId,
                             resourceId: 'current-user',
                             startedAt: new Date(),
-                            notes: 'Job started via scanner'
+                            notes: 'Started via scanner'
                           })
                         }}
-                        className="w-full py-3.5 sm:py-3 bg-green-600 text-white rounded-xl font-semibold shadow-sm active:bg-green-800 hover:bg-green-700 flex items-center justify-center space-x-2 touch-target min-h-[48px]"
+                        className="w-full py-5 bg-gradient-to-r from-green-500 to-green-600 text-white rounded-2xl font-bold shadow-lg shadow-green-500/30 active:scale-[0.98] transition-all flex items-center justify-center gap-3"
                       >
-                        <PlayIcon className="h-5 w-5" />
-                        <span className="text-base sm:text-base">Start Production</span>
-                      </button>
-                    )}
-
-                    {isInProgress && !isBlocked && (
-                      <button
-                        onClick={() => {
-                          const reason = prompt('Enter block reason (e.g., "Material shortage", "Machine breakdown", "Quality issue", "Waiting for approval"):')
-                          if (reason && reason.trim()) {
-                            statusMutation.mutate({ jobId: selectedJob.id, status: 'blocked', blockReason: reason.trim() })
-                          } else if (reason !== null) {
-                            alert('Please enter a block reason to continue.')
-                          }
-                        }}
-                        className="w-full py-3.5 sm:py-3 bg-red-600 text-white rounded-xl font-semibold shadow-sm active:bg-red-800 hover:bg-red-700 flex items-center justify-center space-x-2 touch-target min-h-[48px]"
-                        title="Temporarily stop production for this job (e.g., material shortage, machine issue, quality problem)"
-                      >
-                        <PauseIcon className="h-5 w-5" />
-                        <span className="text-base sm:text-base">Block Job</span>
+                        <PlayIcon className="h-7 w-7" />
+                        <span className="text-lg">Start Production</span>
                       </button>
                     )}
 
@@ -1391,10 +1434,10 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                         onClick={() => {
                           statusMutation.mutate({ jobId: selectedJob.id, status: 'in_progress' })
                         }}
-                        className="w-full py-3.5 sm:py-3 bg-green-600 text-white rounded-xl font-semibold shadow-sm active:bg-green-800 hover:bg-green-700 flex items-center justify-center space-x-2 touch-target min-h-[48px]"
+                        className="w-full py-5 bg-gradient-to-r from-green-500 to-green-600 text-white rounded-2xl font-bold shadow-lg shadow-green-500/30 active:scale-[0.98] transition-all flex items-center justify-center gap-3"
                       >
-                        <PlayIcon className="h-5 w-5" />
-                        <span className="text-base sm:text-base">Resume Job</span>
+                        <PlayIcon className="h-7 w-7" />
+                        <span className="text-lg">Resume Job</span>
                       </button>
                     )}
                   </div>
@@ -1402,7 +1445,6 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
 
                 {/* Next Stage Button */}
                 {nextStage && (isInProgress || isReleased) && !isBlocked && (() => {
-                  // Calculate threshold for current stage
                   const currentStageSummary = calculateProductionSummary(selectedJob)
                   const {
                     totalProducedInStage,
@@ -1412,58 +1454,73 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                   } = currentStageSummary
                   
                   const isIncomplete = plannedQty > 0 && totalProducedInStage < completionThreshold
-                  const thresholdAlreadyMet = plannedQty > 0 && totalProducedInStage >= completionThreshold
                   const requireOutput = (selectedJob as any).requireOutputToAdvance !== false
                   
                   return (
                     <button
                       onClick={() => {
-                        // Check threshold requirements
                         if (requireOutput && isIncomplete) {
-                          alert(`⚠️ Cannot proceed: Production quantity below required threshold.\n\nRequired: ${completionThreshold.toLocaleString()}+ ${currentStageOutputUOM || 'sheets'}\nCurrent: ${totalProducedInStage.toLocaleString()} ${currentStageOutputUOM || 'sheets'}\n\nPlease complete production before moving to next stage.`)
+                          alert(`⚠️ Cannot proceed: Production quantity below threshold.\n\nRequired: ${completionThreshold.toLocaleString()}+ ${currentStageOutputUOM || 'units'}\nCurrent: ${totalProducedInStage.toLocaleString()} ${currentStageOutputUOM || 'units'}\n\nPlease complete production before moving to next stage.`)
                           return
                         }
                         
-                        if (confirm(`Move job from ${currentStageName} to ${nextStage.name}?`)) {
+                        if (confirm(`Move from ${currentStageName} to ${nextStage.name}?`)) {
                           moveStageMutation.mutate({ jobId: selectedJob.id, newStageId: nextStage.id })
                         }
                       }}
                       disabled={moveStageMutation.isPending || (requireOutput && isIncomplete)}
-                      className={`w-full py-3.5 sm:py-3 rounded-xl font-semibold shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2 transition-colors touch-target min-h-[48px] sm:min-h-0 ${
+                      className={`w-full py-5 rounded-2xl font-bold shadow-lg disabled:opacity-50 disabled:shadow-none flex items-center justify-center gap-3 transition-all ${
                         requireOutput && isIncomplete
-                          ? 'bg-gray-400 text-white cursor-not-allowed'
-                          : 'bg-purple-600 text-white active:bg-purple-800 hover:bg-purple-700'
+                          ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                          : 'bg-gradient-to-r from-purple-500 to-purple-600 text-white shadow-purple-500/30 active:scale-[0.98]'
                       }`}
-                      title={
-                        requireOutput && isIncomplete
-                          ? `Threshold not met. Required: ${completionThreshold.toLocaleString()}+ ${currentStageOutputUOM || 'sheets'}`
-                          : undefined
-                      }
                     >
-                      <ArrowRightIcon className="h-5 w-5" />
-                      <span className="text-base sm:text-base">Move to {nextStage.name}</span>
+                      <ArrowRightIcon className="h-7 w-7" />
+                      <span className="text-lg">Move to {nextStage.name}</span>
                     </button>
                   )
                 })()}
 
-                {/* Production Actions */}
+                {/* Production Actions - Large Touch Targets */}
                 {isInProgress && !isBlocked && (
-                  <div className="grid grid-cols-2 gap-2 sm:gap-3">
+                  <div className="grid grid-cols-2 gap-3">
                     <button
                       onClick={() => setActiveAction('consume')}
-                      className="py-4 sm:py-4 bg-white border-2 border-gray-200 text-gray-700 rounded-xl font-semibold active:bg-gray-100 hover:bg-gray-50 flex flex-col items-center justify-center space-y-1 touch-target min-h-[100px] sm:min-h-0"
+                      className="py-6 bg-gradient-to-br from-orange-50 to-orange-100 border-2 border-orange-200 text-orange-700 rounded-2xl font-bold active:scale-[0.98] transition-all flex flex-col items-center justify-center gap-2"
                     >
-                      <CubeIcon className="h-6 w-6 sm:h-6 sm:w-6 text-orange-500" />
-                      <span className="text-xs sm:text-sm">Consume Material</span>
+                      <div className="w-14 h-14 bg-orange-500 rounded-2xl flex items-center justify-center shadow-lg shadow-orange-500/30">
+                        <CubeIcon className="h-8 w-8 text-white" />
+                      </div>
+                      <span className="text-sm mt-1">Consume Material</span>
                     </button>
                     <button
                       onClick={() => setActiveAction('produce')}
-                      className="py-4 sm:py-4 bg-white border-2 border-gray-200 text-gray-700 rounded-xl font-semibold active:bg-gray-100 hover:bg-gray-50 flex flex-col items-center justify-center space-y-1 touch-target min-h-[100px] sm:min-h-0"
+                      className="py-6 bg-gradient-to-br from-blue-50 to-blue-100 border-2 border-blue-200 text-blue-700 rounded-2xl font-bold active:scale-[0.98] transition-all flex flex-col items-center justify-center gap-2"
                     >
-                      <CheckCircleIcon className="h-6 w-6 sm:h-6 sm:w-6 text-blue-500" />
-                      <span className="text-xs sm:text-sm">Record Output</span>
+                      <div className="w-14 h-14 bg-blue-500 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-500/30">
+                        <CheckCircleIcon className="h-8 w-8 text-white" />
+                      </div>
+                      <span className="text-sm mt-1">Record Output</span>
                     </button>
                   </div>
+                )}
+
+                {/* Block Job Button - Less Prominent */}
+                {isInProgress && !isBlocked && (
+                  <button
+                    onClick={() => {
+                      const reason = prompt('Enter block reason (e.g., "Material shortage", "Machine breakdown", "Quality issue"):')
+                      if (reason && reason.trim()) {
+                        statusMutation.mutate({ jobId: selectedJob.id, status: 'blocked', blockReason: reason.trim() })
+                      } else if (reason !== null) {
+                        alert('Please enter a block reason to continue.')
+                      }
+                    }}
+                    className="w-full py-4 bg-red-50 border-2 border-red-200 text-red-600 rounded-2xl font-semibold active:bg-red-100 transition-colors flex items-center justify-center gap-2"
+                  >
+                    <PauseIcon className="h-5 w-5" />
+                    <span>Block Job</span>
+                  </button>
                 )}
 
                 {/* Complete Job Button */}
@@ -1541,9 +1598,9 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                   onClick={() => {
                     window.location.href = `/production?jobId=${selectedJob.id}`
                   }}
-                  className="w-full py-3 sm:py-2.5 bg-gray-50 border border-gray-200 text-gray-700 rounded-xl font-medium active:bg-gray-200 hover:bg-gray-100 flex items-center justify-center space-x-2 text-sm touch-target min-h-[44px] sm:min-h-0"
+                  className="w-full py-4 bg-gray-100 text-gray-700 rounded-2xl font-semibold active:bg-gray-200 transition-colors flex items-center justify-center gap-2"
                 >
-                  <InformationCircleIcon className="h-4 w-4" />
+                  <InformationCircleIcon className="h-5 w-5" />
                   <span>View Full Details</span>
                 </button>
               </>
@@ -1578,20 +1635,23 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
       return (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="font-semibold text-gray-900 text-base sm:text-base">Record Consumption</h3>
-            <button onClick={() => { setActiveAction(null); setActionData({}) }} className="text-gray-400 active:text-gray-600 hover:text-gray-600 p-2 -mr-2 touch-target">
-              <XMarkIcon className="h-5 w-5" />
+            <h3 className="font-bold text-gray-900 text-lg">Record Consumption</h3>
+            <button 
+              onClick={() => { setActiveAction(null); setActionData({}) }} 
+              className="w-10 h-10 bg-gray-100 rounded-xl flex items-center justify-center active:bg-gray-200"
+            >
+              <XMarkIcon className="h-5 w-5 text-gray-600" />
             </button>
           </div>
           
           {/* BOM Material Selector */}
           {bomItems.length > 0 && (
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+              <label className="block text-sm font-bold text-gray-700 mb-2">
                 Select Material from BOM
               </label>
               <select
-                className="w-full p-3.5 sm:p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 bg-white text-base touch-target"
+                className="w-full p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-orange-500/20 focus:border-orange-500 bg-white text-base"
                 value={actionData.bomItemIndex !== undefined ? String(actionData.bomItemIndex) : ''}
                 onChange={async (e) => {
                   const index = e.target.value === '' ? undefined : Number(e.target.value)
@@ -1664,94 +1724,92 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                 })}
               </select>
               {selectedBomItem && remainingRequired !== null && (
-                <p className="mt-1 text-xs text-gray-600">
-                  Required: {selectedBomItem.qtyRequired.toLocaleString()} {selectedBomItem.uom} | 
-                  Consumed: {(selectedBomItem.consumed || 0).toLocaleString()} {selectedBomItem.uom} | 
-                  Remaining: {remainingRequired.toLocaleString()} {selectedBomItem.uom}
+                <div className="mt-2 p-3 bg-gray-50 rounded-xl text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Required:</span>
+                    <span className="font-medium">{selectedBomItem.qtyRequired.toLocaleString()} {selectedBomItem.uom}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Consumed:</span>
+                    <span className="font-medium">{(selectedBomItem.consumed || 0).toLocaleString()} {selectedBomItem.uom}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Remaining:</span>
+                    <span className="font-bold text-orange-600">{remainingRequired.toLocaleString()} {selectedBomItem.uom}</span>
+                  </div>
                   {availableStock !== null && (
-                    <span className={availableStock < remainingRequired ? ' text-red-600 font-semibold' : ' text-green-600'}>
-                      {' | '}Stock: {availableStock.toLocaleString()} {selectedBomItem.uom}
-                    </span>
+                    <div className={`flex justify-between mt-1 pt-1 border-t ${availableStock < remainingRequired ? 'text-red-600' : 'text-green-600'}`}>
+                      <span>Stock:</span>
+                      <span className="font-bold">{availableStock.toLocaleString()} {selectedBomItem.uom}</span>
+                    </div>
                   )}
-                </p>
+                </div>
               )}
             </div>
           )}
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">
+            <label className="block text-sm font-bold text-gray-700 mb-2">
               SKU / Material Code {actionData.bomItemIndex === undefined ? '*' : ''}
             </label>
             <input
               placeholder="Enter SKU or scan material"
-              className="w-full p-3.5 sm:p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-base touch-target"
+              className="w-full p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-orange-500/20 focus:border-orange-500 text-base"
               value={actionData.sku || ''}
               onChange={e => {
                 setActionData({ 
                   ...actionData, 
                   sku: e.target.value,
-                  bomItemIndex: undefined // Clear BOM selection if manually entering
+                  bomItemIndex: undefined
                 })
               }}
               autoFocus={actionData.bomItemIndex === undefined}
             />
             {actionData.bomItemIndex !== undefined && (
-              <p className="mt-1 text-xs text-gray-500 italic">From BOM: {actionData.name || actionData.sku}</p>
+              <p className="mt-2 text-sm text-gray-500">From BOM: {actionData.name || actionData.sku}</p>
             )}
           </div>
-          <div className="flex flex-col sm:flex-row gap-2">
-            <div className="flex-1">
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">Quantity *</label>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="col-span-2">
+              <label className="block text-sm font-bold text-gray-700 mb-2">Quantity *</label>
               <input
                 type="number"
                 step="0.01"
-                placeholder={selectedBomItem ? `${remainingRequired?.toLocaleString() || 0}` : "0.00"}
-                className="w-full p-3.5 sm:p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-base touch-target"
+                placeholder={selectedBomItem ? `${remainingRequired?.toLocaleString() || 0}` : "0"}
+                className="w-full p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-orange-500/20 focus:border-orange-500 text-xl font-bold text-center"
                 value={actionData.qtyUsed || ''}
                 onChange={e => setActionData({ ...actionData, qtyUsed: Number(e.target.value) })}
               />
-              {selectedBomItem && remainingRequired !== null && (
-                <p className="mt-1 text-xs text-gray-500">
-                  Suggested: {remainingRequired.toLocaleString()} {selectedBomItem.uom} (remaining required)
-                </p>
-              )}
               {availableStock !== null && (
-                <p className={`mt-1 text-xs font-medium ${isInsufficientStock ? 'text-red-600' : 'text-gray-600'}`}>
-                  Available Stock: {availableStock.toLocaleString()} {actionData.uom || 'units'}
-                  {isInsufficientStock && (
-                    <span className="ml-2">⚠️ Insufficient stock!</span>
-                  )}
-                </p>
-              )}
-              {actionData.sku && !selectedProduct && (
-                <p className="mt-1 text-xs text-yellow-600">
-                  ⚠️ Product not found in inventory. Stock check unavailable.
+                <p className={`mt-2 text-sm font-medium ${isInsufficientStock ? 'text-red-600' : 'text-gray-600'}`}>
+                  Stock: {availableStock.toLocaleString()} {actionData.uom || 'units'}
+                  {isInsufficientStock && <span className="ml-2">⚠️ Insufficient!</span>}
                 </p>
               )}
             </div>
-            <div className="w-full sm:w-24">
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">UOM</label>
+            <div>
+              <label className="block text-sm font-bold text-gray-700 mb-2">UOM</label>
               <input
                 placeholder="UOM"
-                className="w-full p-3.5 sm:p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-base touch-target"
+                className="w-full p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-orange-500/20 focus:border-orange-500 text-base text-center"
                 value={actionData.uom || ''}
                 onChange={e => setActionData({ ...actionData, uom: e.target.value })}
               />
             </div>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1.5">Notes (Optional)</label>
+            <label className="block text-sm font-bold text-gray-700 mb-2">Notes (Optional)</label>
             <input
               placeholder="Additional notes"
-              className="w-full p-3.5 sm:p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 text-base touch-target"
+              className="w-full p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-orange-500/20 focus:border-orange-500 text-base"
               value={actionData.notes || ''}
               onChange={e => setActionData({ ...actionData, notes: e.target.value })}
             />
           </div>
-          <div className="flex gap-2 pt-2">
+          <div className="flex gap-3 pt-2">
             <button
               onClick={() => { setActiveAction(null); setActionData({}) }}
-              className="flex-1 py-3 bg-gray-100 rounded-lg font-medium hover:bg-gray-200 transition-colors"
+              className="flex-1 py-4 bg-gray-100 rounded-2xl font-bold text-gray-700 active:bg-gray-200 transition-colors"
             >
               Cancel
             </button>
@@ -1794,11 +1852,11 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                 consumptionMutation.mutate(consumptionData)
               }}
               disabled={consumptionMutation.isPending || !actionData.sku || !actionData.qtyUsed}
-              className={`flex-1 py-3.5 sm:py-3 rounded-lg font-medium transition-colors touch-target min-h-[48px] sm:min-h-0 text-base disabled:opacity-50 disabled:cursor-not-allowed ${
+              className={`flex-1 py-4 rounded-2xl font-bold shadow-lg transition-all disabled:opacity-50 disabled:shadow-none active:scale-[0.98] ${
                 isInsufficientStock 
-                  ? 'bg-red-600 text-white hover:bg-red-700' 
-                  : 'bg-orange-600 text-white hover:bg-orange-700'
-              } disabled:opacity-50 disabled:cursor-not-allowed`}
+                  ? 'bg-gradient-to-r from-red-500 to-red-600 text-white shadow-red-500/30' 
+                  : 'bg-gradient-to-r from-orange-500 to-orange-600 text-white shadow-orange-500/30'
+              }`}
             >
               {consumptionMutation.isPending ? 'Recording...' : isInsufficientStock ? '⚠️ Confirm (Low Stock)' : 'Confirm'}
             </button>
@@ -1840,117 +1898,114 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
       return (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="font-semibold text-gray-900 text-base sm:text-base">Record Production Output</h3>
-            <button onClick={() => { setActiveAction(null); setActionData({}) }} className="text-gray-400 active:text-gray-600 hover:text-gray-600 p-2 -mr-2 touch-target">
-              <XMarkIcon className="h-5 w-5" />
+            <h3 className="font-bold text-gray-900 text-lg">Record Production Output</h3>
+            <button 
+              onClick={() => { setActiveAction(null); setActionData({}) }} 
+              className="w-10 h-10 bg-gray-100 rounded-xl flex items-center justify-center active:bg-gray-200"
+            >
+              <XMarkIcon className="h-5 w-5 text-gray-600" />
             </button>
           </div>
 
           {/* Production Summary */}
           {plannedQty > 0 && (
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-              <div className="flex items-center gap-2 mb-2">
-                <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-                <p className="text-xs font-medium text-blue-800">Production Summary</p>
-              </div>
-              <div className="bg-white rounded border border-gray-200 p-2 text-xs">
-                <div className="grid grid-cols-3 gap-2 mb-2">
-                  <div>
-                    <span className="text-gray-600">Planned:</span>
-                    <div className="font-medium">{plannedQty.toLocaleString()} {plannedUOM}</div>
-                  </div>
-                  <div>
-                    <span className="text-gray-600">Produced:</span>
-                    <div className="font-medium">
-                      {totalProducedInStage.toLocaleString()} {currentStageOutputUOM || 'sheets'}
-                    </div>
-                  </div>
-                  <div>
-                    <span className="text-gray-600">Remaining:</span>
-                    <div className="font-medium">
-                      {Math.max(0, remaining).toLocaleString()} {currentStageOutputUOM || 'sheets'}
-                    </div>
-                  </div>
+            <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-2xl p-4">
+              <p className="text-sm font-bold text-blue-800 mb-3">Production Summary</p>
+              <div className="grid grid-cols-3 gap-3 mb-3">
+                <div className="bg-white rounded-xl p-3 text-center">
+                  <span className="text-xs text-gray-500 block">Planned</span>
+                  <div className="font-bold text-gray-900">{plannedQty.toLocaleString()}</div>
+                  <span className="text-xs text-gray-500">{plannedUOM}</span>
                 </div>
-                {isIncomplete && (
-                  <div className="text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
-                    <span className="font-medium">Incomplete:</span> {completionThreshold.toLocaleString()}+ {currentStageOutputUOM || 'sheets'} required
-                  </div>
-                )}
-                {isOverLimit && (
-                  <div className="text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1">
-                    <span className="font-medium">⚠️ Over Limit:</span> Maximum {completionThresholdUpper.toLocaleString()} {currentStageOutputUOM || 'sheets'} allowed (planned: {plannedQty.toLocaleString()} + tolerance: 500)
-                  </div>
-                )}
-                {!isIncomplete && !isOverLimit && totalAfterThisEntry > 0 && (
-                  <div className="text-green-700 bg-green-50 border border-green-200 rounded px-2 py-1">
-                    <span className="font-medium">✓ Within acceptable range:</span> {completionThreshold.toLocaleString()} - {completionThresholdUpper.toLocaleString()} {currentStageOutputUOM || 'sheets'}
-                  </div>
-                )}
+                <div className="bg-white rounded-xl p-3 text-center">
+                  <span className="text-xs text-gray-500 block">Produced</span>
+                  <div className="font-bold text-blue-600">{totalProducedInStage.toLocaleString()}</div>
+                  <span className="text-xs text-gray-500">{currentStageOutputUOM || 'units'}</span>
+                </div>
+                <div className="bg-white rounded-xl p-3 text-center">
+                  <span className="text-xs text-gray-500 block">Remaining</span>
+                  <div className="font-bold text-orange-600">{Math.max(0, remaining).toLocaleString()}</div>
+                  <span className="text-xs text-gray-500">{currentStageOutputUOM || 'units'}</span>
+                </div>
               </div>
+              {isIncomplete && (
+                <div className="bg-amber-100 border border-amber-200 rounded-xl px-4 py-2 text-sm text-amber-800">
+                  <span className="font-bold">⚠️ Incomplete:</span> {completionThreshold.toLocaleString()}+ {currentStageOutputUOM || 'units'} required
+                </div>
+              )}
+              {isOverLimit && (
+                <div className="bg-red-100 border border-red-200 rounded-xl px-4 py-2 text-sm text-red-800">
+                  <span className="font-bold">⚠️ Over Limit:</span> Maximum {completionThresholdUpper.toLocaleString()} {currentStageOutputUOM || 'units'}
+                </div>
+              )}
+              {!isIncomplete && !isOverLimit && totalAfterThisEntry > 0 && (
+                <div className="bg-green-100 border border-green-200 rounded-xl px-4 py-2 text-sm text-green-800">
+                  <span className="font-bold">✓ Within acceptable range</span>
+                </div>
+              )}
             </div>
           )}
 
           {/* Stage Info */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Stage</label>
-            <p className="text-sm text-gray-600 bg-gray-50 p-2 rounded-lg">{getStageName(selectedJob?.currentStageId, selectedJob?.status)}</p>
+          <div className="bg-gray-50 rounded-2xl p-4">
+            <label className="block text-xs font-bold text-gray-500 mb-1">STAGE</label>
+            <p className="text-base font-semibold text-gray-900">{getStageName(selectedJob?.currentStageId, selectedJob?.status)}</p>
           </div>
 
-          {/* Input Fields */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {/* Input Fields - Large for Mobile */}
+          <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs sm:text-xs font-medium text-gray-700 mb-1.5">
-                Good Qty ({currentStageInputUOM || 'sheets'})
+              <label className="block text-sm font-bold text-gray-700 mb-2">
+                Good Qty ({currentStageInputUOM || 'units'})
                 {currentStageInputUOM && currentStageOutputUOM && currentStageInputUOM !== currentStageOutputUOM && numberUp > 0 && (
-                  <span className="text-xs text-gray-500 ml-1 block">
-                    → {convertToOutputUOM(qtyGood || 0).toFixed(2)} {currentStageOutputUOM}
+                  <span className="text-xs text-blue-600 block mt-1">
+                    → {convertToOutputUOM(qtyGood || 0).toFixed(0)} {currentStageOutputUOM}
                   </span>
                 )}
               </label>
               <input
                 type="number"
                 min={0}
-                step="0.01"
-                placeholder="0.00"
-                className="w-full p-3.5 sm:p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-base touch-target"
+                step="1"
+                placeholder="0"
+                className="w-full p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 text-2xl font-bold text-center"
                 value={qtyGood || ''}
                 onChange={e => setActionData({ ...actionData, qtyGood: Number(e.target.value) })}
                 autoFocus
               />
             </div>
             <div>
-              <label className="block text-xs sm:text-xs font-medium text-gray-700 mb-1.5">
-                Scrap Qty ({currentStageInputUOM || 'sheets'})
+              <label className="block text-sm font-bold text-gray-700 mb-2">
+                Scrap ({currentStageInputUOM || 'units'})
               </label>
               <input
                 type="number"
                 min={0}
-                step="0.01"
-                placeholder="0.00"
-                className="w-full p-3.5 sm:p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-base touch-target"
+                step="1"
+                placeholder="0"
+                className="w-full p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-gray-500/20 focus:border-gray-400 text-2xl font-bold text-center text-gray-600"
                 value={qtyScrap || ''}
                 onChange={e => setActionData({ ...actionData, qtyScrap: Number(e.target.value) })}
               />
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs sm:text-xs font-medium text-gray-700 mb-1.5">Date & Time</label>
+              <label className="block text-sm font-bold text-gray-700 mb-2">Date & Time</label>
               <input
                 type="datetime-local"
                 value={actionData.runDateTime || ''}
                 onChange={e => setActionData({ ...actionData, runDateTime: e.target.value })}
-                className="w-full p-3.5 sm:p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-base touch-target"
+                className="w-full p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 text-base"
               />
             </div>
             <div>
-              <label className="block text-xs sm:text-xs font-medium text-gray-700 mb-1.5">Workcenter</label>
+              <label className="block text-sm font-bold text-gray-700 mb-2">Workcenter</label>
               <select
                 value={actionData.workcenterId || selectedJob?.workcenterId || ''}
                 onChange={e => setActionData({ ...actionData, workcenterId: e.target.value || undefined })}
-                className="w-full p-3.5 sm:p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-base touch-target bg-white"
+                className="w-full p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 text-base bg-white"
               >
                 <option value="">Unspecified</option>
                 {workcenters.map(w => (
@@ -1961,11 +2016,11 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
           </div>
 
           <div>
-            <label className="block text-xs sm:text-xs font-medium text-gray-700 mb-1.5">Lot Number</label>
+            <label className="block text-sm font-bold text-gray-700 mb-2">Lot Number</label>
             <input
               type="text"
               placeholder="Optional"
-              className="w-full p-3.5 sm:p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-base touch-target"
+              className="w-full p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 text-base"
               value={actionData.lot || ''}
               onChange={e => setActionData({ ...actionData, lot: e.target.value })}
             />
@@ -1973,28 +2028,28 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
 
           {/* Conversion Info */}
           {currentStageInputUOM && currentStageOutputUOM && currentStageInputUOM !== currentStageOutputUOM && numberUp > 0 && (
-            <div className="p-2 bg-blue-50 border border-blue-200 rounded text-xs text-blue-800">
-              <span className="font-semibold">Conversion:</span> {currentStageInputUOM} → {currentStageOutputUOM} (Number Up: {numberUp})
+            <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-sm text-blue-800">
+              <span className="font-bold">Conversion:</span> {currentStageInputUOM} → {currentStageOutputUOM} (Number Up: {numberUp})
             </div>
           )}
 
           {/* Notes */}
           <div>
-            <label className="block text-xs sm:text-xs font-medium text-gray-700 mb-1.5">Notes (Optional)</label>
+            <label className="block text-sm font-bold text-gray-700 mb-2">Notes (Optional)</label>
             <textarea
-              placeholder="Add a reason or note for this action..."
+              placeholder="Add notes..."
               rows={2}
-              className="w-full p-3.5 sm:p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none text-base touch-target"
+              className="w-full p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 resize-none text-base"
               value={actionData.notes || ''}
               onChange={e => setActionData({ ...actionData, notes: e.target.value })}
             />
           </div>
 
           {/* Action Buttons */}
-          <div className="flex gap-2 pt-2">
+          <div className="flex gap-3 pt-2">
             <button
               onClick={() => { setActiveAction(null); setActionData({}) }}
-              className="flex-1 py-3.5 sm:py-3 bg-gray-100 rounded-lg font-medium active:bg-gray-300 hover:bg-gray-200 transition-colors touch-target min-h-[48px] sm:min-h-0 text-base"
+              className="flex-1 py-4 bg-gray-100 rounded-2xl font-bold text-gray-700 active:bg-gray-200 transition-colors"
             >
               Cancel
             </button>
@@ -2031,13 +2086,13 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                 })
               }}
               disabled={productionMutation.isPending || !qtyGood || qtyGood <= 0 || isOverLimit}
-              className={`flex-1 py-3.5 sm:py-3 rounded-lg font-medium transition-colors touch-target min-h-[48px] sm:min-h-0 text-base disabled:opacity-50 disabled:cursor-not-allowed ${
+              className={`flex-1 py-4 rounded-2xl font-bold shadow-lg transition-all disabled:opacity-50 disabled:shadow-none active:scale-[0.98] ${
                 isOverLimit
-                  ? 'bg-red-600 text-white active:bg-red-800 hover:bg-red-700 cursor-not-allowed opacity-50'
-                  : 'bg-green-600 text-white active:bg-green-800 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed'
+                  ? 'bg-gradient-to-r from-red-500 to-red-600 text-white shadow-red-500/30 cursor-not-allowed opacity-50'
+                  : 'bg-gradient-to-r from-green-500 to-green-600 text-white shadow-green-500/30'
               }`}
             >
-              {productionMutation.isPending ? 'Recording...' : isOverLimit ? 'Over Limit' : 'Add Record'}
+              {productionMutation.isPending ? 'Recording...' : isOverLimit ? 'Over Limit' : 'Save'}
             </button>
           </div>
         </div>
@@ -2052,17 +2107,17 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
 
     return (
       <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center pointer-events-none">
-        <div className="absolute inset-0 bg-black/40 backdrop-blur-sm pointer-events-auto" onClick={resetSelection} />
-        <div className="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-2xl shadow-2xl pointer-events-auto max-h-[95vh] sm:max-h-[90vh] overflow-y-auto flex flex-col relative z-10">
-          <div className="w-full flex justify-center pt-3 pb-2 sm:hidden sticky top-0 bg-white z-10">
-            <div className="w-12 h-1.5 bg-gray-300 rounded-full" />
+        <div className="absolute inset-0 bg-black/50 backdrop-blur-sm pointer-events-auto" onClick={resetSelection} />
+        <div className="bg-white w-full max-w-lg rounded-t-[2rem] sm:rounded-3xl shadow-2xl pointer-events-auto max-h-[95vh] sm:max-h-[90vh] overflow-y-auto flex flex-col relative z-10">
+          <div className="w-full flex justify-center pt-3 pb-1 sm:hidden sticky top-0 bg-white z-10 rounded-t-[2rem]">
+            <div className="w-14 h-1.5 bg-gray-300 rounded-full" />
           </div>
 
-          <div className="p-4 sm:p-5 border-b border-gray-100">
+          <div className="p-5 sm:p-6 border-b border-gray-100">
             <div className="flex gap-4">
               {/* Product Image */}
               <div className="flex-shrink-0">
-                <div className="w-24 h-24 bg-gray-100 rounded-lg overflow-hidden border border-gray-200">
+                <div className="w-24 h-24 bg-gradient-to-br from-gray-100 to-gray-200 rounded-2xl overflow-hidden border border-gray-200 shadow-sm">
                   {(selectedProduct as any).imageUrl ? (
                     <img
                       src={(selectedProduct as any).imageUrl}
@@ -2071,7 +2126,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                     />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center">
-                      <CubeIcon className="w-10 h-10 text-gray-300" />
+                      <CubeIcon className="w-12 h-12 text-gray-400" />
                     </div>
                   )}
                 </div>
@@ -2080,19 +2135,21 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
               {/* Product Info */}
               <div className="flex-1 min-w-0">
                 <div className="flex items-start justify-between mb-2">
-                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                  <span className="inline-flex items-center px-3 py-1.5 rounded-xl text-xs font-bold bg-green-100 text-green-700">
                     PRODUCT
                   </span>
-                  <button onClick={resetSelection} className="p-1.5 bg-gray-100 rounded-full hover:bg-gray-200 transition-colors">
-                    <XMarkIcon className="h-4 w-4 text-gray-500" />
+                  <button 
+                    onClick={resetSelection} 
+                    className="w-10 h-10 bg-gray-100 rounded-xl flex items-center justify-center active:bg-gray-200"
+                  >
+                    <XMarkIcon className="h-5 w-5 text-gray-600" />
                   </button>
                 </div>
-                <h2 className="text-lg font-bold text-gray-900 mb-1 line-clamp-2">{selectedProduct.name}</h2>
-                <p className="text-sm text-gray-500 mb-2">SKU: {selectedProduct.sku}</p>
+                <h2 className="text-xl font-bold text-gray-900 mb-1 line-clamp-2">{selectedProduct.name}</h2>
+                <p className="text-sm text-gray-500 font-medium">SKU: {selectedProduct.sku}</p>
 
-                {/* Category/Group if available */}
                 {(selectedProduct as any).category && (
-                  <p className="text-xs text-gray-400">
+                  <p className="text-xs text-gray-400 mt-1">
                     {(selectedProduct as any).category}
                     {(selectedProduct as any).subcategory && ` • ${(selectedProduct as any).subcategory}`}
                   </p>
@@ -2101,18 +2158,18 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
             </div>
 
             {/* Stock & Price Info */}
-            <div className="grid grid-cols-2 gap-2 sm:gap-3 mt-3 sm:mt-4">
-              <div className="bg-blue-50 p-2.5 sm:p-3 rounded-lg border border-blue-100">
-                <p className="text-[10px] sm:text-xs text-blue-600 uppercase tracking-wide font-medium">On Hand</p>
-                <p className="text-xl sm:text-2xl font-bold text-blue-900">{selectedProduct.qtyOnHand || 0}</p>
-                <p className="text-[10px] sm:text-xs text-blue-600">{selectedProduct.uom || 'Units'}</p>
+            <div className="grid grid-cols-2 gap-3 mt-4">
+              <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-4 rounded-2xl">
+                <p className="text-xs text-blue-600 uppercase tracking-wide font-bold mb-1">On Hand</p>
+                <p className="text-3xl font-bold text-blue-900">{(selectedProduct.qtyOnHand || 0).toLocaleString()}</p>
+                <p className="text-sm text-blue-600 font-medium">{selectedProduct.uom || 'Units'}</p>
               </div>
-              <div className="bg-gray-50 p-2.5 sm:p-3 rounded-lg border border-gray-200">
-                <p className="text-[10px] sm:text-xs text-gray-500 uppercase tracking-wide font-medium">Unit Price</p>
-                <p className="text-xl sm:text-2xl font-bold text-gray-900">
+              <div className="bg-gradient-to-br from-gray-50 to-gray-100 p-4 rounded-2xl">
+                <p className="text-xs text-gray-500 uppercase tracking-wide font-bold mb-1">Unit Price</p>
+                <p className="text-3xl font-bold text-gray-900">
                   £{((selectedProduct as any).pricePerBox || 0).toFixed(2)}
                 </p>
-                <p className="text-[10px] sm:text-xs text-gray-500">
+                <p className="text-sm text-gray-500 font-medium">
                   Total: £{((selectedProduct.qtyOnHand || 0) * ((selectedProduct as any).pricePerBox || 0)).toFixed(2)}
                 </p>
               </div>
@@ -2121,39 +2178,44 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
             {/* View Details Button */}
             <button
               onClick={() => {
-                // Navigate to product details - you'll need to implement this based on your routing
                 window.location.href = `/inventory?productId=${selectedProduct.id}`
               }}
-              className="w-full mt-3 py-3 sm:py-2.5 bg-gray-100 active:bg-gray-200 hover:bg-gray-200 text-gray-700 rounded-lg font-medium text-sm transition-colors flex items-center justify-center gap-2 touch-target min-h-[44px] sm:min-h-0"
+              className="w-full mt-4 py-4 bg-gray-100 text-gray-700 rounded-2xl font-semibold active:bg-gray-200 transition-colors flex items-center justify-center gap-2"
             >
-              <MagnifyingGlassIcon className="w-4 h-4" />
+              <MagnifyingGlassIcon className="w-5 h-5" />
               View Full Details
             </button>
           </div>
 
-          <div className="p-4 sm:p-5 space-y-3">
+          <div className="p-5 sm:p-6 space-y-4">
             {!activeAction ? (
-              <div className="grid grid-cols-3 gap-2 sm:gap-3">
+              <div className="grid grid-cols-3 gap-3">
                 <button
                   onClick={() => setActiveAction('in')}
-                  className="py-4 sm:py-4 bg-green-50 border border-green-100 text-green-700 rounded-xl font-medium active:bg-green-100 hover:bg-green-100 flex flex-col items-center justify-center space-y-1 touch-target min-h-[100px] sm:min-h-0"
+                  className="py-6 bg-gradient-to-br from-green-50 to-green-100 border-2 border-green-200 text-green-700 rounded-2xl font-bold active:scale-[0.98] transition-all flex flex-col items-center justify-center gap-2"
                 >
-                  <ArrowDownTrayIcon className="h-6 w-6 sm:h-6 sm:w-6" />
-                  <span className="text-xs sm:text-sm">Receive</span>
+                  <div className="w-12 h-12 bg-green-500 rounded-xl flex items-center justify-center shadow-lg shadow-green-500/30">
+                    <ArrowDownTrayIcon className="h-6 w-6 text-white" />
+                  </div>
+                  <span className="text-xs">Receive</span>
                 </button>
                 <button
                   onClick={() => setActiveAction('out')}
-                  className="py-4 sm:py-4 bg-red-50 border border-red-100 text-red-700 rounded-xl font-medium active:bg-red-100 hover:bg-red-100 flex flex-col items-center justify-center space-y-1 touch-target min-h-[100px] sm:min-h-0"
+                  className="py-6 bg-gradient-to-br from-red-50 to-red-100 border-2 border-red-200 text-red-700 rounded-2xl font-bold active:scale-[0.98] transition-all flex flex-col items-center justify-center gap-2"
                 >
-                  <ArrowUpTrayIcon className="h-6 w-6 sm:h-6 sm:w-6" />
-                  <span className="text-xs sm:text-sm">Ship/Use</span>
+                  <div className="w-12 h-12 bg-red-500 rounded-xl flex items-center justify-center shadow-lg shadow-red-500/30">
+                    <ArrowUpTrayIcon className="h-6 w-6 text-white" />
+                  </div>
+                  <span className="text-xs">Ship/Use</span>
                 </button>
                 <button
                   onClick={() => setActiveAction('adjust')}
-                  className="py-4 sm:py-4 bg-gray-50 border border-gray-100 text-gray-700 rounded-xl font-medium active:bg-gray-100 hover:bg-gray-100 flex flex-col items-center justify-center space-y-1 touch-target min-h-[100px] sm:min-h-0"
+                  className="py-6 bg-gradient-to-br from-gray-50 to-gray-100 border-2 border-gray-200 text-gray-700 rounded-2xl font-bold active:scale-[0.98] transition-all flex flex-col items-center justify-center gap-2"
                 >
-                  <AdjustmentsHorizontalIcon className="h-6 w-6 sm:h-6 sm:w-6" />
-                  <span className="text-xs sm:text-sm">Adjust</span>
+                  <div className="w-12 h-12 bg-gray-500 rounded-xl flex items-center justify-center shadow-lg shadow-gray-500/30">
+                    <AdjustmentsHorizontalIcon className="h-6 w-6 text-white" />
+                  </div>
+                  <span className="text-xs">Adjust</span>
                 </button>
               </div>
             ) : (
@@ -2170,7 +2232,11 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
     const isShip = activeAction === 'out'
     const isAdjust = activeAction === 'adjustment'
     const title = isReceive ? 'Receive Stock' : isShip ? 'Ship / Use Stock' : 'Adjust Stock'
-    const btnColor = isReceive ? 'bg-green-600' : isShip ? 'bg-red-600' : 'bg-gray-800'
+    const btnGradient = isReceive 
+      ? 'bg-gradient-to-r from-green-500 to-green-600 shadow-green-500/30' 
+      : isShip 
+      ? 'bg-gradient-to-r from-red-500 to-red-600 shadow-red-500/30' 
+      : 'bg-gradient-to-r from-gray-600 to-gray-700 shadow-gray-600/30'
 
     // Filter reasons based on operation type
     const filteredReasons = stockReasons.filter(r => {
@@ -2181,25 +2247,33 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
 
     return (
       <div className="space-y-4">
-        <h3 className="font-semibold text-gray-900 text-base sm:text-base">{title}</h3>
+        <div className="flex items-center justify-between">
+          <h3 className="font-bold text-gray-900 text-lg">{title}</h3>
+          <button 
+            onClick={() => { setActiveAction(null); setActionData({}) }}
+            className="w-10 h-10 bg-gray-100 rounded-xl flex items-center justify-center active:bg-gray-200"
+          >
+            <XMarkIcon className="h-5 w-5 text-gray-600" />
+          </button>
+        </div>
 
-        {/* Quantity Input */}
+        {/* Quantity Input - Large */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1.5">Quantity</label>
+          <label className="block text-sm font-bold text-gray-700 mb-2">Quantity</label>
           <input
             type="number"
-            placeholder="Enter quantity"
+            placeholder="0"
             autoFocus
-            className="w-full p-3.5 sm:p-3 border border-gray-300 rounded-lg text-base sm:text-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 touch-target"
+            className="w-full p-5 border-2 border-gray-200 rounded-2xl text-2xl font-bold text-center focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500"
             onChange={e => setActionData({ ...actionData, qty: Number(e.target.value) })}
           />
         </div>
 
         {/* Reason Dropdown */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1.5">Reason *</label>
+          <label className="block text-sm font-bold text-gray-700 mb-2">Reason *</label>
           <select
-            className="w-full p-3.5 sm:p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-base touch-target bg-white"
+            className="w-full p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 text-base bg-white font-medium"
             onChange={e => setActionData({ ...actionData, reason: e.target.value })}
             value={actionData.reason || ''}
           >
@@ -2212,23 +2286,23 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
 
         {/* Notes / Reference */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1.5">Notes / Reference</label>
+          <label className="block text-sm font-bold text-gray-700 mb-2">Notes / Reference</label>
           <input
             type="text"
             placeholder="Optional notes or reference"
-            className="w-full p-3.5 sm:p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-base touch-target"
+            className="w-full p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 text-base"
             onChange={e => setActionData({ ...actionData, reference: e.target.value })}
           />
         </div>
 
         {/* Action Buttons */}
-        <div className="flex gap-2 pt-2">
+        <div className="flex gap-3 pt-2">
           <button
             onClick={() => {
               setActiveAction(null)
               setActionData({})
             }}
-            className="flex-1 py-3.5 sm:py-3 bg-gray-100 rounded-lg font-medium active:bg-gray-300 hover:bg-gray-200 transition-colors touch-target min-h-[48px] sm:min-h-0 text-base"
+            className="flex-1 py-4 bg-gray-100 rounded-2xl font-bold text-gray-700 active:bg-gray-200 transition-colors"
           >
             Cancel
           </button>
@@ -2247,7 +2321,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
               })
             }}
             disabled={!actionData.qty || !actionData.reason}
-            className={`flex-1 py-3.5 sm:py-3 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed touch-target min-h-[48px] sm:min-h-0 text-base ${btnColor} active:opacity-80 hover:opacity-90`}
+            className={`flex-1 py-4 text-white rounded-2xl font-bold shadow-lg transition-all disabled:opacity-50 disabled:shadow-none active:scale-[0.98] ${btnGradient}`}
           >
             Confirm
           </button>
@@ -2262,9 +2336,9 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
   }
 
   return (
-    <div className="space-y-5 sm:space-y-8 pb-6 sm:pb-0">
+    <div className="space-y-6 pb-24 sm:pb-6">
       {renderHeader()}
-      <div className="max-w-2xl mx-auto space-y-5 sm:space-y-6">
+      <div className="max-w-xl mx-auto space-y-6">
         {renderScannerArea()}
         {renderRecentScans()}
       </div>
