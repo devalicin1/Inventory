@@ -34,7 +34,10 @@ import {
   ExclamationCircleIcon,
   ChevronLeftIcon,
   Bars3Icon,
-  EllipsisVerticalIcon
+  EllipsisVerticalIcon,
+  MinusIcon,
+  PlusCircleIcon,
+  MinusCircleIcon
 } from '@heroicons/react/24/outline'
 import { toCSV, downloadCSV, parseCSV } from '../utils/csv'
 import { Card } from '../components/ui/Card'
@@ -69,6 +72,9 @@ export function Inventory() {
   const [showMobileSidebar, setShowMobileSidebar] = useState(false)
   const [showMobileActions, setShowMobileActions] = useState(false)
   const [showKPIs, setShowKPIs] = useState(false)
+  const [quickAdjustProduct, setQuickAdjustProduct] = useState<string | null>(null)
+  const [adjustQty, setAdjustQty] = useState<number>(1)
+  const [isAdjusting, setIsAdjusting] = useState(false)
   const qc = useQueryClient()
   const { workspaceId, userId } = useSessionStore()
 
@@ -198,6 +204,31 @@ export function Inventory() {
       setSelectedProduct(product)
     }
     setShowScanner(false)
+  }
+
+  // Quick stock adjustment for field workers
+  const handleQuickAdjust = async (productId: string, type: 'in' | 'out', qty: number) => {
+    if (qty <= 0 || isAdjusting) return
+    
+    setIsAdjusting(true)
+    try {
+      await createStockTransaction({
+        workspaceId: workspaceId!,
+        productId,
+        type,
+        qty,
+        userId: userId || undefined,
+        reason: type === 'in' ? 'Quick stock in' : 'Quick stock out',
+      })
+      qc.invalidateQueries({ queryKey: ['products', workspaceId] })
+      setQuickAdjustProduct(null)
+      setAdjustQty(1)
+    } catch (err) {
+      console.error('Failed to adjust stock:', err)
+      alert('Failed to adjust stock')
+    } finally {
+      setIsAdjusting(false)
+    }
   }
 
   const toggleGroupExpansion = (groupId: string) => {
@@ -485,74 +516,102 @@ export function Inventory() {
 
   return (
     <div className="space-y-8">
-      {/* Header Section - Matching Dashboard Style */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-gray-900">Inventory Management</h1>
-          <p className="mt-1 text-sm text-gray-500">
-            Manage your product catalog, track stock levels, and monitor inventory performance.
-          </p>
-        </div>
-        <div className="flex items-center gap-3 flex-wrap">
-          {/* Mobile Menu Button */}
-          <button
-            onClick={() => setShowMobileSidebar(!showMobileSidebar)}
-            className="sm:hidden p-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-          >
-            <Bars3Icon className="h-5 w-5 text-gray-700" />
-          </button>
-
-          {/* Mobile Actions Menu */}
-          <div className="sm:hidden relative">
-            <button
-              onClick={() => setShowMobileActions(!showMobileActions)}
-              className="p-2 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-            >
-              <EllipsisVerticalIcon className="h-5 w-5 text-gray-700" />
-            </button>
-            {showMobileActions && (
-              <>
-                <div className="fixed inset-0 z-40 bg-black/20" onClick={() => setShowMobileActions(false)}></div>
-                <div className="fixed bottom-0 left-0 right-0 z-50 bg-white rounded-t-2xl shadow-2xl border-t border-gray-200 sm:hidden"
-                     style={{
-                       maxHeight: '50vh'
-                     }}>
-                  {/* Handle bar */}
-                  <div className="w-full flex justify-center pt-3 pb-2">
-                    <div className="w-12 h-1.5 bg-gray-300 rounded-full" />
-                  </div>
+      {/* Header Section - Mobile Optimized for Field Workers */}
+      <div className="space-y-4">
+        {/* Mobile Header */}
+        <div className="md:hidden">
+          <div className="flex items-center justify-between mb-3">
+            <h1 className="text-xl font-bold text-gray-900">Inventory</h1>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowMobileSidebar(!showMobileSidebar)}
+                className="p-2.5 bg-white border border-gray-200 rounded-xl active:bg-gray-100"
+              >
+                <FolderIcon className="h-5 w-5 text-gray-600" />
+              </button>
+              <button
+                onClick={() => setShowMobileActions(!showMobileActions)}
+                className="p-2.5 bg-white border border-gray-200 rounded-xl active:bg-gray-100"
+              >
+                <EllipsisVerticalIcon className="h-5 w-5 text-gray-600" />
+              </button>
+            </div>
+          </div>
+          
+          {/* Mobile Actions Sheet */}
+          {showMobileActions && (
+            <>
+              <div className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm" onClick={() => setShowMobileActions(false)}></div>
+              <div className="fixed bottom-0 left-0 right-0 z-50 bg-white rounded-t-3xl shadow-2xl sm:hidden animate-slide-up"
+                   style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
+                {/* Handle bar */}
+                <div className="w-full flex justify-center pt-3 pb-2">
+                  <div className="w-12 h-1.5 bg-gray-300 rounded-full" />
+                </div>
+                
+                <div className="px-4 pb-6">
+                  <h3 className="text-lg font-bold text-gray-900 mb-4">Quick Actions</h3>
                   
-                  {/* Menu items */}
-                  <div className="px-4 pb-4 space-y-1 overflow-y-auto" style={{ maxHeight: 'calc(50vh - 60px)' }}>
+                  {/* Primary Actions Grid */}
+                  <div className="grid grid-cols-2 gap-3 mb-4">
                     <button
                       onClick={() => {
                         setShowScanner(true)
                         setShowMobileActions(false)
                       }}
-                      className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 rounded-lg flex items-center gap-3 transition-colors"
+                      className="flex flex-col items-center justify-center gap-2 p-4 bg-blue-50 text-blue-700 rounded-2xl active:bg-blue-100"
                     >
-                      <QrCodeIcon className="h-5 w-5" />
-                      <span>Scan</span>
+                      <QrCodeIcon className="h-8 w-8" />
+                      <span className="font-semibold">Scan</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowCreate(true)
+                        setShowMobileActions(false)
+                      }}
+                      className="flex flex-col items-center justify-center gap-2 p-4 bg-green-50 text-green-700 rounded-2xl active:bg-green-100"
+                    >
+                      <PlusIcon className="h-8 w-8" />
+                      <span className="font-semibold">New Product</span>
+                    </button>
+                  </div>
+                  
+                  {/* Secondary Actions */}
+                  <div className="space-y-2">
+                    <button
+                      onClick={() => {
+                        setShowFilters(!showFilters)
+                        setShowMobileActions(false)
+                      }}
+                      className="w-full flex items-center gap-3 px-4 py-3.5 bg-gray-50 rounded-xl active:bg-gray-100"
+                    >
+                      <FunnelIcon className="h-5 w-5 text-gray-600" />
+                      <span className="font-medium text-gray-700">Filters</span>
+                      {(statusFilter !== 'all' || lowStockFilter) && (
+                        <span className="ml-auto bg-blue-600 text-white text-xs px-2 py-0.5 rounded-full font-bold">
+                          {(statusFilter !== 'all' ? 1 : 0) + (lowStockFilter ? 1 : 0)}
+                        </span>
+                      )}
                     </button>
                     <button
                       onClick={() => {
                         setShowImport(true)
                         setShowMobileActions(false)
                       }}
-                      className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 rounded-lg flex items-center gap-3 transition-colors"
+                      className="w-full flex items-center gap-3 px-4 py-3.5 bg-gray-50 rounded-xl active:bg-gray-100"
                     >
-                      <ArrowUpTrayIcon className="h-5 w-5" />
-                      <span>Import</span>
+                      <ArrowUpTrayIcon className="h-5 w-5 text-gray-600" />
+                      <span className="font-medium text-gray-700">Import CSV</span>
                     </button>
                     <button
                       onClick={() => {
                         downloadCSV('inventory.csv', toCSV(products))
                         setShowMobileActions(false)
                       }}
-                      className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 rounded-lg flex items-center gap-3 transition-colors"
+                      className="w-full flex items-center gap-3 px-4 py-3.5 bg-gray-50 rounded-xl active:bg-gray-100"
                     >
-                      <ArrowDownTrayIcon className="h-5 w-5" />
-                      <span>Export</span>
+                      <ArrowDownTrayIcon className="h-5 w-5 text-gray-600" />
+                      <span className="font-medium text-gray-700">Export CSV</span>
                     </button>
                     {duplicateProducts.length > 0 && (
                       <button
@@ -560,20 +619,32 @@ export function Inventory() {
                           setShowDuplicates(true)
                           setShowMobileActions(false)
                         }}
-                        className="w-full text-left px-4 py-3 text-sm text-amber-700 hover:bg-amber-50 rounded-lg flex items-center gap-3 transition-colors"
+                        className="w-full flex items-center gap-3 px-4 py-3.5 bg-amber-50 rounded-xl active:bg-amber-100"
                       >
-                        <ExclamationCircleIcon className="h-5 w-5" />
-                        <span>Duplicates ({duplicateProducts.length})</span>
+                        <ExclamationCircleIcon className="h-5 w-5 text-amber-600" />
+                        <span className="font-medium text-amber-700">Duplicates</span>
+                        <span className="ml-auto bg-amber-500 text-white text-xs px-2 py-0.5 rounded-full font-bold">
+                          {duplicateProducts.length}
+                        </span>
                       </button>
                     )}
                   </div>
                 </div>
-              </>
-            )}
-          </div>
+              </div>
+            </>
+          )}
+        </div>
 
+        {/* Desktop Header */}
+        <div className="hidden md:flex md:items-center md:justify-between">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight text-gray-900">Inventory Management</h1>
+            <p className="mt-1 text-sm text-gray-500">
+              Manage your product catalog, track stock levels, and monitor inventory performance.
+            </p>
+          </div>
           {/* Desktop Action Buttons */}
-          <div className="hidden sm:flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
             <Button
               variant="secondary"
               size="sm"
@@ -1085,54 +1156,139 @@ export function Inventory() {
             />
           </Card>
 
-          {/* Products Cards - Mobile */}
-          <div className="md:hidden space-y-3 pb-4">
+          {/* Products Cards - Mobile (Field Worker Optimized) */}
+          <div className="md:hidden space-y-4 pb-24">
             {paginatedProducts.length === 0 ? (
-              <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-8">
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
                 <div className="text-center">
-                  <div className="mx-auto h-12 w-12 text-gray-400">
-                    <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" className="h-12 w-12">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
-                    </svg>
+                  <div className="mx-auto h-16 w-16 bg-gray-100 rounded-full flex items-center justify-center mb-4">
+                    <CubeIcon className="h-8 w-8 text-gray-400" />
                   </div>
-                  <h3 className="mt-2 text-sm font-medium text-gray-900">No products</h3>
-                  <p className="mt-1 text-sm text-gray-500">Get started by creating a new product.</p>
+                  <h3 className="text-lg font-semibold text-gray-900">No products found</h3>
+                  <p className="mt-2 text-sm text-gray-500">Scan a barcode or add a new product to get started.</p>
+                  <div className="mt-6 flex flex-col gap-3">
+                    <button
+                      onClick={() => setShowScanner(true)}
+                      className="w-full flex items-center justify-center gap-2 px-6 py-4 bg-blue-600 text-white rounded-xl font-semibold text-base active:scale-98 transition-transform"
+                    >
+                      <QrCodeIcon className="h-6 w-6" />
+                      Scan Product
+                    </button>
+                    <button
+                      onClick={() => setShowCreate(true)}
+                      className="w-full flex items-center justify-center gap-2 px-6 py-4 bg-gray-100 text-gray-700 rounded-xl font-semibold text-base active:scale-98 transition-transform"
+                    >
+                      <PlusIcon className="h-6 w-6" />
+                      Add Product
+                    </button>
+                  </div>
                 </div>
               </div>
             ) : (
               <>
-                {/* Select All on Mobile */}
-                <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-3">
-                  <label className="flex items-center gap-3 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={paginatedProducts.length > 0 && selectedIds.length === paginatedProducts.length}
-                      onChange={(e) => {
-                        setSelectedIds(e.target.checked ? paginatedProducts.map((p: any) => p.id) : [])
-                      }}
-                      className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500 focus:ring-offset-0"
-                    />
-                    <span className="text-sm font-semibold text-gray-900">Select All ({paginatedProducts.length})</span>
-                  </label>
+                {/* Quick Stats Bar - Mobile */}
+                <div className="bg-gradient-to-r from-blue-600 to-blue-700 rounded-2xl p-4 text-white shadow-lg">
+                  <div className="grid grid-cols-3 gap-4 text-center">
+                    <div>
+                      <div className="text-2xl font-bold">{stats.totalProducts}</div>
+                      <div className="text-xs text-blue-100 font-medium">Products</div>
+                    </div>
+                    <div className={stats.lowStockCount > 0 ? 'animate-pulse' : ''}>
+                      <div className="text-2xl font-bold">{stats.lowStockCount}</div>
+                      <div className="text-xs text-blue-100 font-medium">Low Stock</div>
+                    </div>
+                    <div>
+                      <div className="text-2xl font-bold">{stats.outOfStockCount}</div>
+                      <div className="text-xs text-blue-100 font-medium">Out of Stock</div>
+                    </div>
+                  </div>
                 </div>
 
+                {/* Low Stock Alert - If any */}
+                {stats.lowStockCount > 0 && (
+                  <button
+                    onClick={() => setLowStockFilter(!lowStockFilter)}
+                    className={`w-full flex items-center justify-between p-4 rounded-2xl transition-all ${
+                      lowStockFilter 
+                        ? 'bg-orange-500 text-white' 
+                        : 'bg-orange-50 text-orange-800 border-2 border-orange-200'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={`p-2 rounded-xl ${lowStockFilter ? 'bg-orange-400' : 'bg-orange-100'}`}>
+                        <ExclamationTriangleIcon className="h-6 w-6" />
+                      </div>
+                      <div className="text-left">
+                        <div className="font-bold">{stats.lowStockCount} items need attention</div>
+                        <div className={`text-sm ${lowStockFilter ? 'text-orange-100' : 'text-orange-600'}`}>
+                          {lowStockFilter ? 'Tap to show all' : 'Tap to filter low stock'}
+                        </div>
+                      </div>
+                    </div>
+                    <ChevronRightIcon className="h-5 w-5" />
+                  </button>
+                )}
+
+                {/* Select All Bar */}
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
+                  <div className="flex items-center justify-between">
+                    <label className="flex items-center gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={paginatedProducts.length > 0 && selectedIds.length === paginatedProducts.length}
+                        onChange={(e) => {
+                          setSelectedIds(e.target.checked ? paginatedProducts.map((p: any) => p.id) : [])
+                        }}
+                        className="w-6 h-6 rounded-lg border-2 border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500 focus:ring-offset-0"
+                      />
+                      <span className="text-base font-bold text-gray-900">
+                        {selectedIds.length > 0 ? `${selectedIds.length} Selected` : `All (${paginatedProducts.length})`}
+                      </span>
+                    </label>
+                    <span className="text-sm text-gray-500">
+                      Page {currentPage}/{totalPages}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Product Cards */}
                 {paginatedProducts.map((item: any) => {
                   const isSelected = selectedIds.includes(item.id)
                   const qtyOnHand = item.qtyOnHand || 0
                   const isLowStock = qtyOnHand < item.minStock
                   const isOutOfStock = qtyOnHand === 0
+                  const showQuickAdjust = quickAdjustProduct === item.id
 
                   return (
                     <div
                       key={item.id}
-                      className={`bg-white rounded-xl shadow-sm border-2 transition-all duration-200 ${isSelected
-                        ? 'border-blue-500 shadow-md bg-blue-50/50'
-                        : 'border-gray-100 hover:border-gray-200 hover:shadow-md'
-                        } ${isOutOfStock ? 'ring-2 ring-red-100' : isLowStock ? 'ring-2 ring-orange-100' : ''}`}
+                      className={`bg-white rounded-2xl shadow-sm overflow-hidden transition-all duration-200 ${
+                        isSelected
+                          ? 'ring-2 ring-blue-500 shadow-lg'
+                          : 'border border-gray-100'
+                      }`}
                     >
+                      {/* Stock Status Banner */}
+                      {(isOutOfStock || isLowStock) && (
+                        <div className={`px-4 py-2 ${isOutOfStock ? 'bg-red-500' : 'bg-orange-500'} text-white`}>
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <ExclamationTriangleIcon className="h-5 w-5" />
+                              <span className="font-bold text-sm">
+                                {isOutOfStock ? 'OUT OF STOCK' : 'LOW STOCK'}
+                              </span>
+                            </div>
+                            <span className="text-sm font-medium">
+                              {qtyOnHand.toFixed(0)} / {item.minStock?.toFixed(0) || 0} {item.uom || 'units'}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+
                       <div className="p-4">
-                        {/* Header Section */}
-                        <div className="flex items-start gap-3 mb-3">
+                        {/* Header with Checkbox and Image */}
+                        <div className="flex items-start gap-3">
+                          {/* Checkbox */}
                           <input
                             type="checkbox"
                             checked={isSelected}
@@ -1145,139 +1301,239 @@ export function Inventory() {
                               )
                             }}
                             onClick={(e) => e.stopPropagation()}
-                            className="w-5 h-5 mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500 focus:ring-offset-0 shrink-0"
+                            className="w-6 h-6 mt-1 rounded-lg border-2 border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500 focus:ring-offset-0 shrink-0"
                           />
 
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-start justify-between gap-2 mb-1">
-                              <h3
-                                className="text-base font-bold text-gray-900 leading-tight line-clamp-2 cursor-pointer hover:text-blue-600 transition-colors"
-                                onClick={() => setSelectedProduct(item)}
-                              >
-                                {(() => {
-                                  const name = item.name || 'Unnamed Product'
-                                  // Clean up encoding issues - remove replacement characters and invalid unicode
-                                  let cleaned = name
-                                    .replace(/\uFFFD/g, '') // Remove replacement characters
-                                    .replace(/\u0000/g, '') // Remove null characters
-                                    .trim()
+                          {/* Product Image */}
+                          <div 
+                            className="w-16 h-16 rounded-xl overflow-hidden bg-gray-100 border border-gray-200 shrink-0 flex items-center justify-center"
+                            onClick={() => setSelectedProduct(item)}
+                          >
+                            {item.imageUrl ? (
+                              <img
+                                src={item.imageUrl}
+                                alt={item.name}
+                                className="w-full h-full object-cover"
+                                loading="lazy"
+                              />
+                            ) : (
+                              <CubeIcon className="h-8 w-8 text-gray-300" />
+                            )}
+                          </div>
 
-                                  // Try to decode HTML entities if any
-                                  try {
-                                    const textarea = document.createElement('textarea')
-                                    textarea.innerHTML = cleaned
-                                    cleaned = textarea.value || cleaned
-                                  } catch (e) {
-                                    // If decoding fails, use original
-                                  }
+                          {/* Product Info */}
+                          <div className="flex-1 min-w-0" onClick={() => setSelectedProduct(item)}>
+                            {/* Product Name - Large & Tappable */}
+                            <h3 className="text-base font-bold text-gray-900 leading-tight mb-1 active:text-blue-600 line-clamp-2">
+                              {(() => {
+                                const name = item.name || 'Unnamed Product'
+                                let cleaned = name.replace(/\uFFFD/g, '').replace(/\u0000/g, '').trim()
+                                try {
+                                  const textarea = document.createElement('textarea')
+                                  textarea.innerHTML = cleaned
+                                  cleaned = textarea.value || cleaned
+                                } catch (e) {}
+                                return cleaned || name
+                              })()}
+                            </h3>
+                            
+                            {/* SKU Badge */}
+                            <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-gray-100 rounded-md">
+                              <span className="text-[11px] font-mono text-gray-600">{item.sku}</span>
+                            </div>
 
-                                  return cleaned || name
-                                })()}
-                              </h3>
-                              <span className={`px-2.5 py-1 rounded-lg text-xs font-semibold shrink-0 flex items-center gap-1 ${item.status === 'active'
-                                ? 'bg-green-100 text-green-800 border border-green-200'
+                            {/* Status Badge - Inline on mobile */}
+                            <div className={`inline-flex ml-2 px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                              item.status === 'active'
+                                ? 'bg-green-100 text-green-700'
                                 : item.status === 'draft'
-                                  ? 'bg-gray-100 text-gray-800 border border-gray-200'
-                                  : 'bg-red-100 text-red-800 border border-red-200'
-                                }`}>
-                                {item.status === 'active' && <CheckCircleIcon className="h-3 w-3" />}
-                                {item.status?.charAt(0).toUpperCase() + item.status?.slice(1)}
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-2 mt-1">
-                              <p className="text-xs text-gray-500 font-mono">SKU: {item.sku}</p>
+                                  ? 'bg-gray-200 text-gray-600'
+                                  : 'bg-red-100 text-red-700'
+                            }`}>
+                              {item.status === 'active' ? '✓' : item.status?.charAt(0).toUpperCase()}
                             </div>
                           </div>
                         </div>
 
-                        {/* Stock Information Card */}
-                        <div className={`rounded-lg p-3 mb-3 ${isOutOfStock
-                          ? 'bg-red-50 border border-red-200'
-                          : isLowStock
-                            ? 'bg-orange-50 border border-orange-200'
-                            : 'bg-gray-50 border border-gray-200'
-                          }`}>
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="text-xs font-medium text-gray-600">Stock Level</span>
-                            {isOutOfStock && (
-                              <span className="px-2 py-0.5 bg-red-100 text-red-700 rounded-full text-[10px] font-semibold">
-                                OUT OF STOCK
-                              </span>
-                            )}
-                            {!isOutOfStock && isLowStock && (
-                              <span className="px-2 py-0.5 bg-orange-100 text-orange-700 rounded-full text-[10px] font-semibold">
-                                LOW STOCK
-                              </span>
-                            )}
-                          </div>
-                          <div className="grid grid-cols-2 gap-3">
-                            <div>
-                              <div className="text-[10px] text-gray-500 mb-0.5 font-medium">On Hand</div>
-                              <div className={`text-lg font-bold ${isOutOfStock
-                                ? 'text-red-600'
-                                : isLowStock
-                                  ? 'text-orange-600'
-                                  : 'text-gray-900'
-                                }`}>
-                                {qtyOnHand.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {/* Stock Display - Large Numbers */}
+                        <div className={`mt-4 p-4 rounded-xl ${
+                          isOutOfStock 
+                            ? 'bg-red-50' 
+                            : isLowStock 
+                              ? 'bg-orange-50' 
+                              : 'bg-gray-50'
+                        }`}>
+                          <div className="flex items-center justify-between">
+                            <div className="text-center flex-1">
+                              <div className="text-xs font-semibold text-gray-500 mb-1">ON HAND</div>
+                              <div className={`text-3xl font-black ${
+                                isOutOfStock ? 'text-red-600' : isLowStock ? 'text-orange-600' : 'text-gray-900'
+                              }`}>
+                                {qtyOnHand.toLocaleString('en-GB', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                               </div>
+                              <div className="text-xs text-gray-500 font-medium">{item.uom || 'units'}</div>
                             </div>
-                            <div>
-                              <div className="text-[10px] text-gray-500 mb-0.5 font-medium">Min Stock</div>
-                              <div className="text-lg font-bold text-gray-700">
-                                {(item.minStock || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            
+                            <div className="h-12 w-px bg-gray-200"></div>
+                            
+                            <div className="text-center flex-1">
+                              <div className="text-xs font-semibold text-gray-500 mb-1">MIN STOCK</div>
+                              <div className="text-3xl font-black text-gray-400">
+                                {(item.minStock || 0).toLocaleString('en-GB', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                               </div>
-                            </div>
-                          </div>
-                          <div className="mt-2 pt-2 border-t border-gray-200">
-                            <div className="flex items-center justify-between">
-                              <span className="text-[10px] text-gray-500 font-medium">Unit</span>
-                              <span className="text-xs font-semibold text-gray-700">{item.uom || 'N/A'}</span>
+                              <div className="text-xs text-gray-500 font-medium">{item.uom || 'units'}</div>
                             </div>
                           </div>
                         </div>
 
-                        {/* Action Buttons */}
-                        <div className="flex items-center gap-2 pt-2 border-t border-gray-100">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              setSelectedProduct(item)
-                            }}
-                            className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors active:scale-95"
-                          >
-                            <EyeIcon className="h-4 w-4" />
-                            View
-                          </button>
-                          <button
-                            onClick={async (e) => {
-                              e.stopPropagation()
-                              const next = item.status === 'active' ? 'draft' : 'active'
-                              await setProductStatus(workspaceId!, item.id, next as any)
-                              qc.invalidateQueries({ queryKey: ['products', workspaceId] })
-                            }}
-                            className="flex-1 px-3 py-2 text-sm font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors active:scale-95"
-                          >
-                            {item.status === 'active' ? 'Draft' : 'Activate'}
-                          </button>
-                          <button
-                            onClick={async (e) => {
-                              e.stopPropagation()
-                              if (!confirm('Are you sure you want to delete this product?')) return
-                              await deleteProduct(workspaceId!, item.id)
-                              qc.invalidateQueries({ queryKey: ['products', workspaceId] })
-                            }}
-                            className="flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors active:scale-95"
-                          >
-                            <TrashIcon className="h-4 w-4" />
-                          </button>
-                        </div>
+                        {/* Quick Stock Adjustment Panel */}
+                        {showQuickAdjust ? (
+                          <div className="mt-4 p-4 bg-blue-50 rounded-xl border-2 border-blue-200">
+                            <div className="text-sm font-bold text-blue-800 mb-3 text-center">Quick Stock Adjustment</div>
+                            
+                            {/* Quantity Selector */}
+                            <div className="flex items-center justify-center gap-4 mb-4">
+                              <button
+                                onClick={() => setAdjustQty(Math.max(1, adjustQty - 1))}
+                                className="w-14 h-14 flex items-center justify-center bg-white rounded-xl border-2 border-gray-200 active:bg-gray-100"
+                              >
+                                <MinusIcon className="h-6 w-6 text-gray-600" />
+                              </button>
+                              <input
+                                type="number"
+                                value={adjustQty}
+                                onChange={(e) => setAdjustQty(Math.max(1, parseInt(e.target.value) || 1))}
+                                className="w-20 h-14 text-center text-2xl font-bold border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:ring-0"
+                              />
+                              <button
+                                onClick={() => setAdjustQty(adjustQty + 1)}
+                                className="w-14 h-14 flex items-center justify-center bg-white rounded-xl border-2 border-gray-200 active:bg-gray-100"
+                              >
+                                <PlusIcon className="h-6 w-6 text-gray-600" />
+                              </button>
+                            </div>
+
+                            {/* Quick Amount Buttons */}
+                            <div className="flex gap-2 mb-4">
+                              {[1, 5, 10, 25, 50].map(n => (
+                                <button
+                                  key={n}
+                                  onClick={() => setAdjustQty(n)}
+                                  className={`flex-1 py-2 rounded-lg text-sm font-bold transition-colors ${
+                                    adjustQty === n 
+                                      ? 'bg-blue-600 text-white' 
+                                      : 'bg-white text-gray-700 border border-gray-200'
+                                  }`}
+                                >
+                                  {n}
+                                </button>
+                              ))}
+                            </div>
+
+                            {/* Action Buttons */}
+                            <div className="flex gap-3">
+                              <button
+                                onClick={() => handleQuickAdjust(item.id, 'out', adjustQty)}
+                                disabled={isAdjusting || qtyOnHand < adjustQty}
+                                className="flex-1 flex items-center justify-center gap-2 py-4 bg-red-500 text-white rounded-xl font-bold text-base disabled:opacity-50 active:scale-98"
+                              >
+                                <MinusCircleIcon className="h-6 w-6" />
+                                Stock Out
+                              </button>
+                              <button
+                                onClick={() => handleQuickAdjust(item.id, 'in', adjustQty)}
+                                disabled={isAdjusting}
+                                className="flex-1 flex items-center justify-center gap-2 py-4 bg-green-500 text-white rounded-xl font-bold text-base disabled:opacity-50 active:scale-98"
+                              >
+                                <PlusCircleIcon className="h-6 w-6" />
+                                Stock In
+                              </button>
+                            </div>
+
+                            {/* Cancel */}
+                            <button
+                              onClick={() => {
+                                setQuickAdjustProduct(null)
+                                setAdjustQty(1)
+                              }}
+                              className="w-full mt-3 py-2 text-sm font-medium text-gray-600"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          /* Action Buttons - Large Touch Targets */
+                          <div className="mt-4 grid grid-cols-3 gap-2">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setSelectedProduct(item)
+                              }}
+                              className="flex flex-col items-center justify-center gap-1 py-3 bg-blue-50 text-blue-700 rounded-xl font-semibold active:bg-blue-100 active:scale-98 transition-all"
+                            >
+                              <EyeIcon className="h-6 w-6" />
+                              <span className="text-xs">Details</span>
+                            </button>
+                            
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setQuickAdjustProduct(item.id)
+                                setAdjustQty(1)
+                              }}
+                              className="flex flex-col items-center justify-center gap-1 py-3 bg-green-50 text-green-700 rounded-xl font-semibold active:bg-green-100 active:scale-98 transition-all"
+                            >
+                              <PlusCircleIcon className="h-6 w-6" />
+                              <span className="text-xs">Adjust</span>
+                            </button>
+
+                            <button
+                              onClick={async (e) => {
+                                e.stopPropagation()
+                                const next = item.status === 'active' ? 'draft' : 'active'
+                                await setProductStatus(workspaceId!, item.id, next as any)
+                                qc.invalidateQueries({ queryKey: ['products', workspaceId] })
+                              }}
+                              className="flex flex-col items-center justify-center gap-1 py-3 bg-gray-50 text-gray-700 rounded-xl font-semibold active:bg-gray-100 active:scale-98 transition-all"
+                            >
+                              {item.status === 'active' ? (
+                                <>
+                                  <XMarkIcon className="h-6 w-6" />
+                                  <span className="text-xs">Draft</span>
+                                </>
+                              ) : (
+                                <>
+                                  <CheckCircleIcon className="h-6 w-6" />
+                                  <span className="text-xs">Activate</span>
+                                </>
+                              )}
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
                   )
                 })}
               </>
             )}
+          </div>
+
+          {/* Floating Action Buttons - Mobile Only */}
+          <div className="md:hidden fixed bottom-20 right-4 flex flex-col gap-3 z-40" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
+            <button
+              onClick={() => setShowScanner(true)}
+              className="w-14 h-14 bg-blue-600 text-white rounded-full shadow-lg flex items-center justify-center active:scale-95 transition-transform"
+              title="Scan"
+            >
+              <QrCodeIcon className="h-7 w-7" />
+            </button>
+            <button
+              onClick={() => setShowCreate(true)}
+              className="w-14 h-14 bg-green-600 text-white rounded-full shadow-lg flex items-center justify-center active:scale-95 transition-transform"
+              title="Add Product"
+            >
+              <PlusIcon className="h-7 w-7" />
+            </button>
           </div>
 
           {/* Pagination */}
