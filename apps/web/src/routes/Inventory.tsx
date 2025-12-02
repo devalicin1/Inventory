@@ -709,23 +709,88 @@ export function Inventory() {
       </div>
 
       {/* Search Bar */}
-      <div className="relative">
-        <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
-        <input
-          type="text"
-          placeholder="Search products by name, SKU, or ID..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="w-full pl-10 pr-10 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors text-sm"
-        />
-        {searchTerm && (
-          <button
-            onClick={() => setSearchTerm('')}
-            className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
-          >
-            <XMarkIcon className="h-5 w-5" />
-          </button>
-        )}
+      <div className="space-y-2">
+        <div className="relative">
+          <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+          <input
+            type="text"
+            placeholder="Search products by name, SKU, or ID..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full pl-10 pr-10 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors text-sm"
+          />
+          {searchTerm && (
+            <button
+              onClick={() => setSearchTerm('')}
+              className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+            >
+              <XMarkIcon className="h-5 w-5" />
+            </button>
+          )}
+        </div>
+
+        {/* Mobile quick filters shown just under search */}
+        <div className="sm:hidden flex flex-col gap-2">
+          {/* Folder selector */}
+          <div className="flex items-center gap-2">
+            <select
+              value={selectedGroup}
+              onChange={(e) => setSelectedGroup(e.target.value)}
+              className="flex-1 rounded-lg border-gray-300 focus:border-primary-500 focus:ring-primary-500 py-2 text-sm bg-white"
+            >
+              <option value="">
+                All folders
+              </option>
+              {groups.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name}
+                </option>
+              ))}
+            </select>
+
+            <button
+              type="button"
+              onClick={() => setShowFilters(true)}
+              className="inline-flex items-center gap-1 px-3 py-2 rounded-lg border border-gray-300 bg-white text-xs font-medium text-gray-700"
+            >
+              <FunnelIcon className="h-4 w-4" />
+              <span>Filters</span>
+              {(statusFilter !== 'all' || lowStockFilter) && (
+                <span className="ml-1 bg-blue-600 text-white text-[10px] rounded-full min-w-[18px] h-[18px] flex items-center justify-center">
+                  {(statusFilter !== 'all' ? 1 : 0) + (lowStockFilter ? 1 : 0)}
+                </span>
+              )}
+            </button>
+          </div>
+
+          {/* Quick toggles */}
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setStatusFilter(statusFilter === 'active' ? 'all' : 'active')}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium border ${
+                statusFilter === 'active'
+                  ? 'bg-green-50 border-green-300 text-green-700'
+                  : 'bg-white border-gray-300 text-gray-700'
+              }`}
+            >
+              {statusFilter === 'active' ? 'Active only' : 'All status'}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setLowStockFilter(!lowStockFilter)}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium border flex items-center gap-1 ${
+                lowStockFilter
+                  ? 'bg-amber-50 border-amber-300 text-amber-700'
+                  : 'bg-white border-gray-300 text-gray-700'
+              }`}
+            >
+              <ExclamationTriangleIcon className="h-3 w-3" />
+              <span>Low stock</span>
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Filters Panel */}
@@ -1258,6 +1323,7 @@ export function Inventory() {
                   const isLowStock = qtyOnHand < item.minStock
                   const isOutOfStock = qtyOnHand === 0
                   const showQuickAdjust = quickAdjustProduct === item.id
+                  const productGroup = groups.find((g) => (item as any).groupId === g.id)
 
                   return (
                     <div
@@ -1337,20 +1403,29 @@ export function Inventory() {
                               })()}
                             </h3>
                             
-                            {/* SKU Badge */}
-                            <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-gray-100 rounded-md">
-                              <span className="text-[11px] font-mono text-gray-600">{item.sku}</span>
+                            {/* SKU + Status row */}
+                            <div className="mt-1 flex items-center flex-wrap gap-1">
+                              <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-gray-100 rounded-md">
+                                <span className="text-[11px] font-mono text-gray-600">{item.sku}</span>
+                              </div>
+
+                              <div className={`inline-flex px-2 py-0.5 rounded-md text-[10px] font-semibold ${
+                                item.status === 'active'
+                                  ? 'bg-green-100 text-green-700'
+                                  : item.status === 'draft'
+                                    ? 'bg-gray-200 text-gray-600'
+                                    : 'bg-red-100 text-red-700'
+                              }`}>
+                                {item.status === 'active' ? 'Active' : item.status === 'draft' ? 'Draft' : 'Inactive'}
+                              </div>
                             </div>
 
-                            {/* Status Badge - Inline on mobile */}
-                            <div className={`inline-flex ml-2 px-2 py-0.5 rounded-md text-[10px] font-bold ${
-                              item.status === 'active'
-                                ? 'bg-green-100 text-green-700'
-                                : item.status === 'draft'
-                                  ? 'bg-gray-200 text-gray-600'
-                                  : 'bg-red-100 text-red-700'
-                            }`}>
-                              {item.status === 'active' ? '✓' : item.status?.charAt(0).toUpperCase()}
+                            {/* Folder info - small, subtle */}
+                            <div className="mt-1 flex items-center gap-1 text-[11px] text-gray-500">
+                              <FolderIcon className="h-3 w-3" />
+                              <span className="truncate">
+                                {productGroup?.name || 'No folder'}
+                              </span>
                             </div>
                           </div>
                         </div>

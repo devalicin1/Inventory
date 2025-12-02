@@ -173,7 +173,62 @@ export const OutputTab: FC<OutputTabProps> = ({ job, workspaceId, workcenters, w
         })()}
       </div>
 
-      <div className="bg-white rounded-lg border border-gray-200">
+      {/* Mobile-friendly list view */}
+      <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-3 md:hidden">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-sm font-semibold text-gray-900">Production Runs</h3>
+          <span className="text-xs text-gray-500">{runs.length} records</span>
+        </div>
+        {runs.length === 0 && (
+          <p className="text-sm text-gray-500 text-center py-4">
+            No production runs recorded yet.
+          </p>
+        )}
+        {runs
+          .slice()
+          .sort((a, b) => {
+            const dateA = a.at?.seconds ? a.at.seconds * 1000 : new Date(a.at).getTime()
+            const dateB = b.at?.seconds ? b.at.seconds * 1000 : new Date(b.at).getTime()
+            return dateB - dateA
+          })
+          .map((r) => {
+            const stageName = getStageName(r.stageId)
+            const unit = getStageOutputUOM(r.stageId)
+            return (
+              <div
+                key={r.id}
+                className="border border-gray-100 rounded-lg px-3 py-2.5 shadow-sm bg-gray-50"
+              >
+                <div className="flex items-center justify-between mb-1.5">
+                  <p className="text-xs font-medium text-gray-500">
+                    {new Date(r.at?.seconds ? r.at.seconds * 1000 : r.at).toLocaleString()}
+                  </p>
+                  <p className="text-xs font-semibold text-gray-700">
+                    {stageName}
+                  </p>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <div>
+                    <p className="text-gray-700 font-semibold">
+                      Good: {r.qtyGood.toLocaleString()} {unit && <span className="text-gray-500 text-xs">({unit})</span>}
+                    </p>
+                    <p className="text-gray-600 text-xs mt-0.5">
+                      Scrap: {(r.qtyScrap || 0).toLocaleString()} {unit && <span className="text-gray-400 text-[11px]">({unit})</span>}
+                    </p>
+                  </div>
+                  <div className="text-right text-xs text-gray-500 space-y-0.5">
+                    <p>WC: {getWorkcenterName(r.workcenterId)}</p>
+                    <p>Lot: {r.lot || '-'}</p>
+                    <p>Op: {r.operatorId}</p>
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+      </div>
+
+      {/* Desktop table view */}
+      <div className="bg-white rounded-lg border border-gray-200 hidden md:block">
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">

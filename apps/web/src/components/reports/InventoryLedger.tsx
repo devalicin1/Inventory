@@ -134,6 +134,8 @@ export function InventoryLedger({ workspaceId }: InventoryLedgerProps) {
       <FilterComponent
         filters={filters}
         onFiltersChange={setFilters}
+        workspaceId={workspaceId}
+        showFolder={true}
         showDateRange={true}
         showSku={true}
         showLocation={true}

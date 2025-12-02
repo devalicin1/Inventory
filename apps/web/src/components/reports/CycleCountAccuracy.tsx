@@ -180,6 +180,8 @@ export function CycleCountAccuracy({ workspaceId }: CycleCountAccuracyProps) {
       <FilterComponent
         filters={filters}
         onFiltersChange={setFilters}
+        workspaceId={workspaceId}
+        showFolder={true}
         showDateRange={true}
         showLocation={true}
         showAbcClass={true}

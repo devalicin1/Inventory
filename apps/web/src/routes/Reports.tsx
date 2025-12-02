@@ -46,7 +46,7 @@ export function Reports() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 w-full max-w-full overflow-x-hidden">
       {/* Header */}
       <div className="border-b border-gray-200 pb-4">
         <h1 className="text-2xl font-bold text-gray-900">Inventory Reports</h1>
@@ -56,8 +56,8 @@ export function Reports() {
       </div>
 
       {/* Tab Navigation */}
-      <div className="border-b border-gray-200">
-        <nav className="-mb-px flex space-x-8 overflow-x-auto">
+      <div className="border-b border-gray-200 overflow-x-auto -mx-5 sm:mx-0 px-5 sm:px-0">
+        <nav className="-mb-px flex space-x-8 min-w-max">
           {reportTabs.map((tab) => {
             const Icon = tab.icon
             return (
@@ -70,7 +70,7 @@ export function Reports() {
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                 }`}
               >
-                <Icon className="h-4 w-4" />
+                <Icon className="h-4 w-4 flex-shrink-0" />
                 <span>{tab.name}</span>
               </button>
             )
@@ -79,7 +79,7 @@ export function Reports() {
       </div>
 
       {/* Report Content */}
-      <div className="bg-white rounded-lg border border-gray-200">
+      <div className="bg-white rounded-lg border border-gray-200 overflow-x-hidden">
         <div className="p-6">
           {/* Report Description */}
           {(() => {

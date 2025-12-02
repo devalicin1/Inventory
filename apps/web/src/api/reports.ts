@@ -5,6 +5,7 @@ import { getReportSettings } from './settings'
 
 // Types for report data
 export interface StockOnHandRow {
+  id: string  // Unique product ID
   sku: string
   productName: string
   location: string
@@ -21,9 +22,12 @@ export interface StockOnHandRow {
   overStock: boolean
   category?: string
   supplier?: string
+  groupId?: string
+  groupName?: string
 }
 
 export interface InventoryAgingRow {
+  id: string  // Unique product ID
   sku: string
   product: string
   firstReceiptDate: string
@@ -36,6 +40,7 @@ export interface InventoryAgingRow {
 }
 
 export interface ReplenishmentRow {
+  id: string  // Unique product ID
   sku: string
   product: string
   avgDailyDemand: number
@@ -52,6 +57,7 @@ export interface ReplenishmentRow {
 }
 
 export interface SkuVelocityRow {
+  id: string  // Unique product ID
   sku: string
   product: string
   unitsSoldPerDay: number
@@ -136,6 +142,7 @@ export interface ReportFilters {
   abcClass?: string
   lowStockOnly?: boolean
   agingBucket?: string
+  groupId?: string  // Folder/group filter
 }
 
 // Helper functions for calculations
@@ -298,12 +305,17 @@ async function filterRawMaterials(workspaceId: string, products: any[]): Promise
 // Stock On-Hand Report
 export async function getStockOnHandReport(
   workspaceId: string,
-  _filters: ReportFilters = {}
+  filters: ReportFilters = {}
 ): Promise<StockOnHandRow[]> {
   const products = await listProducts(workspaceId)
   
   // Filter out raw materials based on report settings
-  const finishedProducts = await filterRawMaterials(workspaceId, products)
+  let finishedProducts = await filterRawMaterials(workspaceId, products)
+  
+  // Apply group/folder filter if specified
+  if (filters.groupId) {
+    finishedProducts = finishedProducts.filter(p => (p as any).groupId === filters.groupId)
+  }
   
   // Calculate report data for each product using real transaction data
   const reportData = await Promise.all(finishedProducts.map(async product => {
@@ -323,6 +335,7 @@ export async function getStockOnHandReport(
     const daysOfCover = avgDailyDemand > 0 ? available / avgDailyDemand : (available > 0 ? 999 : 0)
     
     return {
+      id: product.id,  // Unique product ID for React keys
       sku: product.sku || '-',
       productName: cleanProductName(product.name),
       location: 'Main Warehouse', // Default location - could be enhanced to track multiple locations
@@ -338,7 +351,8 @@ export async function getStockOnHandReport(
       lowStock: available <= reorderPoint && reorderPoint > 0,
       overStock: max > 0 && soh > max,
       category: product.category || undefined,
-      supplier: (product as any).supplier || undefined
+      supplier: (product as any).supplier || undefined,
+      groupId: (product as any).groupId || undefined
     }
   }))
   
@@ -348,12 +362,20 @@ export async function getStockOnHandReport(
 // Inventory Aging Report
 export async function getInventoryAgingReport(
   workspaceId: string,
-  _filters: ReportFilters = {}
+  filters: ReportFilters = {}
 ): Promise<InventoryAgingRow[]> {
   const products = await listProducts(workspaceId)
   
   // Filter out raw materials based on report settings
-  const finishedProducts = await filterRawMaterials(workspaceId, products)
+  let finishedProducts = await filterRawMaterials(workspaceId, products)
+  
+  // Apply group/folder filter if specified
+  if (filters.groupId) {
+    finishedProducts = finishedProducts.filter(p => (p as any).groupId === filters.groupId)
+  }
+  
+  // Apply aging bucket filter if specified
+  // Note: This will be applied after calculating aging data
   
   // Calculate aging data from actual transaction history
   const reportData = await Promise.all(finishedProducts.map(async product => {
@@ -390,6 +412,7 @@ export async function getInventoryAgingReport(
     }
     
     return {
+      id: product.id,  // Unique product ID for React keys
       sku: product.sku || '-',
       product: cleanProductName(product.name),
       firstReceiptDate: firstReceiptDate.toISOString().split('T')[0],
@@ -408,22 +431,38 @@ export async function getInventoryAgingReport(
 // Replenishment Suggestions Report
 export async function getReplenishmentReport(
   workspaceId: string,
-  _filters: ReportFilters = {}
+  filters: ReportFilters = {}
 ): Promise<ReplenishmentRow[]> {
   const products = await listProducts(workspaceId)
   
   // Filter out raw materials based on report settings
-  const finishedProducts = await filterRawMaterials(workspaceId, products)
+  let finishedProducts = await filterRawMaterials(workspaceId, products)
+  
+  // Apply group/folder filter if specified
+  if (filters.groupId) {
+    finishedProducts = finishedProducts.filter(p => (p as any).groupId === filters.groupId)
+  }
+  
+  // Apply supplier filter if specified
+  if (filters.supplier) {
+    finishedProducts = finishedProducts.filter(p => (p as any).supplier === filters.supplier)
+  }
   
   // Calculate replenishment suggestions using real demand data
   const reportData = await Promise.all(finishedProducts.map(async product => {
     const soh = product.qtyOnHand || 0
     
-    // Calculate average daily demand from actual transaction history
-    const avgDailyDemand = await calculateAvgDailyDemand(workspaceId, product.id, 90)
+    // Calculate average daily demand from actual transaction history (all outgoing types)
+    const avgDailyDemand = await calculateAvgDailyDemandAllTypes(workspaceId, product.id, 90)
     
     const leadTime = (product as any).leadTimeDays || 7
     const reviewPeriod = (product as any).reviewPeriodDays || 7
+    
+    // Get product-defined stock levels
+    const productMinStock = product.minStock || 0
+    const productReorderPoint = product.reorderPoint || 0
+    const productMaxStock = (product as any).maxStock || 0
+    const productSafetyStock = (product as any).safetyStock || 0
     
     // Calculate demand standard deviation from historical data
     let demandStdDev = avgDailyDemand * 0.3 // Default to 30% of average
@@ -432,11 +471,11 @@ export async function getReplenishmentReport(
       const cutoffDate = new Date()
       cutoffDate.setDate(cutoffDate.getDate() - 90)
       
-      // Get daily shipments for last 90 days
+      // Get daily outgoing transactions (Ship, Adjust-, or any negative qty)
       const dailyShipments: Record<string, number> = {}
       txns.filter(txn => {
         const txnDate = txn.timestamp?.toDate?.() || new Date(txn.timestamp)
-        return txn.type === 'Ship' && txnDate >= cutoffDate && txn.qty < 0
+        return txnDate >= cutoffDate && txn.qty < 0
       }).forEach(txn => {
         const txnDate = txn.timestamp?.toDate?.() || new Date(txn.timestamp)
         const dateKey = txnDate.toISOString().split('T')[0]
@@ -451,27 +490,70 @@ export async function getReplenishmentReport(
       // Use default if calculation fails
     }
     
-    // Calculate safety stock using 95% service level (z-score = 1.65)
-    const safety = 1.65 * demandStdDev * Math.sqrt(leadTime + reviewPeriod)
-    const targetStock = safety + avgDailyDemand * (leadTime + reviewPeriod)
+    // Determine safety stock: use product-defined or calculate
+    let safety: number
+    if (productSafetyStock > 0) {
+      safety = productSafetyStock
+    } else if (avgDailyDemand > 0) {
+      // Calculate safety stock using 95% service level (z-score = 1.65)
+      safety = 1.65 * demandStdDev * Math.sqrt(leadTime + reviewPeriod)
+    } else {
+      // No demand data - use minStock as safety
+      safety = productMinStock * 0.5
+    }
+    
+    // Determine target stock: use product-defined max or calculate
+    let targetStock: number
+    if (productMaxStock > 0) {
+      targetStock = productMaxStock
+    } else if (avgDailyDemand > 0) {
+      targetStock = safety + avgDailyDemand * (leadTime + reviewPeriod)
+    } else if (productMinStock > 0) {
+      // No demand data - use 2x minStock as target
+      targetStock = productMinStock * 2
+    } else {
+      targetStock = 0
+    }
+    
+    // Determine reorder point
+    let effectiveReorderPoint: number
+    if (productReorderPoint > 0) {
+      effectiveReorderPoint = productReorderPoint
+    } else if (avgDailyDemand > 0) {
+      effectiveReorderPoint = safety + avgDailyDemand * leadTime
+    } else {
+      effectiveReorderPoint = productMinStock
+    }
+    
     const available = soh
     const onPO = 0 // Not implemented yet - would come from purchase order system
-    const suggestedQty = Math.max(0, targetStock - available - onPO)
-    const moq = (product as any).moq || 10
-    const casePack = (product as any).casePack || 12
+    
+    // Calculate suggested quantity
+    // If below reorder point, suggest ordering up to target
+    let suggestedQty = 0
+    if (available <= effectiveReorderPoint && targetStock > 0) {
+      suggestedQty = Math.max(0, targetStock - available - onPO)
+    } else if (available < safety && targetStock > 0) {
+      // Below safety stock - urgent reorder
+      suggestedQty = Math.max(0, targetStock - available - onPO)
+    }
+    
+    const moq = (product as any).moq || 1
+    const casePack = (product as any).casePack || 1
     
     // Round suggested quantity to case pack and ensure it meets MOQ
     let finalSuggestedQty = suggestedQty
-    if (casePack > 1) {
+    if (casePack > 1 && finalSuggestedQty > 0) {
       finalSuggestedQty = Math.ceil(suggestedQty / casePack) * casePack
     }
     if (finalSuggestedQty > 0 && finalSuggestedQty < moq) {
       finalSuggestedQty = moq
     }
     
-    const supplier = (product as any).supplier || 'Default Supplier'
+    const supplier = (product as any).supplier || ''
     
     return {
+      id: product.id,  // Unique product ID for React keys
       sku: product.sku || '-',
       product: cleanProductName(product.name),
       avgDailyDemand,
@@ -491,6 +573,37 @@ export async function getReplenishmentReport(
   return reportData
 }
 
+// Helper: Calculate average daily demand from ALL outgoing transaction types
+async function calculateAvgDailyDemandAllTypes(
+  workspaceId: string,
+  productId: string,
+  days: number = 90
+): Promise<number> {
+  try {
+    const txns = await listProductStockTxns(workspaceId, productId, 1000)
+    const cutoffDate = new Date()
+    cutoffDate.setDate(cutoffDate.getDate() - days)
+    
+    // Filter ALL outgoing transactions (negative qty) from last N days
+    const outTxns = txns.filter(txn => {
+      const txnDate = txn.timestamp?.toDate?.() || new Date(txn.timestamp)
+      return txnDate >= cutoffDate && txn.qty < 0
+    })
+    
+    if (outTxns.length === 0) return 0
+    
+    // Calculate total units shipped/consumed
+    const totalOut = outTxns.reduce((sum, txn) => sum + Math.abs(txn.qty || 0), 0)
+    
+    // Calculate average daily demand
+    const actualDays = Math.max(1, days)
+    return totalOut / actualDays
+  } catch (error) {
+    console.error(`Error calculating avg daily demand for product ${productId}:`, error)
+    return 0
+  }
+}
+
 // SKU Velocity & ABC Report
 export async function getSkuVelocityReport(
   workspaceId: string,
@@ -499,7 +612,12 @@ export async function getSkuVelocityReport(
   const products = await listProducts(workspaceId)
   
   // Filter out raw materials based on report settings
-  const finishedProducts = await filterRawMaterials(workspaceId, products)
+  let finishedProducts = await filterRawMaterials(workspaceId, products)
+  
+  // Apply group/folder filter if specified
+  if (filters.groupId) {
+    finishedProducts = finishedProducts.filter(p => (p as any).groupId === filters.groupId)
+  }
   
   const periodDays = 365 // 12 months for annual analysis
   
@@ -545,6 +663,7 @@ export async function getSkuVelocityReport(
       const channel = (product as any).channel || 'Manual'
       
       return {
+        id: product.id,  // Unique product ID for React keys
         sku: product.sku || '-',
         product: cleanProductName(product.name),
         unitsSoldPerDay,
@@ -560,6 +679,7 @@ export async function getSkuVelocityReport(
       console.error(`Error calculating velocity for product ${product.id}:`, error)
       // Return zero values if calculation fails
       return {
+        id: product.id,  // Unique product ID for React keys
         sku: product.sku || '-',
         product: cleanProductName(product.name),
         unitsSoldPerDay: 0,

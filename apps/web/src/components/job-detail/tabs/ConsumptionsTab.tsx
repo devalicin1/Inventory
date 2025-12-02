@@ -29,7 +29,125 @@ export const ConsumptionsTab: FC<ConsumptionsTabProps> = ({ consumptions, onCrea
           Record Consumption
         </button>
       </div>
-      <div className="overflow-x-auto">
+
+      {/* Mobile card view */}
+      <div className="space-y-3 md:hidden">
+        {consumptions.length === 0 && (
+          <p className="text-sm text-gray-500 text-center py-4">
+            No material consumptions recorded yet.
+          </p>
+        )}
+        {consumptions.map((consumption) => {
+          const isPending = !consumption.approved && workspaceId && jobId
+          const qtyValue = draftQty[consumption.id] ?? consumption.qtyUsed
+          const lotValue = draftLot[consumption.id] ?? (consumption.lot || '')
+          return (
+            <div
+              key={consumption.id}
+              className="border border-gray-200 rounded-lg p-3 bg-white shadow-sm"
+            >
+              <div className="flex items-center justify-between mb-1.5">
+                <p className="text-xs text-gray-500">
+                  {new Date(consumption.at.seconds * 1000).toLocaleDateString()}
+                </p>
+                <span className="text-[11px] font-mono text-gray-500">
+                  {consumption.sku}
+                </span>
+              </div>
+              <p className="text-sm font-semibold text-gray-900 mb-1">
+                {consumption.name}
+              </p>
+              <div className="flex items-center justify-between text-xs text-gray-600 mb-2">
+                <span>UOM: {consumption.uom}</span>
+                <span>User: {consumption.userId}</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2 mb-2">
+                <div>
+                  <p className="text-[11px] text-gray-500 mb-0.5">Qty Used</p>
+                  {isPending ? (
+                    <input
+                      type="number"
+                      min="0"
+                      className="w-full rounded border-gray-300 text-sm px-2 py-1"
+                      value={qtyValue}
+                      onChange={(e) => setDraftQty({ ...draftQty, [consumption.id]: Number(e.target.value) })}
+                    />
+                  ) : (
+                    <p className="text-sm text-gray-900">{consumption.qtyUsed}</p>
+                  )}
+                </div>
+                <div>
+                  <p className="text-[11px] text-gray-500 mb-0.5">Lot</p>
+                  {isPending ? (
+                    <input
+                      type="text"
+                      className="w-full rounded border-gray-300 text-sm px-2 py-1"
+                      value={lotValue}
+                      onChange={(e) => setDraftLot({ ...draftLot, [consumption.id]: e.target.value })}
+                      placeholder="Lot"
+                    />
+                  ) : (
+                    <p className="text-sm text-gray-900">{consumption.lot || '-'}</p>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center justify-between mt-1">
+                <span className="text-xs">
+                  {consumption.approved ? (
+                    <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-green-100 text-green-700 border border-green-200">
+                      Approved
+                    </span>
+                  ) : (
+                    <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-yellow-100 text-yellow-700 border border-yellow-200">
+                      Pending
+                    </span>
+                  )}
+                </span>
+                <div className="flex items-center gap-2 text-xs">
+                  {isPending && (
+                    <>
+                      <button
+                        className="text-gray-700"
+                        onClick={async () => {
+                          if (!workspaceId || !jobId) return
+                          await updateConsumption(workspaceId, jobId, consumption.id, {
+                            qtyUsed: draftQty[consumption.id] ?? consumption.qtyUsed,
+                            lot: draftLot[consumption.id] ?? consumption.lot,
+                          })
+                          queryClient.invalidateQueries({ queryKey: ['jobConsumptions', workspaceId, jobId] })
+                        }}
+                      >
+                        Save
+                      </button>
+                      <button
+                        className="text-blue-600"
+                        onClick={async () => {
+                          if (!workspaceId || !jobId) return
+                          await approveConsumption(workspaceId, jobId, consumption.id)
+                          queryClient.invalidateQueries({ queryKey: ['jobConsumptions', workspaceId, jobId] })
+                          queryClient.invalidateQueries({ queryKey: ['job', workspaceId, jobId] })
+                          queryClient.invalidateQueries({ queryKey: ['jobs', workspaceId] })
+                        }}
+                      >
+                        Approve
+                      </button>
+                    </>
+                  )}
+                  <button
+                    className="text-red-600"
+                    onClick={() => setToDelete(consumption)}
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Desktop table view */}
+      <div className="overflow-x-auto hidden md:block">
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
             <tr>

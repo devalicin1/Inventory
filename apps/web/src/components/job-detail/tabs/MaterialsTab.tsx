@@ -47,13 +47,13 @@ export const MaterialsTab: FC<MaterialsTabProps> = ({ job, workspaceId }) => {
         <h3 className="text-lg font-medium text-gray-900">Bill of Materials</h3>
       </div>
       {/* Add item to BOM */}
-      <div className="flex gap-2 items-center">
+      <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center w-full">
         <input
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search inventory (SKU or name)"
-          className="flex-1 rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 transition-colors py-2 px-3 border"
+          className="w-full sm:flex-1 rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 transition-colors py-2 px-3 border min-w-0"
         />
         <select
           onChange={async (e) => {
@@ -67,15 +67,157 @@ export const MaterialsTab: FC<MaterialsTabProps> = ({ job, workspaceId }) => {
             await updateJobMutation.mutateAsync({ bom: nextBom })
             e.currentTarget.selectedIndex = 0
           }}
-          className="rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 transition-colors py-2 px-3 border bg-white"
+          className="w-full sm:w-auto rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 transition-colors py-2 px-3 border bg-white"
         >
-          <option value="">Add item…</option>
+          <option value="">Add item...</option>
           {filteredProducts.map(p => (
             <option key={p.id} value={p.id}>{p.sku} — {p.name} ({p.uom})</option>
           ))}
         </select>
       </div>
-      <div className="overflow-x-auto">
+      {/* Mobile card view */}
+      <div className="space-y-3 md:hidden">
+        {(job.bom || []).length === 0 && (
+          <p className="text-sm text-gray-500 text-center py-4">
+            No materials defined in BOM yet.
+          </p>
+        )}
+        {(job.bom || []).map((item, index) => {
+          const key = item.sku || item.name || (item as any).itemId
+          const currentQty = qtyDraft[key] ?? item.qtyRequired ?? (item as any).qty ?? 0
+          const existingApproved = existingConsumptions.some(c => c.itemId === ((item as any).itemId || products.find(p => p.sku === item.sku)?.id) && c.approved)
+          return (
+            <div
+              key={index}
+              className="border border-gray-200 rounded-lg p-3 bg-white shadow-sm"
+            >
+              <div className="flex items-center justify-between mb-1.5">
+                <p className="text-sm font-semibold text-gray-900 truncate">
+                  {item.name}
+                </p>
+                <p className="text-xs font-mono text-gray-500 ml-2">
+                  {item.sku}
+                </p>
+              </div>
+              <div className="flex items-center justify-between text-xs text-gray-600 mb-2">
+                <span>UOM: {item.uom}</span>
+                <span>Lot: {item.lot || '-'}</span>
+              </div>
+              <div className="grid grid-cols-3 gap-2 mb-3">
+                <div>
+                  <p className="text-[11px] text-gray-500 mb-0.5">Required</p>
+                  <input
+                    type="number"
+                    min="0"
+                    className="w-full rounded border-gray-300 text-sm px-2 py-1"
+                    value={currentQty}
+                    onChange={(e) => {
+                      setQtyDraft({ ...qtyDraft, [key]: Number(e.target.value) })
+                    }}
+                    onBlur={async () => {
+                      const newQty = qtyDraft[key]
+                      const oldQty = item.qtyRequired ?? (item as any).qty ?? 0
+                      if (typeof newQty === 'number' && newQty !== oldQty) {
+                        const nextBom = (job.bom || []).map(b => {
+                          if (item.sku && b.sku === item.sku) return { ...b, qtyRequired: newQty }
+                          if (!item.sku && item.name && b.name === item.name) return { ...b, qtyRequired: newQty }
+                          if ((b as any).itemId === (item as any).itemId) return { ...b, qtyRequired: newQty }
+                          return b
+                        })
+                        await updateJobMutation.mutateAsync({ bom: nextBom })
+                      }
+                    }}
+                  />
+                </div>
+                <div>
+                  <p className="text-[11px] text-gray-500 mb-0.5">Reserved</p>
+                  <p className="text-sm text-gray-900">
+                    {item.reserved ?? 0}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[11px] text-gray-500 mb-0.5">Consumed</p>
+                  <p className="text-sm text-gray-900">
+                    {item.consumed ?? 0}
+                  </p>
+                </div>
+              </div>
+              <button
+                className="w-full text-xs font-semibold text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-md py-1.5 mt-1 disabled:opacity-50"
+                disabled={createMutation.isPending || existingApproved}
+                onClick={async () => {
+                  let prod = products.find(p => p.sku && p.sku === item.sku)
+                  if (!prod && item.name) {
+                    const matchingByName = products.filter(p =>
+                      p.name && item.name &&
+                      p.name.toLowerCase().trim() === item.name.toLowerCase().trim()
+                    )
+                    if (matchingByName.length === 1) {
+                      prod = matchingByName[0]
+                    } else if (matchingByName.length > 1) {
+                      if (item.sku) {
+                        prod = matchingByName.find(p => p.sku === item.sku) || matchingByName[0]
+                      } else {
+                        alert(`Multiple products found with name "${item.name}". Please ensure SKU is set correctly.`)
+                        return
+                      }
+                    }
+                  }
+                  if (!prod) {
+                    alert(`Product not found for SKU: ${item.sku || '(empty)'} and Name: ${item.name || '(empty)'}`)
+                    return
+                  }
+                  const itemId = prod.id
+                  const max = Number(prod?.qtyOnHand || 0)
+                  const requested = qtyDraft[key] ?? item.qtyRequired ?? (item as any).qty ?? 0
+                  if (requested <= 0) {
+                    alert(`Please enter a valid quantity for ${item.sku || item.name}`)
+                    return
+                  }
+                  if (requested > max) {
+                    alert(`Not enough stock for ${item.sku || item.name}. Available: ${max}`)
+                    return
+                  }
+                  if (existingApproved) {
+                    alert('This item has already been approved and deducted.')
+                    return
+                  }
+                  try {
+                    await createMutation.mutateAsync({
+                      stageId: (job as any).currentStageId,
+                      itemId,
+                      sku: item.sku,
+                      name: item.name,
+                      qtyUsed: requested,
+                      uom: item.uom,
+                      lot: '',
+                      userId: 'current-user',
+                      approved: true,
+                    })
+                    queryClient.invalidateQueries({ queryKey: ['job', workspaceId, job.id] })
+                    queryClient.invalidateQueries({ queryKey: ['jobs', workspaceId] })
+                    queryClient.invalidateQueries({ queryKey: ['jobConsumptions', workspaceId, job.id] })
+                    queryClient.invalidateQueries({ queryKey: ['products', workspaceId] })
+                    queryClient.invalidateQueries({ queryKey: ['stockTxns', workspaceId, itemId] })
+                    queryClient.invalidateQueries({ queryKey: ['productOnHand', workspaceId, itemId] })
+                    queryClient.invalidateQueries({ queryKey: ['stockTxns', workspaceId] })
+                    queryClient.invalidateQueries({ queryKey: ['productOnHand', workspaceId] })
+                    window.dispatchEvent(new CustomEvent('stockTransactionCreated', { detail: { productId: itemId } }))
+                  } catch (error: any) {
+                    alert(`Failed to approve and deduct: ${error.message || 'Unknown error'}`)
+                    console.error('Approve & deduct error:', error)
+                  }
+                }}
+              >
+                {existingApproved ? 'Approved' : (createMutation.isPending ? 'Approving...' : 'Approve & deduct')}
+              </button>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Desktop table view */}
+      <div className="overflow-x-auto hidden md:block">
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
             <tr>
@@ -212,7 +354,7 @@ export const MaterialsTab: FC<MaterialsTabProps> = ({ job, workspaceId }) => {
                       }}
                       disabled={createMutation.isPending}
                     >
-                      {createMutation.isPending ? 'Approving…' : (existingConsumptions.some(c => c.itemId === ((item as any).itemId || products.find(p => p.sku === item.sku)?.id) && c.approved) ? 'Approved' : 'Approve & deduct')}
+                      {createMutation.isPending ? 'Approving...' : (existingConsumptions.some(c => c.itemId === ((item as any).itemId || products.find(p => p.sku === item.sku)?.id) && c.approved) ? 'Approved' : 'Approve & deduct')}
                     </button>
                   </div>
                 </td>

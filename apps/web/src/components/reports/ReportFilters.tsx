@@ -1,9 +1,13 @@
 import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import type { ReportFilters as FilterType } from '../../api/reports'
+import { listGroups, type Group } from '../../api/products'
+import { FolderIcon } from '@heroicons/react/24/outline'
 
 interface ReportFiltersProps {
   filters: FilterType
   onFiltersChange: (filters: FilterType) => void
+  workspaceId?: string
   availableLocations?: string[]
   availableCategories?: string[]
   availableSuppliers?: string[]
@@ -24,11 +28,13 @@ interface ReportFiltersProps {
   showAbcClass?: boolean
   showLowStockOnly?: boolean
   showAgingBucket?: boolean
+  showFolder?: boolean
 }
 
 export function ReportFilters({
   filters,
   onFiltersChange,
+  workspaceId,
   availableLocations = [],
   availableCategories = [],
   availableSuppliers = [],
@@ -48,9 +54,17 @@ export function ReportFilters({
   showMovementType = false,
   showAbcClass = false,
   showLowStockOnly = false,
-  showAgingBucket = false
+  showAgingBucket = false,
+  showFolder = false
 }: ReportFiltersProps) {
   const [isExpanded, setIsExpanded] = useState(false)
+
+  // Fetch groups/folders for filter
+  const { data: groups = [] } = useQuery<Group[]>({
+    queryKey: ['groups', workspaceId],
+    queryFn: () => listGroups(workspaceId!),
+    enabled: !!workspaceId && showFolder
+  })
 
   const handleFilterChange = (key: keyof FilterType, value: any) => {
     onFiltersChange({
@@ -92,6 +106,26 @@ export function ReportFilters({
 
       {isExpanded && (
         <div className="mt-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+          {/* Folder Filter - Primary position */}
+          {showFolder && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                <FolderIcon className="inline h-4 w-4 mr-1" />
+                Folder
+              </label>
+              <select
+                value={filters.groupId || ''}
+                onChange={(e) => handleFilterChange('groupId', e.target.value || undefined)}
+                className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">All Folders</option>
+                {groups.map(group => (
+                  <option key={group.id} value={group.id}>{group.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
           {showDateRange && (
             <>
               <div>

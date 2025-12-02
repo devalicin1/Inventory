@@ -26,7 +26,7 @@ function App() {
 
       {/* Main content */}
       <main className="main-content">
-        <div className="px-5 sm:px-8 md:px-10 lg:px-12">
+        <div className="px-5 sm:px-8 md:px-10 lg:px-12 w-full max-w-full overflow-x-hidden">
           <Outlet />
         </div>
       </main>

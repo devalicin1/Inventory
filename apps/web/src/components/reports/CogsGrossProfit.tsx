@@ -223,6 +223,8 @@ export function CogsGrossProfit({ workspaceId }: CogsGrossProfitProps) {
       <FilterComponent
         filters={filters}
         onFiltersChange={setFilters}
+        workspaceId={workspaceId}
+        showFolder={true}
         showDateRange={true}
         showChannel={true}
         showCategory={true}

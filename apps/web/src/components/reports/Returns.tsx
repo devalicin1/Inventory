@@ -203,6 +203,8 @@ export function Returns({ workspaceId }: ReturnsProps) {
       <FilterComponent
         filters={filters}
         onFiltersChange={setFilters}
+        workspaceId={workspaceId}
+        showFolder={true}
         showDateRange={true}
         showChannel={true}
         showReasonCode={true}

@@ -66,6 +66,8 @@ body,
   @apply flex-1 flex flex-col md:pl-72 min-h-screen transition-all duration-300 ease-in-out;
   padding-bottom: 72px;
   /* Space for mobile bottom nav - increased to match new nav height */
+  overflow-x: hidden;
+  max-width: 100%;
 }
 
 @media (min-width: 768px) {

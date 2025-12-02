@@ -65,6 +65,10 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
   const [activeAction, setActiveAction] = useState<string | null>(null)
   const [actionData, setActionData] = useState<any>({})
   const [showInventoryPostingModal, setShowInventoryPostingModal] = useState(false)
+  
+  // Dialog states for consume and produce
+  const [showConsumeDialog, setShowConsumeDialog] = useState(false)
+  const [showProduceDialog, setShowProduceDialog] = useState(false)
 
   // Camera scanning state
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -73,6 +77,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
   const [scanAttempts, setScanAttempts] = useState(0) // Track scan attempts for user feedback
   const [lastScanTime, setLastScanTime] = useState<number>(0) // Track last successful scan
   const reader = useRef<BrowserMultiFormatReader | null>(null)
+  const hasProcessedScan = useRef(false) // Prevent multiple openings from a single scan
 
   const queryClient = useQueryClient()
 
@@ -413,11 +418,11 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
     }
   }
 
-  const getPriorityColor = (priority: number): string => {
-    if (priority <= 2) return 'text-red-600'
-    if (priority === 3) return 'text-yellow-600'
-    return 'text-green-600'
-  }
+  // const getPriorityColor = (priority: number): string => {
+  //   if (priority <= 2) return 'text-red-600'
+  //   if (priority === 3) return 'text-yellow-600'
+  //   return 'text-green-600'
+  // }
 
   const calculateProgress = (job: Job): { produced: number; planned: number; percentage: number; uom: string } => {
     const outputItem = job.output?.[0]
@@ -439,8 +444,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
       const plannedStages = job.plannedStageIds || []
       const lastStageId = plannedStages.length > 0 ? plannedStages[plannedStages.length - 1] : job.currentStageId
       const lastStageInfo = getStageInfo(lastStageId)
-      const finalOutputUOM = lastStageInfo?.outputUOM || outputItem?.uom || job.unit || 'sheets'
-      const numberUp = job.productionSpecs?.numberUp || 1
+      const finalOutputUOM = (lastStageInfo as any)?.outputUOM || outputItem?.uom || job.unit || 'sheets'
       
       // Sum all production runs (they're already in their stage's output UOM)
       // For final output, we need runs from the last stage that outputs in final UOM
@@ -450,7 +454,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
       // Find the last stage with the final output UOM
       for (let i = plannedStages.length - 1; i >= 0; i--) {
         const stageId = plannedStages[i]
-        const stageInfo = getStageInfo(stageId)
+        const stageInfo = getStageInfo(stageId) as any
         if (stageInfo?.outputUOM === finalOutputUOM) {
           // This is the final output stage, sum runs from this stage
           const stageRuns = allRuns.filter((r: any) => r.stageId === stageId)
@@ -506,7 +510,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
 
   // Calculate progress for each stage
   const calculateStageProgress = (job: Job, stageId: string) => {
-    const stageInfo = getStageInfo(stageId)
+    const stageInfo = getStageInfo(stageId) as any
     if (!stageInfo) return null
 
     const stageInputUOM = stageInfo.inputUOM || ''
@@ -530,7 +534,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
 
     if (previousStageId) {
       // Use previous stage's output as this stage's planned input
-      const previousStageInfo = getStageInfo(previousStageId)
+      const previousStageInfo = getStageInfo(previousStageId) as any
       const previousStageOutputUOM = previousStageInfo?.outputUOM || ''
       const previousStageRuns = productionRuns.filter((r: any) => r.stageId === previousStageId)
       const previousStageTotalOutput = previousStageRuns.reduce((sum: number, r: any) => {
@@ -605,7 +609,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
 
   // Calculate production summary for current stage
   const calculateProductionSummary = (job: Job) => {
-    const currentStageInfo = getStageInfo(job.currentStageId)
+    const currentStageInfo = getStageInfo(job.currentStageId) as any
     const currentStageInputUOM = currentStageInfo?.inputUOM || ''
     const currentStageOutputUOM = currentStageInfo?.outputUOM || ''
     const numberUp = job.productionSpecs?.numberUp || 1
@@ -683,7 +687,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
       // Stop scanning if mode changed or video ref not available
       if (reader.current) {
         try {
-          reader.current.reset()
+          ;(reader.current as any).reset()
         } catch (e) {
           // Ignore reset errors
         }
@@ -691,6 +695,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
       }
       setIsScanning(false)
       setCameraError(null)
+      hasProcessedScan.current = false
       return
     }
 
@@ -701,13 +706,34 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
       return
     }
 
-    // Initialize reader with hints for better small QR code detection
-    // Import hints from @zxing/library if needed, but BrowserMultiFormatReader should handle it
+    // Clean up any existing reader and video stream first
+    if (reader.current) {
+      try {
+        ;(reader.current as any).reset()
+      } catch (e) {
+        console.warn('Error resetting existing scanner:', e)
+      }
+      reader.current = null
+    }
+    
+    // Clean up any existing video stream
+    if (videoRef.current) {
+      const existingStream = videoRef.current.srcObject as MediaStream
+      if (existingStream) {
+        existingStream.getTracks().forEach(track => {
+          track.stop()
+        })
+        videoRef.current.srcObject = null
+      }
+    }
+    
+    // Initialize new reader instance for this scan session
     reader.current = new BrowserMultiFormatReader()
     
     // Reset scan tracking
     setScanAttempts(0)
     setLastScanTime(Date.now())
+    hasProcessedScan.current = false
     
     const startScanning = async () => {
       try {
@@ -786,6 +812,12 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
           videoRef.current, 
           (result, err) => {
             if (result) {
+              // Make sure we only handle a successful scan once
+              if (hasProcessedScan.current) {
+                return
+              }
+              hasProcessedScan.current = true
+
               const scannedCode = result.getText().trim()
               
               // Prevent processing the same code multiple times
@@ -798,15 +830,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
               setLastScanTime(Date.now())
               
               // Stop camera immediately after successful scan
-              if (reader.current) {
-                try {
-                  reader.current.reset()
-                } catch (e) {
-                  console.warn('Error resetting scanner:', e)
-                }
-              }
-              
-              // Stop all video tracks to ensure camera is fully closed
+              // First, stop all video tracks
               if (videoRef.current) {
                 const stream = videoRef.current.srcObject as MediaStream
                 if (stream) {
@@ -817,7 +841,24 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                 }
               }
               
+              // Then reset and nullify the reader to ensure clean state for next scan
+              if (reader.current) {
+                try {
+                  ;(reader.current as any).reset()
+                } catch (e) {
+                  console.warn('Error resetting scanner:', e)
+                }
+                // Nullify reader to force new instance on next scan
+                reader.current = null
+              }
+              
               setIsScanning(false)
+              
+              // Reset hasProcessedScan flag after a short delay to allow next scan
+              setTimeout(() => {
+                hasProcessedScan.current = false
+              }, 100)
+              
               handleScan(scannedCode)
               
               // Reset lastScannedCode after 3 seconds to allow re-scanning same code
@@ -869,7 +910,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
     return () => {
       if (reader.current) {
         try {
-          reader.current.reset()
+          ;(reader.current as any).reset()
         } catch (e) {
           // Ignore reset errors
           console.warn('Error resetting scanner:', e)
@@ -940,17 +981,17 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                   <button
                     onClick={async () => {
                       setCameraError(null)
-                      if (videoRef.current && reader.current) {
-                        try {
-                          reader.current.reset()
-                          reader.current = null
-                          await new Promise(resolve => setTimeout(resolve, 500))
-                          setScanMode('manual')
-                          setTimeout(() => setScanMode('camera'), 100)
-                        } catch (e) {
-                          console.error('Error restarting camera:', e)
-                        }
+                    if (videoRef.current && reader.current) {
+                      try {
+                        ;(reader.current as any).reset()
+                        reader.current = null
+                        await new Promise(resolve => setTimeout(resolve, 500))
+                        setScanMode('manual')
+                        setTimeout(() => setScanMode('camera'), 100)
+                      } catch (e) {
+                        console.error('Error restarting camera:', e)
                       }
+                    }
                     }}
                     className="px-6 py-3.5 bg-blue-600 text-white rounded-xl font-semibold text-base active:bg-blue-700"
                   >
@@ -1058,7 +1099,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
           onClick={() => {
             if (scanMode === 'camera' && reader.current) {
               try {
-                reader.current.reset()
+                ;(reader.current as any).reset()
               } catch (e) {
                 console.warn('Error stopping camera:', e)
               }
@@ -1259,7 +1300,13 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                     <p className="text-xs text-orange-600 font-medium">Due Date</p>
                   </div>
                   <p className="font-bold text-orange-900">
-                    {new Date(selectedJob.dueDate.seconds ? selectedJob.dueDate.seconds * 1000 : selectedJob.dueDate).toLocaleDateString()}
+                    {(() => {
+                      const raw = selectedJob.dueDate as any
+                      if (raw && typeof raw.seconds === 'number') {
+                        return new Date(raw.seconds * 1000).toLocaleDateString()
+                      }
+                      return new Date(raw).toLocaleDateString()
+                    })()}
                   </p>
                 </div>
               )}
@@ -1392,9 +1439,9 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
           </div>
 
           <div className="p-5 sm:p-6 space-y-4">
-            {!activeAction ? (
-              <>
-                {/* Primary Action - Large, Prominent Button */}
+            {/* Always show action buttons - dialogs are separate now */}
+            <>
+              {/* Primary Action - Large, Prominent Button */}
                 {!isDone && (
                   <div className="space-y-3">
                     {!isReleased && !isInProgress && (
@@ -1485,7 +1532,10 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                 {isInProgress && !isBlocked && (
                   <div className="grid grid-cols-2 gap-3">
                     <button
-                      onClick={() => setActiveAction('consume')}
+                      onClick={() => {
+                        setActionData({})
+                        setShowConsumeDialog(true)
+                      }}
                       className="py-6 bg-gradient-to-br from-orange-50 to-orange-100 border-2 border-orange-200 text-orange-700 rounded-2xl font-bold active:scale-[0.98] transition-all flex flex-col items-center justify-center gap-2"
                     >
                       <div className="w-14 h-14 bg-orange-500 rounded-2xl flex items-center justify-center shadow-lg shadow-orange-500/30">
@@ -1494,7 +1544,10 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                       <span className="text-sm mt-1">Consume Material</span>
                     </button>
                     <button
-                      onClick={() => setActiveAction('produce')}
+                      onClick={() => {
+                        setActionData({})
+                        setShowProduceDialog(true)
+                      }}
                       className="py-6 bg-gradient-to-br from-blue-50 to-blue-100 border-2 border-blue-200 text-blue-700 rounded-2xl font-bold active:scale-[0.98] transition-all flex flex-col items-center justify-center gap-2"
                     >
                       <div className="w-14 h-14 bg-blue-500 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-500/30">
@@ -1604,501 +1657,10 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                   <span>View Full Details</span>
                 </button>
               </>
-            ) : (
-              renderJobActionForm()
-            )}
           </div>
         </div>
       </div>
     )
-  }
-
-  const renderJobActionForm = () => {
-    if (activeAction === 'consume') {
-      const bomItems = selectedJob?.bom || []
-      const selectedBomItem = bomItems.find(item => item.sku === actionData.sku)
-      const remainingRequired = selectedBomItem 
-        ? Math.max(0, selectedBomItem.qtyRequired - (selectedBomItem.consumed || 0))
-        : null
-
-      // Find product for stock check
-      const selectedProduct = actionData.itemId 
-        ? products.find(p => p.id === actionData.itemId)
-        : actionData.sku 
-          ? products.find(p => p.sku === actionData.sku)
-          : null
-      
-      const availableStock = selectedProduct ? (selectedProduct.qtyOnHand || 0) : null
-      const requestedQty = Number(actionData.qtyUsed) || 0
-      const isInsufficientStock = availableStock !== null && requestedQty > availableStock
-
-      return (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="font-bold text-gray-900 text-lg">Record Consumption</h3>
-            <button 
-              onClick={() => { setActiveAction(null); setActionData({}) }} 
-              className="w-10 h-10 bg-gray-100 rounded-xl flex items-center justify-center active:bg-gray-200"
-            >
-              <XMarkIcon className="h-5 w-5 text-gray-600" />
-            </button>
-          </div>
-          
-          {/* BOM Material Selector */}
-          {bomItems.length > 0 && (
-            <div>
-              <label className="block text-sm font-bold text-gray-700 mb-2">
-                Select Material from BOM
-              </label>
-              <select
-                className="w-full p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-orange-500/20 focus:border-orange-500 bg-white text-base"
-                value={actionData.bomItemIndex !== undefined ? String(actionData.bomItemIndex) : ''}
-                onChange={async (e) => {
-                  const index = e.target.value === '' ? undefined : Number(e.target.value)
-                  if (index !== undefined && bomItems[index]) {
-                    const item = bomItems[index]
-                    // Try to find product by SKU to get itemId and stock info
-                    let itemId = item.itemId
-                    let product: ListedProduct | null = null
-                    if (!itemId && item.sku) {
-                      try {
-                        product = await getProductByCode(workspaceId, item.sku)
-                        if (product) {
-                          itemId = product.id
-                        }
-                      } catch (err) {
-                        console.warn('Could not find product for SKU:', item.sku)
-                      }
-                    } else if (itemId) {
-                      // Try to get product by itemId to check stock
-                      try {
-                        const prod = products.find(p => p.id === itemId)
-                        if (prod) product = prod
-                      } catch (err) {
-                        // Ignore
-                      }
-                    }
-                    
-                    const remainingQty = Math.max(0, item.qtyRequired - (item.consumed || 0))
-                    const availableQty = product ? (product.qtyOnHand || 0) : null
-                    // Default to remaining required, but don't exceed available stock
-                    const defaultQty = availableQty !== null 
-                      ? Math.min(remainingQty, availableQty)
-                      : remainingQty
-                    
-                    setActionData({
-                      ...actionData,
-                      bomItemIndex: index,
-                      sku: item.sku,
-                      name: item.name,
-                      qtyUsed: defaultQty,
-                      uom: item.uom,
-                      itemId: itemId
-                    })
-                  } else {
-                    setActionData({
-                      ...actionData,
-                      bomItemIndex: undefined,
-                      sku: '',
-                      name: '',
-                      qtyUsed: '',
-                      uom: '',
-                      itemId: ''
-                    })
-                  }
-                }}
-              >
-                <option value="">-- Select from BOM or enter manually --</option>
-                {bomItems.map((item, index) => {
-                  const consumed = item.consumed || 0
-                  const remaining = Math.max(0, item.qtyRequired - consumed)
-                  const status = remaining === 0 ? '✓ Complete' : remaining < item.qtyRequired ? '⚠ Partial' : ''
-                  return (
-                    <option key={index} value={String(index)}>
-                      {item.name || item.sku} ({item.sku}) - Required: {item.qtyRequired} {item.uom} 
-                      {consumed > 0 && ` | Consumed: ${consumed} ${item.uom}`}
-                      {remaining > 0 && ` | Remaining: ${remaining} ${item.uom}`}
-                      {status && ` [${status}]`}
-                    </option>
-                  )
-                })}
-              </select>
-              {selectedBomItem && remainingRequired !== null && (
-                <div className="mt-2 p-3 bg-gray-50 rounded-xl text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Required:</span>
-                    <span className="font-medium">{selectedBomItem.qtyRequired.toLocaleString()} {selectedBomItem.uom}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Consumed:</span>
-                    <span className="font-medium">{(selectedBomItem.consumed || 0).toLocaleString()} {selectedBomItem.uom}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Remaining:</span>
-                    <span className="font-bold text-orange-600">{remainingRequired.toLocaleString()} {selectedBomItem.uom}</span>
-                  </div>
-                  {availableStock !== null && (
-                    <div className={`flex justify-between mt-1 pt-1 border-t ${availableStock < remainingRequired ? 'text-red-600' : 'text-green-600'}`}>
-                      <span>Stock:</span>
-                      <span className="font-bold">{availableStock.toLocaleString()} {selectedBomItem.uom}</span>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          <div>
-            <label className="block text-sm font-bold text-gray-700 mb-2">
-              SKU / Material Code {actionData.bomItemIndex === undefined ? '*' : ''}
-            </label>
-            <input
-              placeholder="Enter SKU or scan material"
-              className="w-full p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-orange-500/20 focus:border-orange-500 text-base"
-              value={actionData.sku || ''}
-              onChange={e => {
-                setActionData({ 
-                  ...actionData, 
-                  sku: e.target.value,
-                  bomItemIndex: undefined
-                })
-              }}
-              autoFocus={actionData.bomItemIndex === undefined}
-            />
-            {actionData.bomItemIndex !== undefined && (
-              <p className="mt-2 text-sm text-gray-500">From BOM: {actionData.name || actionData.sku}</p>
-            )}
-          </div>
-          <div className="grid grid-cols-3 gap-3">
-            <div className="col-span-2">
-              <label className="block text-sm font-bold text-gray-700 mb-2">Quantity *</label>
-              <input
-                type="number"
-                step="0.01"
-                placeholder={selectedBomItem ? `${remainingRequired?.toLocaleString() || 0}` : "0"}
-                className="w-full p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-orange-500/20 focus:border-orange-500 text-xl font-bold text-center"
-                value={actionData.qtyUsed || ''}
-                onChange={e => setActionData({ ...actionData, qtyUsed: Number(e.target.value) })}
-              />
-              {availableStock !== null && (
-                <p className={`mt-2 text-sm font-medium ${isInsufficientStock ? 'text-red-600' : 'text-gray-600'}`}>
-                  Stock: {availableStock.toLocaleString()} {actionData.uom || 'units'}
-                  {isInsufficientStock && <span className="ml-2">⚠️ Insufficient!</span>}
-                </p>
-              )}
-            </div>
-            <div>
-              <label className="block text-sm font-bold text-gray-700 mb-2">UOM</label>
-              <input
-                placeholder="UOM"
-                className="w-full p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-orange-500/20 focus:border-orange-500 text-base text-center"
-                value={actionData.uom || ''}
-                onChange={e => setActionData({ ...actionData, uom: e.target.value })}
-              />
-            </div>
-          </div>
-          <div>
-            <label className="block text-sm font-bold text-gray-700 mb-2">Notes (Optional)</label>
-            <input
-              placeholder="Additional notes"
-              className="w-full p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-orange-500/20 focus:border-orange-500 text-base"
-              value={actionData.notes || ''}
-              onChange={e => setActionData({ ...actionData, notes: e.target.value })}
-            />
-          </div>
-          <div className="flex gap-3 pt-2">
-            <button
-              onClick={() => { setActiveAction(null); setActionData({}) }}
-              className="flex-1 py-4 bg-gray-100 rounded-2xl font-bold text-gray-700 active:bg-gray-200 transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={async () => {
-                if (!actionData.sku || !actionData.qtyUsed) {
-                  alert('Please enter SKU and quantity')
-                  return
-                }
-
-                // Final stock check before submission
-                if (actionData.itemId) {
-                  try {
-                    const currentStock = await getProductOnHand(workspaceId, actionData.itemId)
-                    if (requestedQty > currentStock) {
-                      const confirm = window.confirm(
-                        `⚠️ Insufficient Stock!\n\n` +
-                        `Requested: ${requestedQty.toLocaleString()} ${actionData.uom || 'units'}\n` +
-                        `Available: ${currentStock.toLocaleString()} ${actionData.uom || 'units'}\n` +
-                        `Shortage: ${(requestedQty - currentStock).toLocaleString()} ${actionData.uom || 'units'}\n\n` +
-                        `Do you want to proceed anyway?`
-                      )
-                      if (!confirm) return
-                    }
-                  } catch (err) {
-                    console.warn('Stock check failed:', err)
-                    // Continue anyway if stock check fails
-                  }
-                }
-
-                // Ensure name is set for proper matching
-                const consumptionData = {
-                  ...actionData,
-                  name: actionData.name || actionData.sku || '', // Ensure name is set
-                  stageId: selectedJob?.currentStageId,
-                  userId: 'current-user',
-                  approved: true
-                }
-                console.log('[ProductionScanner] Creating consumption:', consumptionData)
-                consumptionMutation.mutate(consumptionData)
-              }}
-              disabled={consumptionMutation.isPending || !actionData.sku || !actionData.qtyUsed}
-              className={`flex-1 py-4 rounded-2xl font-bold shadow-lg transition-all disabled:opacity-50 disabled:shadow-none active:scale-[0.98] ${
-                isInsufficientStock 
-                  ? 'bg-gradient-to-r from-red-500 to-red-600 text-white shadow-red-500/30' 
-                  : 'bg-gradient-to-r from-orange-500 to-orange-600 text-white shadow-orange-500/30'
-              }`}
-            >
-              {consumptionMutation.isPending ? 'Recording...' : isInsufficientStock ? '⚠️ Confirm (Low Stock)' : 'Confirm'}
-            </button>
-          </div>
-        </div>
-      )
-    }
-    if (activeAction === 'produce') {
-      if (!selectedJob) return null
-
-      const summary = calculateProductionSummary(selectedJob)
-      const {
-        currentStageInputUOM,
-        currentStageOutputUOM,
-        numberUp,
-        totalProducedInStage,
-        plannedQty,
-        plannedUOM,
-        completionThreshold,
-        completionThresholdUpper,
-        convertToOutputUOM
-      } = summary
-
-      const qtyGood = actionData.qtyGood || 0
-      const qtyScrap = actionData.qtyScrap || 0
-      const thisEntryInOutputUOM = convertToOutputUOM(qtyGood)
-      const totalAfterThisEntry = totalProducedInStage + thisEntryInOutputUOM
-      const remaining = plannedQty - totalAfterThisEntry
-      const isIncomplete = plannedQty > 0 && totalAfterThisEntry < completionThreshold
-      const isOverLimit = plannedQty > 0 && totalAfterThisEntry > completionThresholdUpper
-
-      // Initialize runDateTime if not set
-      if (!actionData.runDateTime) {
-        const now = new Date()
-        const off = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
-        setActionData({ ...actionData, runDateTime: off.toISOString().slice(0, 16) })
-      }
-
-      return (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="font-bold text-gray-900 text-lg">Record Production Output</h3>
-            <button 
-              onClick={() => { setActiveAction(null); setActionData({}) }} 
-              className="w-10 h-10 bg-gray-100 rounded-xl flex items-center justify-center active:bg-gray-200"
-            >
-              <XMarkIcon className="h-5 w-5 text-gray-600" />
-            </button>
-          </div>
-
-          {/* Production Summary */}
-          {plannedQty > 0 && (
-            <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-2xl p-4">
-              <p className="text-sm font-bold text-blue-800 mb-3">Production Summary</p>
-              <div className="grid grid-cols-3 gap-3 mb-3">
-                <div className="bg-white rounded-xl p-3 text-center">
-                  <span className="text-xs text-gray-500 block">Planned</span>
-                  <div className="font-bold text-gray-900">{plannedQty.toLocaleString()}</div>
-                  <span className="text-xs text-gray-500">{plannedUOM}</span>
-                </div>
-                <div className="bg-white rounded-xl p-3 text-center">
-                  <span className="text-xs text-gray-500 block">Produced</span>
-                  <div className="font-bold text-blue-600">{totalProducedInStage.toLocaleString()}</div>
-                  <span className="text-xs text-gray-500">{currentStageOutputUOM || 'units'}</span>
-                </div>
-                <div className="bg-white rounded-xl p-3 text-center">
-                  <span className="text-xs text-gray-500 block">Remaining</span>
-                  <div className="font-bold text-orange-600">{Math.max(0, remaining).toLocaleString()}</div>
-                  <span className="text-xs text-gray-500">{currentStageOutputUOM || 'units'}</span>
-                </div>
-              </div>
-              {isIncomplete && (
-                <div className="bg-amber-100 border border-amber-200 rounded-xl px-4 py-2 text-sm text-amber-800">
-                  <span className="font-bold">⚠️ Incomplete:</span> {completionThreshold.toLocaleString()}+ {currentStageOutputUOM || 'units'} required
-                </div>
-              )}
-              {isOverLimit && (
-                <div className="bg-red-100 border border-red-200 rounded-xl px-4 py-2 text-sm text-red-800">
-                  <span className="font-bold">⚠️ Over Limit:</span> Maximum {completionThresholdUpper.toLocaleString()} {currentStageOutputUOM || 'units'}
-                </div>
-              )}
-              {!isIncomplete && !isOverLimit && totalAfterThisEntry > 0 && (
-                <div className="bg-green-100 border border-green-200 rounded-xl px-4 py-2 text-sm text-green-800">
-                  <span className="font-bold">✓ Within acceptable range</span>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Stage Info */}
-          <div className="bg-gray-50 rounded-2xl p-4">
-            <label className="block text-xs font-bold text-gray-500 mb-1">STAGE</label>
-            <p className="text-base font-semibold text-gray-900">{getStageName(selectedJob?.currentStageId, selectedJob?.status)}</p>
-          </div>
-
-          {/* Input Fields - Large for Mobile */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-sm font-bold text-gray-700 mb-2">
-                Good Qty ({currentStageInputUOM || 'units'})
-                {currentStageInputUOM && currentStageOutputUOM && currentStageInputUOM !== currentStageOutputUOM && numberUp > 0 && (
-                  <span className="text-xs text-blue-600 block mt-1">
-                    → {convertToOutputUOM(qtyGood || 0).toFixed(0)} {currentStageOutputUOM}
-                  </span>
-                )}
-              </label>
-              <input
-                type="number"
-                min={0}
-                step="1"
-                placeholder="0"
-                className="w-full p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 text-2xl font-bold text-center"
-                value={qtyGood || ''}
-                onChange={e => setActionData({ ...actionData, qtyGood: Number(e.target.value) })}
-                autoFocus
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-bold text-gray-700 mb-2">
-                Scrap ({currentStageInputUOM || 'units'})
-              </label>
-              <input
-                type="number"
-                min={0}
-                step="1"
-                placeholder="0"
-                className="w-full p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-gray-500/20 focus:border-gray-400 text-2xl font-bold text-center text-gray-600"
-                value={qtyScrap || ''}
-                onChange={e => setActionData({ ...actionData, qtyScrap: Number(e.target.value) })}
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-sm font-bold text-gray-700 mb-2">Date & Time</label>
-              <input
-                type="datetime-local"
-                value={actionData.runDateTime || ''}
-                onChange={e => setActionData({ ...actionData, runDateTime: e.target.value })}
-                className="w-full p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 text-base"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-bold text-gray-700 mb-2">Workcenter</label>
-              <select
-                value={actionData.workcenterId || selectedJob?.workcenterId || ''}
-                onChange={e => setActionData({ ...actionData, workcenterId: e.target.value || undefined })}
-                className="w-full p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 text-base bg-white"
-              >
-                <option value="">Unspecified</option>
-                {workcenters.map(w => (
-                  <option key={w.id} value={w.id}>{w.name}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-sm font-bold text-gray-700 mb-2">Lot Number</label>
-            <input
-              type="text"
-              placeholder="Optional"
-              className="w-full p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 text-base"
-              value={actionData.lot || ''}
-              onChange={e => setActionData({ ...actionData, lot: e.target.value })}
-            />
-          </div>
-
-          {/* Conversion Info */}
-          {currentStageInputUOM && currentStageOutputUOM && currentStageInputUOM !== currentStageOutputUOM && numberUp > 0 && (
-            <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-sm text-blue-800">
-              <span className="font-bold">Conversion:</span> {currentStageInputUOM} → {currentStageOutputUOM} (Number Up: {numberUp})
-            </div>
-          )}
-
-          {/* Notes */}
-          <div>
-            <label className="block text-sm font-bold text-gray-700 mb-2">Notes (Optional)</label>
-            <textarea
-              placeholder="Add notes..."
-              rows={2}
-              className="w-full p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 resize-none text-base"
-              value={actionData.notes || ''}
-              onChange={e => setActionData({ ...actionData, notes: e.target.value })}
-            />
-          </div>
-
-          {/* Action Buttons */}
-          <div className="flex gap-3 pt-2">
-            <button
-              onClick={() => { setActiveAction(null); setActionData({}) }}
-              className="flex-1 py-4 bg-gray-100 rounded-2xl font-bold text-gray-700 active:bg-gray-200 transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={() => {
-                if (!qtyGood || qtyGood <= 0) {
-                  alert('Please enter Good Quantity to add production record.')
-                  return
-                }
-
-                // Check upper limit
-                if (isOverLimit) {
-                  alert(`⚠️ Cannot add record: Production quantity exceeds maximum limit.\n\nPlanned: ${plannedQty.toLocaleString()} ${currentStageOutputUOM || 'sheets'}\nMaximum Allowed: ${completionThresholdUpper.toLocaleString()} ${currentStageOutputUOM || 'sheets'} (planned + 500 tolerance)\nCurrent Total After Entry: ${totalAfterThisEntry.toLocaleString()} ${currentStageOutputUOM || 'sheets'}\n\nPlease reduce the quantity or contact supervisor.`)
-                  return
-                }
-
-                // Convert to output UOM if needed
-                const qtyGoodToSave = currentStageInputUOM === 'sheets' && currentStageOutputUOM === 'cartoon' && numberUp > 0
-                  ? convertToOutputUOM(qtyGood)
-                  : qtyGood
-                const qtyScrapToSave = currentStageInputUOM === 'sheets' && currentStageOutputUOM === 'cartoon' && numberUp > 0 && qtyScrap > 0
-                  ? convertToOutputUOM(qtyScrap)
-                  : qtyScrap
-
-                productionMutation.mutate({
-                  qtyGood: qtyGoodToSave,
-                  qtyScrap: qtyScrapToSave || undefined,
-                  lot: actionData.lot || undefined,
-                  stageId: selectedJob?.currentStageId,
-                  workcenterId: actionData.workcenterId || selectedJob?.workcenterId,
-                  operatorId: 'current-user',
-                  at: actionData.runDateTime ? new Date(actionData.runDateTime) : undefined,
-                  notes: actionData.notes || undefined
-                })
-              }}
-              disabled={productionMutation.isPending || !qtyGood || qtyGood <= 0 || isOverLimit}
-              className={`flex-1 py-4 rounded-2xl font-bold shadow-lg transition-all disabled:opacity-50 disabled:shadow-none active:scale-[0.98] ${
-                isOverLimit
-                  ? 'bg-gradient-to-r from-red-500 to-red-600 text-white shadow-red-500/30 cursor-not-allowed opacity-50'
-                  : 'bg-gradient-to-r from-green-500 to-green-600 text-white shadow-green-500/30'
-              }`}
-            >
-              {productionMutation.isPending ? 'Recording...' : isOverLimit ? 'Over Limit' : 'Save'}
-            </button>
-          </div>
-        </div>
-      )
-    }
-    return null
   }
 
   // --- Product Action Sheet ---
@@ -2230,7 +1792,6 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
   const renderProductActionForm = () => {
     const isReceive = activeAction === 'in'
     const isShip = activeAction === 'out'
-    const isAdjust = activeAction === 'adjustment'
     const title = isReceive ? 'Receive Stock' : isShip ? 'Ship / Use Stock' : 'Adjust Stock'
     const btnGradient = isReceive 
       ? 'bg-gradient-to-r from-green-500 to-green-600 shadow-green-500/30' 
@@ -2330,6 +1891,575 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
     )
   }
 
+  // --- Consume Material Full-Screen Dialog ---
+  const renderConsumeMaterialDialog = () => {
+    if (!selectedJob) return null
+
+    const bomItems = selectedJob.bom || []
+    const selectedBomItem = bomItems.find(item => item.sku === actionData.sku)
+    const remainingRequired = selectedBomItem 
+      ? Math.max(0, selectedBomItem.qtyRequired - (selectedBomItem.consumed || 0))
+      : null
+
+    // Find product for stock check
+    const selectedProductForStock = actionData.itemId 
+      ? products.find(p => p.id === actionData.itemId)
+      : actionData.sku 
+        ? products.find(p => p.sku === actionData.sku)
+        : null
+    
+    const availableStock = selectedProductForStock ? (selectedProductForStock.qtyOnHand || 0) : null
+    const requestedQty = Number(actionData.qtyUsed) || 0
+    const isInsufficientStock = availableStock !== null && requestedQty > availableStock
+
+    const handleClose = () => {
+      setShowConsumeDialog(false)
+      setActionData({})
+    }
+
+    return (
+      <div className="fixed inset-0 z-[60] flex flex-col bg-white">
+        {/* Header */}
+        <div className="flex-shrink-0 bg-gradient-to-r from-orange-500 to-orange-600 text-white px-4 py-4 safe-area-inset-top">
+          <div className="flex items-center justify-between">
+            <button 
+              onClick={handleClose}
+              className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center active:bg-white/30"
+            >
+              <XMarkIcon className="h-6 w-6 text-white" />
+            </button>
+            <div className="text-center flex-1">
+              <h2 className="text-lg font-bold">Consume Material</h2>
+              <p className="text-sm text-orange-100">{selectedJob.code}</p>
+            </div>
+            <div className="w-10" /> {/* Spacer for centering */}
+          </div>
+        </div>
+
+        {/* Scrollable Content */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {/* Job Info Card */}
+          <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-2xl p-4">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 bg-orange-500 rounded-xl flex items-center justify-center">
+                <CubeIcon className="h-6 w-6 text-white" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-gray-900 truncate">{selectedJob.productName}</p>
+                <p className="text-sm text-orange-600">Stage: {getStageName(selectedJob.currentStageId, selectedJob.status)}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* BOM Material Selector */}
+          {bomItems.length > 0 && (
+            <div>
+              <label className="block text-sm font-bold text-gray-700 mb-2">
+                Select Material from BOM
+              </label>
+              <select
+                className="w-full p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-orange-500/20 focus:border-orange-500 bg-white text-base"
+                value={actionData.bomItemIndex !== undefined ? String(actionData.bomItemIndex) : ''}
+                onChange={async (e) => {
+                  const index = e.target.value === '' ? undefined : Number(e.target.value)
+                  if (index !== undefined && bomItems[index]) {
+                    const item = bomItems[index]
+                    let itemId = item.itemId
+                    let product: ListedProduct | null = null
+                    if (!itemId && item.sku) {
+                      try {
+                        product = await getProductByCode(workspaceId, item.sku)
+                        if (product) {
+                          itemId = product.id
+                        }
+                      } catch (err) {
+                        console.warn('Could not find product for SKU:', item.sku)
+                      }
+                    } else if (itemId) {
+                      const prod = products.find(p => p.id === itemId)
+                      if (prod) product = prod
+                    }
+                    
+                    const remainingQty = Math.max(0, item.qtyRequired - (item.consumed || 0))
+                    const availableQty = product ? (product.qtyOnHand || 0) : null
+                    const defaultQty = availableQty !== null 
+                      ? Math.min(remainingQty, availableQty)
+                      : remainingQty
+                    
+                    setActionData({
+                      ...actionData,
+                      bomItemIndex: index,
+                      sku: item.sku,
+                      name: item.name,
+                      qtyUsed: defaultQty,
+                      uom: item.uom,
+                      itemId: itemId
+                    })
+                  } else {
+                    setActionData({
+                      ...actionData,
+                      bomItemIndex: undefined,
+                      sku: '',
+                      name: '',
+                      qtyUsed: '',
+                      uom: '',
+                      itemId: ''
+                    })
+                  }
+                }}
+              >
+                <option value="">-- Select from BOM or enter manually --</option>
+                {bomItems.map((item, index) => {
+                  const consumed = item.consumed || 0
+                  const remaining = Math.max(0, item.qtyRequired - consumed)
+                  const status = remaining === 0 ? '✓' : remaining < item.qtyRequired ? '⚠' : ''
+                  return (
+                    <option key={index} value={String(index)}>
+                      {status} {item.name || item.sku} - Remaining: {remaining} {item.uom}
+                    </option>
+                  )
+                })}
+              </select>
+            </div>
+          )}
+
+          {/* Selected Material Info */}
+          {selectedBomItem && remainingRequired !== null && (
+            <div className="bg-white border-2 border-orange-200 rounded-2xl p-4">
+              <h4 className="font-bold text-gray-900 mb-3">{selectedBomItem.name || selectedBomItem.sku}</h4>
+              <div className="grid grid-cols-3 gap-3 text-center">
+                <div className="bg-gray-50 rounded-xl p-3">
+                  <span className="text-xs text-gray-500 block">Required</span>
+                  <div className="font-bold text-gray-900">
+                    {Number(selectedBomItem.qtyRequired || 0).toLocaleString()}
+                  </div>
+                  <span className="text-xs text-gray-500">{selectedBomItem.uom}</span>
+                </div>
+                <div className="bg-blue-50 rounded-xl p-3">
+                  <span className="text-xs text-blue-600 block">Consumed</span>
+                  <div className="font-bold text-blue-600">{(selectedBomItem.consumed || 0).toLocaleString()}</div>
+                  <span className="text-xs text-blue-600">{selectedBomItem.uom}</span>
+                </div>
+                <div className="bg-orange-50 rounded-xl p-3">
+                  <span className="text-xs text-orange-600 block">Remaining</span>
+                  <div className="font-bold text-orange-600">{remainingRequired.toLocaleString()}</div>
+                  <span className="text-xs text-orange-600">{selectedBomItem.uom}</span>
+                </div>
+              </div>
+              {availableStock !== null && (
+                <div className={`mt-3 p-3 rounded-xl ${availableStock < remainingRequired ? 'bg-red-50 border border-red-200' : 'bg-green-50 border border-green-200'}`}>
+                  <div className="flex justify-between items-center">
+                    <span className={`text-sm font-medium ${availableStock < remainingRequired ? 'text-red-700' : 'text-green-700'}`}>
+                      Available Stock
+                    </span>
+                    <span className={`font-bold ${availableStock < remainingRequired ? 'text-red-700' : 'text-green-700'}`}>
+                      {availableStock.toLocaleString()} {selectedBomItem.uom}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Manual SKU Entry */}
+          <div>
+            <label className="block text-sm font-bold text-gray-700 mb-2">
+              SKU / Material Code {actionData.bomItemIndex === undefined ? '*' : ''}
+            </label>
+            <input
+              placeholder="Enter SKU or scan material"
+              className="w-full p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-orange-500/20 focus:border-orange-500 text-base"
+              value={actionData.sku || ''}
+              onChange={e => {
+                setActionData({ 
+                  ...actionData, 
+                  sku: e.target.value,
+                  bomItemIndex: undefined
+                })
+              }}
+              autoFocus={bomItems.length === 0}
+            />
+          </div>
+
+          {/* Quantity & UOM */}
+          <div className="grid grid-cols-3 gap-3">
+            <div className="col-span-2">
+              <label className="block text-sm font-bold text-gray-700 mb-2">Quantity *</label>
+              <input
+                type="number"
+                step="0.01"
+                placeholder={selectedBomItem ? `${remainingRequired?.toLocaleString() || 0}` : "0"}
+                className="w-full p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-orange-500/20 focus:border-orange-500 text-2xl font-bold text-center"
+                value={actionData.qtyUsed || ''}
+                onChange={e => setActionData({ ...actionData, qtyUsed: Number(e.target.value) })}
+              />
+              {availableStock !== null && (
+                <p className={`mt-2 text-sm font-medium ${isInsufficientStock ? 'text-red-600' : 'text-gray-600'}`}>
+                  {isInsufficientStock && '⚠️ '} Stock: {availableStock.toLocaleString()} {actionData.uom || 'units'}
+                </p>
+              )}
+            </div>
+            <div>
+              <label className="block text-sm font-bold text-gray-700 mb-2">UOM</label>
+              <input
+                placeholder="UOM"
+                className="w-full p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-orange-500/20 focus:border-orange-500 text-base text-center"
+                value={actionData.uom || ''}
+                onChange={e => setActionData({ ...actionData, uom: e.target.value })}
+              />
+            </div>
+          </div>
+
+          {/* Notes */}
+          <div>
+            <label className="block text-sm font-bold text-gray-700 mb-2">Notes (Optional)</label>
+            <input
+              placeholder="Additional notes"
+              className="w-full p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-orange-500/20 focus:border-orange-500 text-base"
+              value={actionData.notes || ''}
+              onChange={e => setActionData({ ...actionData, notes: e.target.value })}
+            />
+          </div>
+        </div>
+
+        {/* Fixed Bottom Action Buttons */}
+        <div className="flex-shrink-0 p-4 bg-white border-t border-gray-200 safe-area-inset-bottom">
+          <div className="flex gap-3">
+            <button
+              onClick={handleClose}
+              className="flex-1 py-4 bg-gray-100 rounded-2xl font-bold text-gray-700 active:bg-gray-200 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={async () => {
+                if (!actionData.sku || !actionData.qtyUsed) {
+                  alert('Please enter SKU and quantity')
+                  return
+                }
+
+                // Final stock check before submission
+                if (actionData.itemId) {
+                  try {
+                    const currentStock = await getProductOnHand(workspaceId, actionData.itemId)
+                    if (requestedQty > currentStock) {
+                      const confirmAction = window.confirm(
+                        `⚠️ Insufficient Stock!\n\n` +
+                        `Requested: ${requestedQty.toLocaleString()} ${actionData.uom || 'units'}\n` +
+                        `Available: ${currentStock.toLocaleString()} ${actionData.uom || 'units'}\n` +
+                        `Shortage: ${(requestedQty - currentStock).toLocaleString()} ${actionData.uom || 'units'}\n\n` +
+                        `Do you want to proceed anyway?`
+                      )
+                      if (!confirmAction) return
+                    }
+                  } catch (err) {
+                    console.warn('Stock check failed:', err)
+                  }
+                }
+
+                const consumptionData = {
+                  ...actionData,
+                  name: actionData.name || actionData.sku || '',
+                  stageId: selectedJob?.currentStageId,
+                  userId: 'current-user',
+                  approved: true
+                }
+                consumptionMutation.mutate(consumptionData, {
+                  onSuccess: () => {
+                    handleClose()
+                  }
+                })
+              }}
+              disabled={consumptionMutation.isPending || !actionData.sku || !actionData.qtyUsed}
+              className={`flex-1 py-4 rounded-2xl font-bold shadow-lg transition-all disabled:opacity-50 disabled:shadow-none active:scale-[0.98] ${
+                isInsufficientStock 
+                  ? 'bg-gradient-to-r from-red-500 to-red-600 text-white shadow-red-500/30' 
+                  : 'bg-gradient-to-r from-orange-500 to-orange-600 text-white shadow-orange-500/30'
+              }`}
+            >
+              {consumptionMutation.isPending ? 'Recording...' : isInsufficientStock ? '⚠️ Confirm' : 'Confirm'}
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // --- Record Output Full-Screen Dialog ---
+  const renderRecordOutputDialog = () => {
+    if (!selectedJob) return null
+
+    const summary = calculateProductionSummary(selectedJob)
+    const {
+      currentStageInputUOM,
+      currentStageOutputUOM,
+      numberUp,
+      totalProducedInStage,
+      plannedQty,
+      plannedUOM,
+      completionThreshold,
+      completionThresholdUpper,
+      convertToOutputUOM
+    } = summary
+
+    const qtyGood = actionData.qtyGood || 0
+    const qtyScrap = actionData.qtyScrap || 0
+    const thisEntryInOutputUOM = convertToOutputUOM(qtyGood)
+    const totalAfterThisEntry = totalProducedInStage + thisEntryInOutputUOM
+    const remaining = plannedQty - totalAfterThisEntry
+    const isIncomplete = plannedQty > 0 && totalAfterThisEntry < completionThreshold
+    const isOverLimit = plannedQty > 0 && totalAfterThisEntry > completionThresholdUpper
+
+    // Initialize runDateTime if not set
+    if (!actionData.runDateTime) {
+      const now = new Date()
+      const off = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+      setActionData({ ...actionData, runDateTime: off.toISOString().slice(0, 16) })
+    }
+
+    const handleClose = () => {
+      setShowProduceDialog(false)
+      setActionData({})
+    }
+
+    return (
+      <div className="fixed inset-0 z-[60] flex flex-col bg-white">
+        {/* Header */}
+        <div className="flex-shrink-0 bg-gradient-to-r from-blue-500 to-blue-600 text-white px-4 py-4 safe-area-inset-top">
+          <div className="flex items-center justify-between">
+            <button 
+              onClick={handleClose}
+              className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center active:bg-white/30"
+            >
+              <XMarkIcon className="h-6 w-6 text-white" />
+            </button>
+            <div className="text-center flex-1">
+              <h2 className="text-lg font-bold">Record Output</h2>
+              <p className="text-sm text-blue-100">{selectedJob.code}</p>
+            </div>
+            <div className="w-10" /> {/* Spacer for centering */}
+          </div>
+        </div>
+
+        {/* Scrollable Content */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {/* Job Info Card */}
+          <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-2xl p-4">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 bg-blue-500 rounded-xl flex items-center justify-center">
+                <CheckCircleIcon className="h-6 w-6 text-white" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-gray-900 truncate">{selectedJob.productName}</p>
+                <p className="text-sm text-blue-600">Stage: {getStageName(selectedJob.currentStageId, selectedJob.status)}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Production Summary */}
+          {plannedQty > 0 && (
+            <div className="bg-white border-2 border-blue-200 rounded-2xl p-4">
+              <h4 className="font-bold text-gray-900 mb-3">Production Progress</h4>
+              <div className="grid grid-cols-3 gap-3 text-center mb-3">
+                <div className="bg-gray-50 rounded-xl p-3">
+                  <span className="text-xs text-gray-500 block">Planned</span>
+                  <div className="font-bold text-gray-900">{plannedQty.toLocaleString()}</div>
+                  <span className="text-xs text-gray-500">{plannedUOM}</span>
+                </div>
+                <div className="bg-blue-50 rounded-xl p-3">
+                  <span className="text-xs text-blue-600 block">Produced</span>
+                  <div className="font-bold text-blue-600">{totalProducedInStage.toLocaleString()}</div>
+                  <span className="text-xs text-blue-600">{currentStageOutputUOM || 'units'}</span>
+                </div>
+                <div className="bg-orange-50 rounded-xl p-3">
+                  <span className="text-xs text-orange-600 block">Remaining</span>
+                  <div className="font-bold text-orange-600">{Math.max(0, remaining).toLocaleString()}</div>
+                  <span className="text-xs text-orange-600">{currentStageOutputUOM || 'units'}</span>
+                </div>
+              </div>
+              
+              {/* Progress Bar */}
+              <div className="w-full bg-gray-200 rounded-full h-3 mb-2">
+                <div
+                  className={`h-3 rounded-full transition-all ${
+                    isOverLimit ? 'bg-red-500' : isIncomplete ? 'bg-amber-500' : 'bg-green-500'
+                  }`}
+                  style={{ width: `${Math.min(100, (totalProducedInStage / plannedQty) * 100)}%` }}
+                />
+              </div>
+              
+              {isIncomplete && (
+                <div className="bg-amber-100 border border-amber-200 rounded-xl px-4 py-2 text-sm text-amber-800">
+                  <span className="font-bold">⚠️ Incomplete:</span> Need {completionThreshold.toLocaleString()}+ {currentStageOutputUOM || 'units'}
+                </div>
+              )}
+              {isOverLimit && (
+                <div className="bg-red-100 border border-red-200 rounded-xl px-4 py-2 text-sm text-red-800">
+                  <span className="font-bold">⚠️ Over Limit:</span> Max {completionThresholdUpper.toLocaleString()} {currentStageOutputUOM || 'units'}
+                </div>
+              )}
+              {!isIncomplete && !isOverLimit && totalAfterThisEntry > 0 && (
+                <div className="bg-green-100 border border-green-200 rounded-xl px-4 py-2 text-sm text-green-800">
+                  <span className="font-bold">✓ Within acceptable range</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Quantity Inputs - Large */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-bold text-gray-700 mb-2">
+                Good Qty ({currentStageInputUOM || 'units'})
+              </label>
+              <input
+                type="number"
+                min={0}
+                step="1"
+                placeholder="0"
+                className="w-full p-4 border-2 border-green-200 rounded-2xl focus:ring-4 focus:ring-green-500/20 focus:border-green-500 text-3xl font-bold text-center text-green-600"
+                value={qtyGood || ''}
+                onChange={e => setActionData({ ...actionData, qtyGood: Number(e.target.value) })}
+                autoFocus
+              />
+              {currentStageInputUOM && currentStageOutputUOM && currentStageInputUOM !== currentStageOutputUOM && numberUp > 0 && (
+                <p className="text-center text-sm text-blue-600 mt-2 font-medium">
+                  = {convertToOutputUOM(qtyGood || 0).toFixed(0)} {currentStageOutputUOM}
+                </p>
+              )}
+            </div>
+            <div>
+              <label className="block text-sm font-bold text-gray-700 mb-2">
+                Scrap ({currentStageInputUOM || 'units'})
+              </label>
+              <input
+                type="number"
+                min={0}
+                step="1"
+                placeholder="0"
+                className="w-full p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-gray-500/20 focus:border-gray-400 text-3xl font-bold text-center text-gray-500"
+                value={qtyScrap || ''}
+                onChange={e => setActionData({ ...actionData, qtyScrap: Number(e.target.value) })}
+              />
+            </div>
+          </div>
+
+          {/* Conversion Info */}
+          {currentStageInputUOM && currentStageOutputUOM && currentStageInputUOM !== currentStageOutputUOM && numberUp > 0 && (
+            <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-sm text-blue-800 text-center">
+              <span className="font-bold">Conversion:</span> {currentStageInputUOM} → {currentStageOutputUOM} (×{numberUp})
+            </div>
+          )}
+
+          {/* Date & Workcenter */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-bold text-gray-700 mb-2">Date & Time</label>
+              <input
+                type="datetime-local"
+                value={actionData.runDateTime || ''}
+                onChange={e => setActionData({ ...actionData, runDateTime: e.target.value })}
+                className="w-full p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 text-base"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-bold text-gray-700 mb-2">Workcenter</label>
+              <select
+                value={actionData.workcenterId || selectedJob?.workcenterId || ''}
+                onChange={e => setActionData({ ...actionData, workcenterId: e.target.value || undefined })}
+                className="w-full p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 text-base bg-white"
+              >
+                <option value="">Unspecified</option>
+                {workcenters.map(w => (
+                  <option key={w.id} value={w.id}>{w.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Lot Number */}
+          <div>
+            <label className="block text-sm font-bold text-gray-700 mb-2">Lot Number (Optional)</label>
+            <input
+              type="text"
+              placeholder="Enter lot number"
+              className="w-full p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 text-base"
+              value={actionData.lot || ''}
+              onChange={e => setActionData({ ...actionData, lot: e.target.value })}
+            />
+          </div>
+
+          {/* Notes */}
+          <div>
+            <label className="block text-sm font-bold text-gray-700 mb-2">Notes (Optional)</label>
+            <textarea
+              placeholder="Add notes..."
+              rows={2}
+              className="w-full p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 resize-none text-base"
+              value={actionData.notes || ''}
+              onChange={e => setActionData({ ...actionData, notes: e.target.value })}
+            />
+          </div>
+        </div>
+
+        {/* Fixed Bottom Action Buttons */}
+        <div className="flex-shrink-0 p-4 bg-white border-t border-gray-200 safe-area-inset-bottom">
+          <div className="flex gap-3">
+            <button
+              onClick={handleClose}
+              className="flex-1 py-4 bg-gray-100 rounded-2xl font-bold text-gray-700 active:bg-gray-200 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => {
+                if (!qtyGood || qtyGood <= 0) {
+                  alert('Please enter Good Quantity to add production record.')
+                  return
+                }
+
+                if (isOverLimit) {
+                  alert(`⚠️ Cannot add record: Production quantity exceeds maximum limit.\n\nMaximum Allowed: ${completionThresholdUpper.toLocaleString()} ${currentStageOutputUOM || 'units'}\nCurrent Total After Entry: ${totalAfterThisEntry.toLocaleString()} ${currentStageOutputUOM || 'units'}`)
+                  return
+                }
+
+                const qtyGoodToSave = currentStageInputUOM === 'sheets' && currentStageOutputUOM === 'cartoon' && numberUp > 0
+                  ? convertToOutputUOM(qtyGood)
+                  : qtyGood
+                const qtyScrapToSave = currentStageInputUOM === 'sheets' && currentStageOutputUOM === 'cartoon' && numberUp > 0 && qtyScrap > 0
+                  ? convertToOutputUOM(qtyScrap)
+                  : qtyScrap
+
+                productionMutation.mutate({
+                  qtyGood: qtyGoodToSave,
+                  qtyScrap: qtyScrapToSave || undefined,
+                  lot: actionData.lot || undefined,
+                  stageId: selectedJob?.currentStageId,
+                  workcenterId: actionData.workcenterId || selectedJob?.workcenterId,
+                  operatorId: 'current-user',
+                  at: actionData.runDateTime ? new Date(actionData.runDateTime) : undefined,
+                  notes: actionData.notes || undefined
+                }, {
+                  onSuccess: () => {
+                    handleClose()
+                  }
+                })
+              }}
+              disabled={productionMutation.isPending || !qtyGood || qtyGood <= 0 || isOverLimit}
+              className={`flex-1 py-4 rounded-2xl font-bold shadow-lg transition-all disabled:opacity-50 disabled:shadow-none active:scale-[0.98] ${
+                isOverLimit
+                  ? 'bg-gradient-to-r from-red-500 to-red-600 text-white shadow-red-500/30 cursor-not-allowed'
+                  : 'bg-gradient-to-r from-green-500 to-green-600 text-white shadow-green-500/30'
+              }`}
+            >
+              {productionMutation.isPending ? 'Recording...' : isOverLimit ? 'Over Limit' : 'Save Output'}
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   // Debug info
   if (jobsError) {
     console.error('Jobs query error:', jobsError)
@@ -2346,6 +2476,12 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
       {/* Modals / Action Sheets */}
       {selectedJob && renderJobSheet()}
       {selectedProduct && renderProductSheet()}
+      
+      {/* Consume Material Full-Screen Dialog */}
+      {showConsumeDialog && selectedJob && renderConsumeMaterialDialog()}
+      
+      {/* Record Output Full-Screen Dialog */}
+      {showProduceDialog && selectedJob && renderRecordOutputDialog()}
 
       {/* Inventory Posting Modal */}
       {showInventoryPostingModal && selectedJob && (
