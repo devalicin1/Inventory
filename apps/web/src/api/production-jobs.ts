@@ -17,6 +17,7 @@ import {
   startAfter,
   DocumentSnapshot,
   setDoc,
+  onSnapshot,
 } from 'firebase/firestore'
 import { getDownloadURL, ref, uploadBytes, deleteObject } from 'firebase/storage'
 import { createStockTransaction, getProductByCode } from './inventory'
@@ -1606,4 +1607,203 @@ export async function updateCustomer(
 
 export async function deleteCustomer(workspaceId: string, customerId: string): Promise<void> {
   await deleteDoc(doc(db, 'workspaces', workspaceId, 'customers', customerId))
+}
+
+// ===== REAL-TIME SUBSCRIPTIONS =====
+
+/**
+ * Subscribe to real-time updates for all jobs in a workspace
+ * Returns an unsubscribe function
+ */
+export function subscribeToJobs(
+  workspaceId: string,
+  onData: (jobs: Job[]) => void,
+  onError?: (error: Error) => void
+): () => void {
+  const col = collection(db, 'workspaces', workspaceId, 'jobs')
+  const q = query(col, orderBy('updatedAt', 'desc'))
+  
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const jobs = snapshot.docs.map(d => ({
+        id: d.id,
+        ...d.data()
+      })) as Job[]
+      onData(jobs)
+    },
+    (error) => {
+      console.error('[subscribeToJobs] Error:', error)
+      onError?.(error)
+    }
+  )
+}
+
+/**
+ * Subscribe to real-time updates for a single job
+ * Returns an unsubscribe function
+ */
+export function subscribeToJob(
+  workspaceId: string,
+  jobId: string,
+  onData: (job: Job | null) => void,
+  onError?: (error: Error) => void
+): () => void {
+  const docRef = doc(db, 'workspaces', workspaceId, 'jobs', jobId)
+  
+  return onSnapshot(
+    docRef,
+    (snapshot) => {
+      if (snapshot.exists()) {
+        onData({ id: snapshot.id, ...snapshot.data() } as Job)
+      } else {
+        onData(null)
+      }
+    },
+    (error) => {
+      console.error('[subscribeToJob] Error:', error)
+      onError?.(error)
+    }
+  )
+}
+
+/**
+ * Subscribe to real-time updates for job consumptions
+ */
+export function subscribeToJobConsumptions(
+  workspaceId: string,
+  jobId: string,
+  onData: (consumptions: Consumption[]) => void,
+  onError?: (error: Error) => void
+): () => void {
+  const col = collection(db, 'workspaces', workspaceId, 'jobs', jobId, 'consumptions')
+  const q = query(col, orderBy('createdAt', 'desc'))
+  
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const consumptions = snapshot.docs.map(d => ({
+        id: d.id,
+        ...d.data()
+      })) as Consumption[]
+      onData(consumptions)
+    },
+    (error) => {
+      console.error('[subscribeToJobConsumptions] Error:', error)
+      onError?.(error)
+    }
+  )
+}
+
+/**
+ * Subscribe to real-time updates for job production runs
+ */
+export function subscribeToJobProductionRuns(
+  workspaceId: string,
+  jobId: string,
+  onData: (runs: ProductionRun[]) => void,
+  onError?: (error: Error) => void
+): () => void {
+  const col = collection(db, 'workspaces', workspaceId, 'jobs', jobId, 'productionRuns')
+  // Use 'at' field for ordering to match listJobProductionRuns
+  const q = query(col, orderBy('at', 'desc'))
+  
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const runs = snapshot.docs.map(d => ({
+        id: d.id,
+        ...d.data()
+      })) as ProductionRun[]
+      onData(runs)
+    },
+    (error) => {
+      console.error('[subscribeToJobProductionRuns] Error:', error)
+      onError?.(error)
+    }
+  )
+}
+
+/**
+ * Subscribe to real-time updates for job history
+ */
+export function subscribeToJobHistory(
+  workspaceId: string,
+  jobId: string,
+  onData: (history: HistoryEntry[]) => void,
+  onError?: (error: Error) => void
+): () => void {
+  const col = collection(db, 'workspaces', workspaceId, 'jobs', jobId, 'history')
+  const q = query(col, orderBy('at', 'desc'))
+  
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const history = snapshot.docs.map(d => ({
+        id: d.id,
+        ...d.data()
+      })) as HistoryEntry[]
+      onData(history)
+    },
+    (error) => {
+      console.error('[subscribeToJobHistory] Error:', error)
+      onError?.(error)
+    }
+  )
+}
+
+/**
+ * Subscribe to real-time updates for job tickets
+ */
+export function subscribeToJobTickets(
+  workspaceId: string,
+  jobId: string,
+  onData: (tickets: Ticket[]) => void,
+  onError?: (error: Error) => void
+): () => void {
+  const col = collection(db, 'workspaces', workspaceId, 'jobs', jobId, 'tickets')
+  const q = query(col, orderBy('createdAt', 'desc'))
+  
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const tickets = snapshot.docs.map(d => ({
+        id: d.id,
+        ...d.data()
+      })) as Ticket[]
+      onData(tickets)
+    },
+    (error) => {
+      console.error('[subscribeToJobTickets] Error:', error)
+      onError?.(error)
+    }
+  )
+}
+
+/**
+ * Subscribe to real-time updates for job time logs
+ */
+export function subscribeToJobTimeLogs(
+  workspaceId: string,
+  jobId: string,
+  onData: (timeLogs: TimeLog[]) => void,
+  onError?: (error: Error) => void
+): () => void {
+  const col = collection(db, 'workspaces', workspaceId, 'jobs', jobId, 'timelogs')
+  const q = query(col, orderBy('startedAt', 'desc'))
+  
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const timeLogs = snapshot.docs.map(d => ({
+        id: d.id,
+        ...d.data()
+      })) as TimeLog[]
+      onData(timeLogs)
+    },
+    (error) => {
+      console.error('[subscribeToJobTimeLogs] Error:', error)
+      onError?.(error)
+    }
+  )
 }

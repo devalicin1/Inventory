@@ -1,5 +1,5 @@
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { BrowserMultiFormatReader } from '@zxing/browser'
 import {
@@ -14,7 +14,10 @@ import {
   listJobProductionRuns,
   listJobConsumptions,
   listWorkcenters,
-  recalculateJobBomConsumption
+  recalculateJobBomConsumption,
+  subscribeToJob,
+  subscribeToJobConsumptions,
+  subscribeToJobProductionRuns
 } from '../api/production-jobs'
 import {
   getProductByCode,
@@ -69,6 +72,10 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
   // Dialog states for consume and produce
   const [showConsumeDialog, setShowConsumeDialog] = useState(false)
   const [showProduceDialog, setShowProduceDialog] = useState(false)
+  
+  // Local state for dialog production runs (fetched when dialog opens)
+  const [dialogProductionRuns, setDialogProductionRuns] = useState<any[]>([])
+  const [isLoadingDialogRuns, setIsLoadingDialogRuns] = useState(false)
 
   // Camera scanning state
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -107,19 +114,9 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
     enabled: !!workspaceId
   })
 
-  // Fetch production runs for selected job
-  const { data: productionRuns = [] } = useQuery({
-    queryKey: ['jobRuns', workspaceId, selectedJob?.id],
-    queryFn: () => listJobProductionRuns(workspaceId, selectedJob!.id),
-    enabled: !!selectedJob?.id
-  })
-
-  // Fetch consumptions for selected job
-  const { data: consumptions = [] } = useQuery({
-    queryKey: ['jobConsumptions', workspaceId, selectedJob?.id],
-    queryFn: () => listJobConsumptions(workspaceId, selectedJob!.id),
-    enabled: !!selectedJob?.id
-  })
+  // Real-time states for production runs and consumptions
+  const [productionRuns, setProductionRuns] = useState<any[]>([])
+  const [consumptions, setConsumptions] = useState<any[]>([])
 
   // Fetch workcenters
   const { data: workcenters = [] } = useQuery({
@@ -127,6 +124,128 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
     queryFn: () => listWorkcenters(workspaceId),
     enabled: !!workspaceId
   })
+
+  // Fetch initial production runs when job is selected
+  const { data: initialProductionRuns, refetch: refetchProductionRuns, isLoading: isLoadingProductionRuns } = useQuery({
+    queryKey: ['jobRuns', workspaceId, selectedJob?.id],
+    queryFn: () => selectedJob ? listJobProductionRuns(workspaceId, selectedJob.id) : [],
+    enabled: !!workspaceId && !!selectedJob?.id,
+    staleTime: 0, // Always fetch fresh data
+    refetchOnMount: true, // Always refetch when component mounts
+    refetchOnWindowFocus: false
+  })
+
+  // When dialog opens, immediately fetch production runs and set to dialog-specific state
+  useEffect(() => {
+    if (showProduceDialog && selectedJob?.id && workspaceId) {
+      setIsLoadingDialogRuns(true)
+      // Immediately fetch and set production runs when dialog opens
+      const fetchRuns = async () => {
+        try {
+          const runs = await listJobProductionRuns(workspaceId, selectedJob.id)
+          setDialogProductionRuns(runs)
+          setProductionRuns(runs) // Also update main state
+          console.log('[ProductionScanner] Fetched production runs on dialog open:', runs.length, runs)
+          setIsLoadingDialogRuns(false)
+        } catch (error) {
+          console.error('[ProductionScanner] Error fetching production runs:', error)
+          setIsLoadingDialogRuns(false)
+        }
+      }
+      fetchRuns()
+    } else {
+      // Reset dialog state when dialog closes
+      setDialogProductionRuns([])
+      setIsLoadingDialogRuns(false)
+    }
+  }, [showProduceDialog, selectedJob?.id, workspaceId])
+
+  // Fetch initial consumptions when job is selected
+  const { data: initialConsumptions } = useQuery({
+    queryKey: ['jobConsumptions', workspaceId, selectedJob?.id],
+    queryFn: () => selectedJob ? listJobConsumptions(workspaceId, selectedJob.id) : [],
+    enabled: !!workspaceId && !!selectedJob?.id,
+    staleTime: 0 // Always fetch fresh data
+  })
+
+  // Real-time subscription for selected job - updates immediately when job changes
+  useEffect(() => {
+    if (!workspaceId || !selectedJob?.id) return
+
+    const unsubscribe = subscribeToJob(
+      workspaceId,
+      selectedJob.id,
+      (updatedJob) => {
+        if (updatedJob) {
+          // Update the selected job with real-time data
+          setSelectedJob(updatedJob)
+        } else {
+          // Job was deleted
+          setSelectedJob(null)
+        }
+      },
+      (error) => {
+        console.error('[ProductionScanner] Job subscription error:', error)
+      }
+    )
+
+    return () => {
+      unsubscribe()
+    }
+  }, [workspaceId, selectedJob?.id])
+
+  // Real-time subscription for production runs
+  useEffect(() => {
+    if (!workspaceId || !selectedJob?.id) {
+      setProductionRuns([])
+      return
+    }
+
+    // First, set initial data if available (before subscription starts)
+    if (initialProductionRuns && initialProductionRuns.length > 0) {
+      setProductionRuns(initialProductionRuns)
+    }
+
+    const unsubscribe = subscribeToJobProductionRuns(
+      workspaceId,
+      selectedJob.id,
+      (runs) => {
+        console.log('[ProductionScanner] Real-time subscription update:', runs.length, 'runs')
+        // Update with latest data from subscription
+        setProductionRuns(runs)
+        // Always update dialogProductionRuns if dialog is open
+        if (showProduceDialog) {
+          setDialogProductionRuns(runs)
+        }
+      }
+    )
+
+    return () => unsubscribe()
+  }, [workspaceId, selectedJob?.id, initialProductionRuns, showProduceDialog])
+
+  // Initialize consumptions from query, then update via real-time subscription
+  useEffect(() => {
+    if (!workspaceId || !selectedJob?.id) {
+      setConsumptions([])
+      return
+    }
+
+    // First, set initial data if available (before subscription starts)
+    if (initialConsumptions && initialConsumptions.length > 0) {
+      setConsumptions(initialConsumptions)
+    }
+
+    const unsubscribe = subscribeToJobConsumptions(
+      workspaceId,
+      selectedJob.id,
+      (consumptions) => {
+        // Always update with latest data from subscription
+        setConsumptions(consumptions)
+      }
+    )
+
+    return () => unsubscribe()
+  }, [workspaceId, selectedJob?.id, initialConsumptions])
 
   // Fetch products for stock checking and inventory posting
   const { data: products = [] } = useQuery({
@@ -139,9 +258,24 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
   const statusMutation = useMutation({
     mutationFn: ({ jobId, status, blockReason }: { jobId: string; status: Job['status']; blockReason?: string }) =>
       setJobStatus(workspaceId, jobId, status, blockReason),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['jobs', workspaceId] })
-      resetSelection()
+    onSuccess: async (_, variables) => {
+      // Optimistic update: immediately update selectedJob state
+      if (selectedJob && selectedJob.id === variables.jobId) {
+        setSelectedJob({
+          ...selectedJob,
+          status: variables.status,
+          ...(variables.blockReason && { blockReason: variables.blockReason }),
+          updatedAt: new Date() as any
+        })
+      }
+      
+      // Invalidate ALL job queries (including filtered ones) using wildcard
+      await queryClient.invalidateQueries({ queryKey: ['jobs', workspaceId], exact: false })
+      await queryClient.invalidateQueries({ queryKey: ['job', workspaceId, variables.jobId] })
+      
+      // Real-time subscription will update selectedJob with server data
+      // Use resetSelectionAfterAction to allow re-scanning the same code
+      resetSelectionAfterAction()
     },
   })
 
@@ -160,36 +294,29 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
       }
       return createConsumption(workspaceId, selectedJob!.id, data)
     },
-    onSuccess: async () => {
-      // Wait a bit for Firestore to update
-      await new Promise(resolve => setTimeout(resolve, 500))
+    onSuccess: async (_, variables) => {
+      // Optimistic update: immediately add consumption to state
+      if (selectedJob && variables) {
+        const newConsumption = {
+          id: `temp-${Date.now()}`,
+          jobId: selectedJob.id,
+          itemId: variables.itemId,
+          sku: variables.sku,
+          name: variables.name,
+          qty: variables.qty || 0,
+          uom: variables.uom,
+          at: new Date(),
+          ...variables
+        }
+        setConsumptions(prev => [newConsumption, ...prev])
+      }
       
-      // Invalidate all relevant queries to ensure UI updates
-      await queryClient.invalidateQueries({ queryKey: ['jobs', workspaceId] })
+      // Invalidate ALL job queries (including filtered ones) using wildcard
+      await queryClient.invalidateQueries({ queryKey: ['jobs', workspaceId], exact: false })
       await queryClient.invalidateQueries({ queryKey: ['job', workspaceId, selectedJob!.id] })
       await queryClient.invalidateQueries({ queryKey: ['jobConsumptions', workspaceId, selectedJob!.id] })
       
-      // Force refetch jobs to get updated BOM
-      const updatedJobs = await queryClient.fetchQuery({ 
-        queryKey: ['jobs', workspaceId],
-        queryFn: () => listJobs(workspaceId),
-        staleTime: 0 // Force fresh data
-      })
-      
-      // Refresh selected job data from the updated jobs list
-      if (selectedJob) {
-        const updatedJob = updatedJobs?.jobs?.find(j => j.id === selectedJob.id)
-        if (updatedJob) {
-          console.log('[ProductionScanner] Updating selectedJob with new BOM data:', {
-            oldConsumed: selectedJob.bom?.[0]?.consumed,
-            newConsumed: updatedJob.bom?.[0]?.consumed
-          })
-          setSelectedJob(updatedJob)
-        } else {
-          console.warn('[ProductionScanner] Could not find updated job in jobs list')
-        }
-      }
-      
+      // Real-time subscription will update selectedJob and consumptions with server data
       setActiveAction(null)
       setActionData({})
       alert('Consumption recorded!')
@@ -201,11 +328,29 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
 
   const productionMutation = useMutation({
     mutationFn: (data: any) => createProductionRun(workspaceId, selectedJob!.id, data),
-    onSuccess: (_, variables) => {
+    onSuccess: async (_, variables) => {
       const job = selectedJob
-      queryClient.invalidateQueries({ queryKey: ['jobs', workspaceId] })
-      queryClient.invalidateQueries({ queryKey: ['jobRuns', workspaceId, job!.id] })
-      queryClient.invalidateQueries({ queryKey: ['allJobRuns', workspaceId] })
+      
+      // Optimistic update: immediately add production run to state
+      if (job && variables) {
+        const newRun = {
+          id: `temp-${Date.now()}`,
+          jobId: job.id,
+          stageId: variables.stageId || job.currentStageId,
+          qtyGood: variables.qtyGood || 0,
+          qtyScrap: variables.qtyScrap || 0,
+          lot: variables.lot,
+          workcenterId: variables.workcenterId || job.workcenterId,
+          at: new Date(),
+          ...variables
+        }
+        setProductionRuns(prev => [newRun, ...prev])
+      }
+      
+      // Invalidate ALL job queries (including filtered ones) using wildcard
+      await queryClient.invalidateQueries({ queryKey: ['jobs', workspaceId], exact: false })
+      await queryClient.invalidateQueries({ queryKey: ['jobRuns', workspaceId, job!.id] })
+      await queryClient.invalidateQueries({ queryKey: ['allJobRuns', workspaceId] })
       
       // Show success message with details
       if (job) {
@@ -257,37 +402,35 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
 
   const timeLogMutation = useMutation({
     mutationFn: (data: any) => createTimeLog(workspaceId, selectedJob!.id, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['jobs', workspaceId] })
+    onSuccess: async () => {
+      // Invalidate ALL job queries (including filtered ones) using wildcard
+      await queryClient.invalidateQueries({ queryKey: ['jobs', workspaceId], exact: false })
+      resetSelectionAfterAction()
     },
   })
 
   const moveStageMutation = useMutation({
     mutationFn: ({ jobId, newStageId, note }: { jobId: string; newStageId: string; note?: string }) =>
       moveJobToStage(workspaceId, jobId, newStageId, 'current-user', note),
-    onSuccess: async () => {
-      // Invalidate queries first
-      await queryClient.invalidateQueries({ queryKey: ['jobs', workspaceId] })
+    onSuccess: async (_, variables) => {
+      // Optimistic update: immediately update selectedJob state
+      if (selectedJob && selectedJob.id === variables.jobId) {
+        setSelectedJob({
+          ...selectedJob,
+          currentStageId: variables.newStageId,
+          updatedAt: new Date() as any
+        })
+      }
+      
+      // Invalidate ALL job queries (including filtered ones) using wildcard
+      await queryClient.invalidateQueries({ queryKey: ['jobs', workspaceId], exact: false })
       await queryClient.invalidateQueries({ queryKey: ['job', workspaceId, selectedJob?.id] })
       
-      // Fetch fresh data and update selected job
-      if (selectedJob) {
-        try {
-          const updatedJobs = await queryClient.fetchQuery({ 
-            queryKey: ['jobs', workspaceId],
-            queryFn: () => listJobs(workspaceId)
-          })
-          const updatedJob = updatedJobs?.jobs?.find(j => j.id === selectedJob.id)
-          if (updatedJob) {
-            setSelectedJob(updatedJob)
-          }
-        } catch (error) {
-          console.error('Failed to refresh job after stage move:', error)
-          // Fallback: try to find in current jobsData if available
-          const updatedJob = jobsData?.jobs?.find(j => j.id === selectedJob.id)
-          if (updatedJob) setSelectedJob(updatedJob)
-        }
-      }
+      // Don't reset selection - keep the job selected so user can see the updated stage
+      // Real-time subscription will update selectedJob with server data automatically
+      // Only clear action data, not the selected job
+      setActiveAction(null)
+      setActionData({})
     },
     onError: (error: any) => {
       alert(error?.message || 'Failed to move job to next stage')
@@ -296,9 +439,20 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
 
   const handleScan = async (code: string) => {
     const trimmedCode = code.trim()
+    const now = Date.now()
+    
+    // If user dismissed this code, don't open it again until they scan something else
+    if (dismissedCode.current) {
+      const dismissed = dismissedCode.current.toLowerCase()
+      if (trimmedCode.toLowerCase() === dismissed) {
+        console.log('Scan blocked - this code was dismissed by user:', trimmedCode)
+        return
+      }
+      // User scanned a different code, clear the dismissed code
+      dismissedCode.current = null
+    }
     
     // Prevent duplicate scans within 2 seconds
-    const now = Date.now()
     if (lastScanTime > 0 && (now - lastScanTime) < 2000) {
       // Same code scanned too quickly, ignore
       const recentScan = recentScans[0]
@@ -608,14 +762,17 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
   }
 
   // Calculate production summary for current stage
-  const calculateProductionSummary = (job: Job) => {
+  const calculateProductionSummary = (job: Job, customProductionRuns?: any[]) => {
     const currentStageInfo = getStageInfo(job.currentStageId) as any
     const currentStageInputUOM = currentStageInfo?.inputUOM || ''
     const currentStageOutputUOM = currentStageInfo?.outputUOM || ''
     const numberUp = job.productionSpecs?.numberUp || 1
 
+    // Use custom production runs if provided, otherwise use state
+    const runsToUse = customProductionRuns || productionRuns
+
     // Get current stage runs
-    const currentStageRuns = productionRuns.filter((r: any) => r.stageId === job.currentStageId)
+    const currentStageRuns = runsToUse.filter((r: any) => r.stageId === job.currentStageId)
     const totalProducedInStage = currentStageRuns.reduce((sum: number, r: any) => {
       return sum + Number(r.qtyGood || 0)
     }, 0)
@@ -666,12 +823,38 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
     setRecentScans(prev => [{ code, type, timestamp: new Date() }, ...prev.slice(0, 9)])
   }
 
-  const resetSelection = () => {
+  // Track dismissed codes - these won't trigger modal again until user scans a DIFFERENT code first
+  const dismissedCode = useRef<string | null>(null)
+  
+  // Reset selection after successful action (allows re-scanning same code)
+  const resetSelectionAfterAction = () => {
+    // Clear dismissed code so the same code can be scanned again
+    dismissedCode.current = null
     setSelectedJob(null)
     setSelectedProduct(null)
     setActiveAction(null)
     setActionData({})
+    setLastScannedCode(null)
   }
+  
+  // Reset selection when user dismisses (X button) - blocks same code from re-opening
+  const resetSelectionDismissed = () => {
+    // Remember the code that was dismissed so it won't re-open automatically
+    if (selectedJob) {
+      dismissedCode.current = selectedJob.code || selectedJob.sku || selectedJob.id
+    } else if (selectedProduct) {
+      dismissedCode.current = selectedProduct.sku || selectedProduct.id
+    }
+    
+    setSelectedJob(null)
+    setSelectedProduct(null)
+    setActiveAction(null)
+    setActionData({})
+    setLastScannedCode(null)
+  }
+  
+  // Alias for backward compatibility - uses dismiss behavior by default
+  const resetSelection = resetSelectionDismissed
 
   const handleManualSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -1206,6 +1389,21 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
     </div>
   )
 
+  // Memoize stage progress calculations to ensure they update when productionRuns changes
+  const stageProgressesMemo = useMemo(() => {
+    if (!selectedJob) return []
+    const plannedStages = selectedJob.plannedStageIds || []
+    return plannedStages
+      .map(stageId => calculateStageProgress(selectedJob, stageId))
+      .filter((p): p is NonNullable<typeof p> => p !== null)
+  }, [selectedJob, productionRuns, workflows])
+
+  // Memoize production summary to ensure it updates when productionRuns changes
+  const productionSummaryMemo = useMemo(() => {
+    if (!selectedJob) return null
+    return calculateProductionSummary(selectedJob)
+  }, [selectedJob, productionRuns, workflows, selectedJob?.currentStageId, selectedJob?.bom, selectedJob?.packaging, selectedJob?.productionSpecs])
+
   // --- Job Action Sheet ---
   const renderJobSheet = () => {
     if (!selectedJob) return null
@@ -1336,9 +1534,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                 )
               }
 
-              const stageProgresses = plannedStages
-                .map(stageId => calculateStageProgress(selectedJob, stageId))
-                .filter((p): p is NonNullable<typeof p> => p !== null)
+              const stageProgresses = stageProgressesMemo
 
               return (
                 <div className="mt-4 space-y-3">
@@ -1491,8 +1687,8 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                 )}
 
                 {/* Next Stage Button */}
-                {nextStage && (isInProgress || isReleased) && !isBlocked && (() => {
-                  const currentStageSummary = calculateProductionSummary(selectedJob)
+                {nextStage && (isInProgress || isReleased) && !isBlocked && productionSummaryMemo && (() => {
+                  const currentStageSummary = productionSummaryMemo
                   const {
                     totalProducedInStage,
                     plannedQty,
@@ -1577,7 +1773,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                 )}
 
                 {/* Complete Job Button */}
-                {isInProgress && !isBlocked && (() => {
+                {isInProgress && !isBlocked && productionSummaryMemo && (() => {
                   // Check if we're on the last stage
                   const planned: string[] = (selectedJob as any).plannedStageIds || []
                   const workflow = workflows.find(w => w.id === selectedJob.workflowId)
@@ -1587,7 +1783,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                     : (allStages.length > 0 && allStages[allStages.length - 1]?.id === selectedJob.currentStageId)
                   
                   // Calculate threshold for current stage
-                  const currentStageSummary = calculateProductionSummary(selectedJob)
+                  const currentStageSummary = productionSummaryMemo
                   const {
                     totalProducedInStage,
                     plannedQty,
@@ -1625,10 +1821,10 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                         setShowInventoryPostingModal(true)
                       }}
                       disabled={requireOutput && (isIncomplete || isOverLimit)}
-                      className={`w-full py-3 rounded-xl font-semibold shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center space-x-2 transition-colors ${
+                      className={`w-full py-5 rounded-2xl font-bold shadow-lg disabled:opacity-50 disabled:shadow-none disabled:cursor-not-allowed flex items-center justify-center gap-3 transition-all active:scale-[0.98] ${
                         requireOutput && (isIncomplete || isOverLimit)
                           ? 'bg-gray-400 text-white cursor-not-allowed'
-                          : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                          : 'bg-gradient-to-r from-emerald-500 to-emerald-600 text-white shadow-emerald-500/30'
                       }`}
                       title={
                         requireOutput && isIncomplete
@@ -1640,8 +1836,8 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                               : undefined
                       }
                     >
-                      <CheckCircleIcon className="h-5 w-5" />
-                      <span>Complete Job</span>
+                      <CheckCircleIcon className="h-7 w-7" />
+                      <span className="text-lg">Complete Job</span>
                     </button>
                   )
                 })()}
@@ -2189,7 +2385,57 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
   const renderRecordOutputDialog = () => {
     if (!selectedJob) return null
 
-    const summary = calculateProductionSummary(selectedJob)
+    // Priority order: dialogProductionRuns (freshly fetched) > productionRuns (state) > initialProductionRuns (query cache)
+    const effectiveProductionRuns = dialogProductionRuns.length > 0
+      ? dialogProductionRuns
+      : (productionRuns.length > 0 
+        ? productionRuns 
+        : (initialProductionRuns || []))
+
+    // Debug: Log production runs to verify data is loaded
+    console.log('[ProductionScanner] Dialog opened - Production Runs:', {
+      jobId: selectedJob.id,
+      jobStatus: selectedJob.status,
+      dialogProductionRunsCount: dialogProductionRuns.length,
+      productionRunsCount: productionRuns.length,
+      initialProductionRunsCount: initialProductionRuns?.length || 0,
+      effectiveProductionRunsCount: effectiveProductionRuns.length,
+      isLoading: isLoadingDialogRuns,
+      effectiveProductionRuns: effectiveProductionRuns
+    })
+
+    // Show loading state if data is being fetched
+    if (isLoadingDialogRuns && effectiveProductionRuns.length === 0) {
+      return (
+        <div className="fixed inset-0 z-[60] flex flex-col bg-white">
+          <div className="flex-shrink-0 bg-gradient-to-r from-blue-500 to-blue-600 text-white px-4 py-4 safe-area-inset-top">
+            <div className="flex items-center justify-between">
+              <button 
+                onClick={() => setShowProduceDialog(false)}
+                className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center active:bg-white/30"
+              >
+                <XMarkIcon className="h-6 w-6 text-white" />
+              </button>
+              <div className="text-center flex-1">
+                <h2 className="text-lg font-bold">Record Output</h2>
+                <p className="text-sm text-blue-100">{selectedJob.code}</p>
+              </div>
+              <div className="w-10" />
+            </div>
+          </div>
+          <div className="flex-1 flex items-center justify-center">
+            <div className="text-center">
+              <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+              <p className="text-gray-600 font-medium">Loading production data...</p>
+            </div>
+          </div>
+        </div>
+      )
+    }
+
+    // Always recalculate using effective production runs to ensure fresh data
+    // This ensures the dialog shows the latest production runs even if state is empty
+    const summary = calculateProductionSummary(selectedJob, effectiveProductionRuns)
     const {
       currentStageInputUOM,
       currentStageOutputUOM,

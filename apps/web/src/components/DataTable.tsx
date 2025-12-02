@@ -34,12 +34,12 @@ export function DataTable<T extends Record<string, any>>({
   onToggleSelectAll,
 }: DataTableProps<T>) {
   return (
-    <div className={`overflow-x-auto ${className}`}>
-      <table className="min-w-full divide-y divide-gray-300">
+    <div className={`overflow-hidden ${className}`}>
+      <table className="w-full table-fixed divide-y divide-gray-300">
         <thead className="bg-gray-50">
           <tr>
             {selectable && (
-              <th className="px-4 py-3.5">
+              <th className="w-10 px-2 py-2">
                 <input
                   type="checkbox"
                   aria-label="Select all"
@@ -52,12 +52,12 @@ export function DataTable<T extends Record<string, any>>({
               <th
                 key={String(column.key)}
                 scope="col"
-                className="px-6 py-3.5 text-left text-xs font-semibold text-gray-900 uppercase tracking-wide"
+                className={`px-2 py-2 text-left text-xs font-semibold text-gray-900 uppercase tracking-wide ${column.className || ''}`}
               >
                 {column.label}
               </th>
             ))}
-            <th scope="col" className="relative py-3.5 pl-3 pr-4 sm:pr-6">
+            <th scope="col" className="w-auto py-2 pl-2 pr-3">
               <span className="sr-only">Actions</span>
             </th>
           </tr>
@@ -69,7 +69,7 @@ export function DataTable<T extends Record<string, any>>({
               className={`hover:bg-gray-50 ${onRowClick ? 'cursor-pointer' : ''}`}
             >
               {selectable && (
-                <td className="px-4 py-4">
+                <td className="px-2 py-2">
                   <input
                     type="checkbox"
                     checked={selectedIds.includes(getId ? getId(item) : String(index))}
@@ -81,7 +81,8 @@ export function DataTable<T extends Record<string, any>>({
               {columns.map((column) => (
                 <td
                   key={String(column.key)}
-                  className={`whitespace-nowrap px-6 py-4 text-sm text-gray-900 ${column.className || ''}`}
+                  className={`px-2 py-2 text-sm text-gray-900 truncate ${column.className || ''}`}
+                  onClick={() => onRowClick?.(item)}
                 >
                   {column.render 
                     ? column.render(item[column.key], item)
@@ -89,7 +90,7 @@ export function DataTable<T extends Record<string, any>>({
                   }
                 </td>
               ))}
-              <td className="relative whitespace-nowrap py-4 pl-3 pr-4 text-right text-sm font-medium sm:pr-6">
+              <td className="py-2 pl-2 pr-3 text-right text-sm font-medium">
                 {renderActions ? (
                   renderActions(item)
                 ) : (

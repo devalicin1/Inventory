@@ -862,12 +862,31 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
               </div>
             )}
 
-            {/* Quick Stats Cards - Desktop only */}
-            <div className="hidden lg:block space-y-3">
-              <div className="bg-white p-4 rounded-xl border-2 border-gray-200 shadow-md hover:shadow-lg transition-shadow">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">In Stock</span>
-                  <div className="flex items-center gap-1">
+            {/* Quick Stats Cards - Premium Desktop Design */}
+            <div className="hidden lg:block space-y-4">
+              {/* Stock Card - Premium */}
+              <div className={`relative overflow-hidden rounded-2xl border-2 shadow-lg transition-all duration-300 hover:shadow-xl ${
+                onHand <= 0 
+                  ? 'bg-gradient-to-br from-red-50 via-rose-50 to-red-100 border-red-300' 
+                  : onHand <= (product.minLevelBox || 0) 
+                    ? 'bg-gradient-to-br from-amber-50 via-orange-50 to-amber-100 border-amber-300' 
+                    : 'bg-gradient-to-br from-emerald-50 via-green-50 to-emerald-100 border-emerald-300'
+              }`}>
+                {/* Background pattern */}
+                <div className="absolute inset-0 opacity-10">
+                  <div className="absolute inset-0" style={{ backgroundImage: 'radial-gradient(circle, currentColor 1px, transparent 1px)', backgroundSize: '16px 16px' }} />
+                </div>
+                
+                <div className="relative p-5">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <div className={`p-2 rounded-xl ${
+                        onHand <= 0 ? 'bg-red-500' : onHand <= (product.minLevelBox || 0) ? 'bg-amber-500' : 'bg-emerald-500'
+                      } shadow-lg`}>
+                        <CubeIcon className="w-5 h-5 text-white" />
+                      </div>
+                      <span className="text-xs font-bold text-gray-600 uppercase tracking-widest">In Stock</span>
+                    </div>
                     <button
                       onClick={async () => {
                         if (!workspaceId) return
@@ -881,57 +900,108 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
                           alert('Failed to recalculate stock: ' + (e instanceof Error ? e.message : 'Unknown error'))
                         }
                       }}
-                      className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors active:scale-95"
+                      className="p-2 hover:bg-white/50 rounded-xl transition-all active:scale-95"
                       title="Recalculate stock from transaction history"
                     >
-                      <ArrowPathIcon className="w-4 h-4 text-gray-400 hover:text-blue-500 transition-colors" />
+                      <ArrowPathIcon className="w-5 h-5 text-gray-500 hover:text-blue-600 transition-colors" />
                     </button>
-                    <CubeIcon className="w-5 h-5 text-blue-500" />
                   </div>
-                </div>
-                <div className="flex items-baseline gap-2 mb-3">
-                  <span className="text-4xl font-bold text-gray-900">{onHand}</span>
-                  <span className="text-base text-gray-500 font-medium">{product.uom || 'Units'}</span>
-                </div>
+                  
+                  <div className="flex items-baseline gap-2 mb-4">
+                    <span className={`text-5xl font-black tracking-tight ${
+                      onHand <= 0 ? 'text-red-600' : onHand <= (product.minLevelBox || 0) ? 'text-amber-600' : 'text-emerald-600'
+                    }`}>{onHand.toLocaleString('en-GB')}</span>
+                    <span className="text-lg text-gray-500 font-semibold">{product.uom || 'Units'}</span>
+                  </div>
 
-                {/* Stock Level Indicator */}
-                <div className="mt-3">
-                  <div className="h-2 w-full bg-gray-100 rounded-full overflow-hidden shadow-inner">
-                    <div
-                      className={`h-full rounded-full transition-all duration-500 ${onHand <= (product.minLevelBox || 0) ? 'bg-red-500' : 'bg-emerald-500'}`}
-                      style={{ width: `${Math.min(onHand / ((product.minLevelBox || 1) * 3) * 100, 100)}%` }}
-                    />
+                  {/* Stock Level Progress Bar - Premium */}
+                  <div className="relative mb-3">
+                    <div className="h-3 bg-white/60 rounded-full overflow-hidden shadow-inner backdrop-blur-sm">
+                      <div
+                        className={`h-full rounded-full transition-all duration-700 ease-out relative ${
+                          onHand <= 0 ? 'bg-gradient-to-r from-red-400 to-red-600' : 
+                          onHand <= (product.minLevelBox || 0) ? 'bg-gradient-to-r from-amber-400 to-orange-500' : 
+                          'bg-gradient-to-r from-emerald-400 to-green-500'
+                        }`}
+                        style={{ width: `${Math.min(onHand / ((product.minLevelBox || 1) * 2) * 100, 100)}%` }}
+                      >
+                        <div className="absolute inset-0 bg-gradient-to-b from-white/40 to-transparent" />
+                      </div>
+                    </div>
+                    {/* Min stock marker */}
+                    {(product.minLevelBox || 0) > 0 && (
+                      <div 
+                        className="absolute top-0 bottom-0 w-0.5 bg-gray-600 rounded-full"
+                        style={{ left: '50%' }}
+                      />
+                    )}
                   </div>
-                  <div className="flex justify-between items-center mt-2">
-                    <span className="text-xs text-gray-500 font-medium">Min: {product.minLevelBox}</span>
-                    {onHand <= (product.minLevelBox || 0) && (
-                      <span className="text-xs font-bold text-red-600 flex items-center gap-1 bg-red-50 px-2 py-0.5 rounded-full">
-                        <ExclamationTriangleIcon className="w-3 h-3" /> Low Stock
+                  
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs text-gray-600 font-semibold bg-white/50 px-2 py-1 rounded-lg">Min: {product.minLevelBox || 0}</span>
+                    {onHand <= 0 ? (
+                      <span className="text-xs font-bold text-white flex items-center gap-1 bg-red-500 px-3 py-1 rounded-full shadow-md animate-pulse">
+                        <ExclamationTriangleIcon className="w-3.5 h-3.5" /> OUT OF STOCK
+                      </span>
+                    ) : onHand <= (product.minLevelBox || 0) ? (
+                      <span className="text-xs font-bold text-white flex items-center gap-1 bg-amber-500 px-3 py-1 rounded-full shadow-md">
+                        <ExclamationTriangleIcon className="w-3.5 h-3.5" /> Low Stock
+                      </span>
+                    ) : (
+                      <span className="text-xs font-bold text-emerald-700 flex items-center gap-1 bg-emerald-200 px-3 py-1 rounded-full">
+                        <CheckCircleIcon className="w-3.5 h-3.5" /> Healthy
                       </span>
                     )}
                   </div>
                 </div>
               </div>
 
-              <div className="bg-gradient-to-br from-emerald-50 to-green-50 p-4 rounded-xl border-2 border-emerald-200 shadow-md">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Est. Value</span>
-                  <CurrencyPoundIcon className="w-5 h-5 text-emerald-600" />
+              {/* Value Card - Premium */}
+              <div className="relative overflow-hidden bg-gradient-to-br from-slate-800 via-slate-900 to-gray-900 rounded-2xl border-2 border-slate-700 shadow-xl">
+                {/* Shine effect */}
+                <div className="absolute inset-0 bg-gradient-to-br from-white/10 via-transparent to-transparent" />
+                
+                <div className="relative p-5">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <div className="p-2 rounded-xl bg-gradient-to-br from-emerald-400 to-green-500 shadow-lg shadow-emerald-500/30">
+                        <CurrencyPoundIcon className="w-5 h-5 text-white" />
+                      </div>
+                      <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Est. Value</span>
+                    </div>
+                  </div>
+                  
+                  <div className="mb-2">
+                    <span className="text-4xl font-black text-white tracking-tight">
+                      £{(onHand * (product.pricePerBox || 0)).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-slate-400 font-medium">@ £{(product.pricePerBox || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/unit</span>
+                    <span className="text-xs text-slate-500">•</span>
+                    <span className="text-xs text-emerald-400 font-semibold">{onHand} units</span>
+                  </div>
                 </div>
-                <div className="text-3xl font-bold text-gray-900 mb-1">
-                  £{(onHand * (product.pricePerBox || 0)).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </div>
-                <p className="text-xs text-gray-600 font-medium">@ £{(product.pricePerBox || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/unit</p>
               </div>
 
-              {/* QR Quick Access */}
-              <button
-                onClick={() => setActiveTab('qr')}
-                className="w-full flex items-center justify-center gap-2 p-3 rounded-xl border-2 border-gray-200 bg-white text-gray-700 hover:bg-gray-50 hover:border-blue-300 hover:text-blue-600 transition-all shadow-sm hover:shadow-md active:scale-95 font-medium text-sm"
-              >
-                <QrCodeIcon className="w-5 h-5" />
-                Manage QR Code
-              </button>
+              {/* Quick Actions */}
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  onClick={() => setActiveTab('qr')}
+                  className="flex flex-col items-center justify-center gap-2 p-4 rounded-xl border-2 border-gray-200 bg-white text-gray-700 hover:bg-blue-50 hover:border-blue-300 hover:text-blue-600 transition-all shadow-sm hover:shadow-md active:scale-95"
+                >
+                  <QrCodeIcon className="w-6 h-6" />
+                  <span className="text-xs font-semibold">QR Code</span>
+                </button>
+                <button
+                  onClick={() => setActiveTab('history')}
+                  className="flex flex-col items-center justify-center gap-2 p-4 rounded-xl border-2 border-gray-200 bg-white text-gray-700 hover:bg-purple-50 hover:border-purple-300 hover:text-purple-600 transition-all shadow-sm hover:shadow-md active:scale-95"
+                >
+                  <ClockIcon className="w-6 h-6" />
+                  <span className="text-xs font-semibold">History</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -942,31 +1012,53 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
           {/* Header */}
           <div className="px-4 sm:px-6 py-3 sm:py-4 lg:py-5 border-b border-gray-200 flex items-center justify-between bg-white shrink-0 sticky top-0 z-10">
             <div className="flex-1 min-w-0 pr-3">
-              {/* Mobile: Image + Stats in Header */}
-              <div className="flex items-center gap-3 mb-2 lg:hidden">
-                {/* Image - Compact */}
-                <div className="w-16 h-16 bg-white rounded-lg border-2 border-gray-200 shadow-sm flex items-center justify-center shrink-0 relative group overflow-hidden">
+              {/* Mobile: Image + Stats in Header - Premium */}
+              <div className="flex items-center gap-3 mb-3 lg:hidden">
+                {/* Image - Premium Compact */}
+                <div className={`relative w-18 h-18 bg-white rounded-2xl border-2 shadow-md flex items-center justify-center shrink-0 overflow-hidden ${
+                  onHand <= 0 ? 'border-red-300 ring-2 ring-red-100' : 
+                  onHand <= (product.minLevelBox || 0) ? 'border-amber-300 ring-2 ring-amber-100' : 
+                  'border-gray-200'
+                }`}>
                   <img
                     src={selectedImage || allImages[0] || 'https://placehold.co/400x400?text=No+Image'}
-                    className="max-w-full max-h-full object-contain transition-transform duration-300 group-hover:scale-105 cursor-pointer"
+                    className="max-w-full max-h-full object-contain transition-transform duration-300 active:scale-105 cursor-pointer"
                     onClick={() => setImageModal(selectedImage || allImages[0])}
                     alt={product.name}
                   />
-                  {allImages.length === 0 && <PhotoIcon className="w-6 h-6 text-gray-300" />}
+                  {allImages.length === 0 && <PhotoIcon className="w-8 h-8 text-gray-300" />}
+                  
+                  {/* Status indicator */}
+                  <div className={`absolute top-1 right-1 w-3 h-3 rounded-full border-2 border-white shadow ${
+                    onHand <= 0 ? 'bg-red-500 animate-pulse' : 
+                    onHand <= (product.minLevelBox || 0) ? 'bg-amber-500' : 
+                    'bg-emerald-500'
+                  }`} />
                 </div>
                 
-                {/* Stats - Compact */}
+                {/* Stats - Premium Compact */}
                 <div className="flex-1 grid grid-cols-2 gap-2">
-                  <div className="bg-gray-50 p-2 rounded-lg border border-gray-200">
-                    <div className="text-[9px] text-gray-500 uppercase font-semibold mb-0.5">Stock</div>
-                    <div className="text-base font-bold text-gray-900">{onHand}</div>
-                    <div className="text-[9px] text-gray-500">{product.uom || 'Units'}</div>
+                  <div className={`p-2.5 rounded-xl border-2 ${
+                    onHand <= 0 ? 'bg-gradient-to-br from-red-50 to-rose-50 border-red-200' : 
+                    onHand <= (product.minLevelBox || 0) ? 'bg-gradient-to-br from-amber-50 to-orange-50 border-amber-200' : 
+                    'bg-gradient-to-br from-emerald-50 to-green-50 border-emerald-200'
+                  }`}>
+                    <div className="text-[9px] text-gray-600 uppercase font-bold tracking-wider mb-0.5">Stock</div>
+                    <div className={`text-xl font-black ${
+                      onHand <= 0 ? 'text-red-600' : 
+                      onHand <= (product.minLevelBox || 0) ? 'text-amber-600' : 
+                      'text-emerald-600'
+                    }`}>{onHand.toLocaleString()}</div>
+                    <div className="text-[9px] text-gray-500 font-medium">{product.uom || 'Units'}</div>
                   </div>
-                  <div className="bg-emerald-50 p-2 rounded-lg border border-emerald-200">
-                    <div className="text-[9px] text-gray-600 uppercase font-semibold mb-0.5">Value</div>
-                    <div className="text-sm font-bold text-gray-900">
-                      £{(onHand * (product.pricePerBox || 0)).toLocaleString('en-GB', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                  <div className="bg-gradient-to-br from-slate-700 to-slate-900 p-2.5 rounded-xl border-2 border-slate-600">
+                    <div className="text-[9px] text-slate-400 uppercase font-bold tracking-wider mb-0.5">Value</div>
+                    <div className="text-lg font-black text-white">
+                      £{(onHand * (product.pricePerBox || 0)) >= 1000 
+                        ? `${((onHand * (product.pricePerBox || 0))/1000).toFixed(1)}k` 
+                        : (onHand * (product.pricePerBox || 0)).toFixed(0)}
                     </div>
+                    <div className="text-[9px] text-slate-400 font-medium">total</div>
                   </div>
                 </div>
               </div>
@@ -1190,9 +1282,68 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
 
             {/* --- HISTORY TAB --- */}
             {activeTab === 'history' && (
-              <div className="space-y-4">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-lg font-medium text-gray-900">Transaction Log</h3>
+              <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                {/* Summary KPIs */}
+                {(() => {
+                  const totalIn = history.filter(h => h.type === 'in').reduce((sum, h) => sum + h.quantity, 0)
+                  const totalOut = history.filter(h => h.type === 'out').reduce((sum, h) => sum + h.quantity, 0)
+                  const totalTransfers = history.filter(h => h.type === 'transfer').length
+                  const netMovement = totalIn - totalOut
+                  
+                  return (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      <div className="bg-gradient-to-br from-emerald-50 to-green-100 rounded-xl p-4 border border-emerald-200">
+                        <div className="flex items-center gap-2 mb-2">
+                          <div className="p-1.5 bg-emerald-500 rounded-lg">
+                            <PlusIcon className="w-4 h-4 text-white" />
+                          </div>
+                          <span className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider">Total In</span>
+                        </div>
+                        <div className="text-2xl font-black text-emerald-600">+{totalIn.toLocaleString()}</div>
+                      </div>
+                      
+                      <div className="bg-gradient-to-br from-red-50 to-rose-100 rounded-xl p-4 border border-red-200">
+                        <div className="flex items-center gap-2 mb-2">
+                          <div className="p-1.5 bg-red-500 rounded-lg">
+                            <MinusIcon className="w-4 h-4 text-white" />
+                          </div>
+                          <span className="text-[10px] font-bold text-red-700 uppercase tracking-wider">Total Out</span>
+                        </div>
+                        <div className="text-2xl font-black text-red-600">-{totalOut.toLocaleString()}</div>
+                      </div>
+                      
+                      <div className="bg-gradient-to-br from-blue-50 to-indigo-100 rounded-xl p-4 border border-blue-200">
+                        <div className="flex items-center gap-2 mb-2">
+                          <div className="p-1.5 bg-blue-500 rounded-lg">
+                            <ArrowPathIcon className="w-4 h-4 text-white" />
+                          </div>
+                          <span className="text-[10px] font-bold text-blue-700 uppercase tracking-wider">Transfers</span>
+                        </div>
+                        <div className="text-2xl font-black text-blue-600">{totalTransfers}</div>
+                      </div>
+                      
+                      <div className={`rounded-xl p-4 border ${netMovement >= 0 ? 'bg-gradient-to-br from-slate-50 to-gray-100 border-slate-200' : 'bg-gradient-to-br from-orange-50 to-amber-100 border-orange-200'}`}>
+                        <div className="flex items-center gap-2 mb-2">
+                          <div className={`p-1.5 rounded-lg ${netMovement >= 0 ? 'bg-slate-600' : 'bg-orange-500'}`}>
+                            <ChartBarIcon className="w-4 h-4 text-white" />
+                          </div>
+                          <span className={`text-[10px] font-bold uppercase tracking-wider ${netMovement >= 0 ? 'text-slate-600' : 'text-orange-700'}`}>Net</span>
+                        </div>
+                        <div className={`text-2xl font-black ${netMovement >= 0 ? 'text-slate-700' : 'text-orange-600'}`}>
+                          {netMovement >= 0 ? '+' : ''}{netMovement.toLocaleString()}
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })()}
+
+                {/* Header with Export */}
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                    <ClockIcon className="w-5 h-5 text-gray-400" />
+                    Transaction Log
+                    <span className="text-sm font-normal text-gray-500">({history.length} records)</span>
+                  </h3>
                   <button
                     onClick={() => {
                       const exportData = history.map(h => ({
@@ -1208,18 +1359,18 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
                       }))
                       downloadCSV(`product-${product.sku || product.id}-transactions.csv`, toCSV(exportData))
                     }}
-                    className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors"
+                    className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 rounded-xl transition-all active:scale-95 border border-blue-200"
                   >
                     <ArrowDownTrayIcon className="w-4 h-4" />
-                    Export CSV
+                    <span className="hidden sm:inline">Export CSV</span>
                   </button>
                 </div>
 
-                {/* Filters */}
-                <div className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                {/* Filters - Modern Card */}
+                <div className="bg-gradient-to-r from-gray-50 to-slate-50 p-4 rounded-2xl border border-gray-200 shadow-sm">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                     <div>
-                      <label className="block text-xs font-medium text-gray-500 uppercase mb-1">Type</label>
+                      <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1.5 tracking-wider">Type</label>
                       <StyledSelect
                         value={historyFilters.type}
                         onChange={(e) => setHistoryFilters(prev => ({ ...prev, type: e.target.value as any }))}
@@ -1231,7 +1382,7 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
                       </StyledSelect>
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-gray-500 uppercase mb-1">Date From</label>
+                      <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1.5 tracking-wider">Date From</label>
                       <StyledInput
                         type="date"
                         value={historyFilters.dateFrom}
@@ -1239,7 +1390,7 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-gray-500 uppercase mb-1">Date To</label>
+                      <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1.5 tracking-wider">Date To</label>
                       <StyledInput
                         type="date"
                         value={historyFilters.dateTo}
@@ -1249,7 +1400,7 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
                     <div className="flex items-end">
                       <button
                         onClick={() => setHistoryFilters({ type: 'all', dateFrom: '', dateTo: '' })}
-                        className="w-full px-4 py-2 text-sm text-gray-600 hover:text-gray-800 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors"
+                        className="w-full px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 bg-white hover:bg-gray-100 rounded-lg transition-all border border-gray-200 active:scale-95"
                       >
                         Clear Filters
                       </button>
@@ -1257,29 +1408,116 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
                   </div>
                 </div>
 
-                <div className="overflow-x-auto shadow ring-1 ring-black ring-opacity-5 rounded-lg -mx-4 sm:mx-0">
-                  <table className="min-w-full divide-y divide-gray-300">
-                    <thead className="bg-gray-50 sticky top-0 z-10">
+                {/* Mobile Transaction Cards */}
+                <div className="md:hidden space-y-3">
+                  {history.length === 0 ? (
+                    <div className="text-center py-12 text-gray-500">
+                      <ClockIcon className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+                      <p className="font-medium">No transactions found</p>
+                      <p className="text-sm text-gray-400">Try adjusting your filters</p>
+                    </div>
+                  ) : (
+                    history.map((h) => {
+                      const date = new Date(h.createdAt)
+                      const locationText = h.fromLoc && h.toLoc
+                        ? `${groups.find(g => g.id === h.fromLoc)?.name || h.fromLoc} → ${groups.find(g => g.id === h.toLoc)?.name || h.toLoc}`
+                        : h.fromLoc
+                          ? `From: ${groups.find(g => g.id === h.fromLoc)?.name || h.fromLoc}`
+                          : h.toLoc
+                            ? `To: ${groups.find(g => g.id === h.toLoc)?.name || h.toLoc}`
+                            : ''
+                      return (
+                        <div 
+                          key={h.id} 
+                          className={`bg-white rounded-xl border-2 overflow-hidden shadow-sm ${
+                            h.type === 'in' ? 'border-l-4 border-l-emerald-500 border-gray-100' :
+                            h.type === 'out' ? 'border-l-4 border-l-red-500 border-gray-100' :
+                            'border-l-4 border-l-blue-500 border-gray-100'
+                          }`}
+                        >
+                          <div className="p-4">
+                            <div className="flex items-start justify-between mb-3">
+                              <div className="flex items-center gap-3">
+                                <div className={`p-2 rounded-xl ${
+                                  h.type === 'in' ? 'bg-emerald-100' :
+                                  h.type === 'out' ? 'bg-red-100' : 'bg-blue-100'
+                                }`}>
+                                  {h.type === 'in' ? <PlusIcon className="w-5 h-5 text-emerald-600" /> :
+                                   h.type === 'out' ? <MinusIcon className="w-5 h-5 text-red-600" /> :
+                                   <ArrowPathIcon className="w-5 h-5 text-blue-600" />}
+                                </div>
+                                <div>
+                                  <span className={`text-2xl font-black ${
+                                    h.type === 'in' ? 'text-emerald-600' : 'text-red-600'
+                                  }`}>
+                                    {h.type === 'in' ? '+' : '-'}{h.quantity}
+                                  </span>
+                                  <span className="text-sm text-gray-500 ml-1">{product.uom || 'units'}</span>
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <div className="text-sm font-semibold text-gray-900">
+                                  {date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+                                </div>
+                                <div className="text-xs text-gray-400">
+                                  {date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                                </div>
+                              </div>
+                            </div>
+                            
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs text-gray-500 font-medium">Reason</span>
+                                <span className="text-sm text-gray-700 font-semibold truncate max-w-[180px]">{h.reason}</span>
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs text-gray-500 font-medium">Balance</span>
+                                <span className="text-sm text-gray-900 font-bold">{h.newQuantity}</span>
+                              </div>
+                              {h.reference && (
+                                <div className="flex items-center justify-between">
+                                  <span className="text-xs text-gray-500 font-medium">Reference</span>
+                                  <span className="text-xs font-mono bg-gray-100 px-2 py-0.5 rounded text-gray-700">{h.reference}</span>
+                                </div>
+                              )}
+                              {locationText && (
+                                <div className="flex items-center justify-between">
+                                  <span className="text-xs text-gray-500 font-medium">Location</span>
+                                  <span className="text-xs text-gray-600">{locationText}</span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })
+                  )}
+                </div>
+
+                {/* Desktop Table */}
+                <div className="hidden md:block overflow-x-auto shadow-lg ring-1 ring-black ring-opacity-5 rounded-2xl">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gradient-to-r from-gray-50 to-slate-50">
                       <tr>
-                        <th className="py-3.5 pl-4 pr-3 text-left text-xs font-semibold text-gray-900 uppercase whitespace-nowrap">Type</th>
-                        <th className="px-3 py-3.5 text-left text-xs font-semibold text-gray-900 uppercase whitespace-nowrap">Qty</th>
-                        <th className="px-3 py-3.5 text-left text-xs font-semibold text-gray-900 uppercase whitespace-nowrap hidden sm:table-cell">Balance</th>
-                        <th className="px-3 py-3.5 text-left text-xs font-semibold text-gray-900 uppercase whitespace-nowrap">Reason</th>
-                        <th className="px-3 py-3.5 text-left text-xs font-semibold text-gray-900 uppercase whitespace-nowrap hidden md:table-cell">Reference</th>
-                        <th className="px-3 py-3.5 text-left text-xs font-semibold text-gray-900 uppercase whitespace-nowrap hidden lg:table-cell">Location</th>
-                        <th className="px-3 py-3.5 text-left text-xs font-semibold text-gray-900 uppercase whitespace-nowrap">Date</th>
-                        <th className="px-3 py-3.5 text-left text-xs font-semibold text-gray-900 uppercase whitespace-nowrap hidden lg:table-cell">User</th>
+                        <th className="py-4 pl-6 pr-3 text-left text-xs font-bold text-gray-600 uppercase tracking-wider">Type</th>
+                        <th className="px-3 py-4 text-left text-xs font-bold text-gray-600 uppercase tracking-wider">Qty</th>
+                        <th className="px-3 py-4 text-left text-xs font-bold text-gray-600 uppercase tracking-wider">Balance</th>
+                        <th className="px-3 py-4 text-left text-xs font-bold text-gray-600 uppercase tracking-wider">Reason</th>
+                        <th className="px-3 py-4 text-left text-xs font-bold text-gray-600 uppercase tracking-wider">Reference</th>
+                        <th className="px-3 py-4 text-left text-xs font-bold text-gray-600 uppercase tracking-wider hidden lg:table-cell">Location</th>
+                        <th className="px-3 py-4 text-left text-xs font-bold text-gray-600 uppercase tracking-wider">Date</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-200 bg-white">
+                    <tbody className="divide-y divide-gray-100 bg-white">
                       {history.length === 0 ? (
                         <tr>
-                          <td colSpan={8} className="py-8 text-center text-sm text-gray-500">
-                            No transactions found
+                          <td colSpan={7} className="py-12 text-center">
+                            <ClockIcon className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+                            <p className="text-sm font-medium text-gray-500">No transactions found</p>
                           </td>
                         </tr>
                       ) : (
-                        history.map((h) => {
+                        history.map((h, idx) => {
                           const date = new Date(h.createdAt)
                           const locationText = h.fromLoc && h.toLoc
                             ? `${groups.find(g => g.id === h.fromLoc)?.name || h.fromLoc} → ${groups.find(g => g.id === h.toLoc)?.name || h.toLoc}`
@@ -1289,38 +1527,45 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
                                 ? `To: ${groups.find(g => g.id === h.toLoc)?.name || h.toLoc}`
                                 : ''
                           return (
-                            <tr key={h.id} className="hover:bg-gray-50">
-                              <td className="whitespace-nowrap py-3 sm:py-4 pl-4 pr-2 sm:pr-3 text-xs sm:text-sm">
-                                <span className={`inline-flex items-center rounded-full px-2 py-1 text-[10px] sm:text-xs font-medium ${h.type === 'in' ? 'bg-green-50 text-green-700' :
-                                  h.type === 'out' ? 'bg-red-50 text-red-700' : 'bg-blue-50 text-blue-700'
-                                  }`}>
-                                  {h.type === 'in' ? 'IN' : h.type === 'out' ? 'OUT' : 'TR'}
+                            <tr key={h.id} className={`hover:bg-gray-50 transition-colors ${idx % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}`}>
+                              <td className="whitespace-nowrap py-4 pl-6 pr-3">
+                                <span className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold ${
+                                  h.type === 'in' ? 'bg-emerald-100 text-emerald-700' :
+                                  h.type === 'out' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'
+                                }`}>
+                                  {h.type === 'in' ? <PlusIcon className="w-3.5 h-3.5" /> :
+                                   h.type === 'out' ? <MinusIcon className="w-3.5 h-3.5" /> :
+                                   <ArrowPathIcon className="w-3.5 h-3.5" />}
+                                  {h.type === 'in' ? 'IN' : h.type === 'out' ? 'OUT' : 'TRANSFER'}
                                 </span>
                               </td>
-                              <td className={`whitespace-nowrap px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm font-bold ${h.type === 'in' ? 'text-green-600' : 'text-red-600'}`}>
+                              <td className={`whitespace-nowrap px-3 py-4 text-lg font-black ${h.type === 'in' ? 'text-emerald-600' : 'text-red-600'}`}>
                                 {h.type === 'in' ? '+' : '-'}{h.quantity}
                               </td>
-                              <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500 hidden sm:table-cell">{h.newQuantity}</td>
-                              <td className="px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm text-gray-600 max-w-[120px] sm:max-w-xs truncate font-medium" title={h.reason}>{h.reason}</td>
-                              <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500 hidden md:table-cell">
+                              <td className="whitespace-nowrap px-3 py-4 text-sm font-semibold text-gray-700">{h.newQuantity}</td>
+                              <td className="px-3 py-4 text-sm text-gray-600 max-w-xs truncate font-medium" title={h.reason}>{h.reason}</td>
+                              <td className="whitespace-nowrap px-3 py-4">
                                 {h.reference ? (
-                                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-mono bg-gray-100 text-gray-700">
+                                  <span className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-mono bg-gray-100 text-gray-700 border border-gray-200">
                                     {h.reference}
                                   </span>
                                 ) : (
-                                  <span className="text-gray-400">—</span>
+                                  <span className="text-gray-300">—</span>
                                 )}
                               </td>
                               <td className="px-3 py-4 text-sm text-gray-500 max-w-xs truncate hidden lg:table-cell" title={locationText}>
-                                {locationText || <span className="text-gray-400">—</span>}
+                                {locationText || <span className="text-gray-300">—</span>}
                               </td>
-                              <td className="whitespace-nowrap px-2 sm:px-3 py-3 sm:py-4 text-xs sm:text-sm text-gray-600">
+                              <td className="whitespace-nowrap px-3 py-4">
                                 <div className="flex flex-col">
-                                  <time dateTime={date.toISOString()} className="font-medium">{date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</time>
-                                  <time className="text-[10px] text-gray-400">{date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</time>
+                                  <time dateTime={date.toISOString()} className="text-sm font-semibold text-gray-900">
+                                    {date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+                                  </time>
+                                  <time className="text-xs text-gray-400">
+                                    {date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                                  </time>
                                 </div>
                               </td>
-                              <td className="whitespace-nowrap px-3 py-4 text-sm text-gray-500 hidden lg:table-cell">{h.createdBy || '—'}</td>
                             </tr>
                           )
                         })

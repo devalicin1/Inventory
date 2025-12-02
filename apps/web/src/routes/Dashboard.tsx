@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSessionStore } from '../state/sessionStore'
 import {
   CubeIcon,
@@ -15,8 +15,9 @@ import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
 import { Link } from 'react-router-dom'
 import { listProducts } from '../api/inventory'
-import { listJobs } from '../api/production-jobs'
-import { useMemo, useState } from 'react'
+import { listJobs, subscribeToJobs } from '../api/production-jobs'
+import { subscribeToProducts } from '../api/products'
+import { useMemo, useState, useEffect } from 'react'
 import { DashboardCharts } from '../components/dashboard/DashboardCharts'
 import html2canvas from 'html2canvas'
 import jsPDF from 'jspdf'
@@ -25,21 +26,48 @@ export function Dashboard() {
   const { workspaceId } = useSessionStore()
   const [isExporting, setIsExporting] = useState(false)
   const [showKPIs, setShowKPIs] = useState(false)
+  const queryClient = useQueryClient()
 
-  // Fetch products
+  // Fetch products (initial load)
   const { data: products = [], isLoading: productsLoading } = useQuery({
     queryKey: ['products', workspaceId],
     queryFn: () => listProducts(workspaceId!),
     enabled: !!workspaceId,
+    staleTime: Infinity, // Don't refetch - we use real-time subscription
   })
 
-  // Fetch jobs
+  // Fetch jobs (initial load)
   const { data: jobsData, isLoading: jobsLoading } = useQuery({
     queryKey: ['jobs', workspaceId],
     queryFn: () => listJobs(workspaceId!),
     enabled: !!workspaceId,
+    staleTime: Infinity, // Don't refetch - we use real-time subscription
   })
   const jobs = jobsData?.jobs || []
+
+  // Real-time subscription for products
+  useEffect(() => {
+    if (!workspaceId) return
+    const unsubscribe = subscribeToProducts(
+      workspaceId,
+      (updatedProducts) => {
+        queryClient.setQueryData(['products', workspaceId], updatedProducts)
+      }
+    )
+    return () => unsubscribe()
+  }, [workspaceId, queryClient])
+
+  // Real-time subscription for jobs
+  useEffect(() => {
+    if (!workspaceId) return
+    const unsubscribe = subscribeToJobs(
+      workspaceId,
+      (updatedJobs) => {
+        queryClient.setQueryData(['jobs', workspaceId], { jobs: updatedJobs })
+      }
+    )
+    return () => unsubscribe()
+  }, [workspaceId, queryClient])
 
   // Calculate statistics
   const stats = useMemo(() => {

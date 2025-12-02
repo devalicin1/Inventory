@@ -22,6 +22,7 @@ interface OverviewTabProps {
   history?: HistoryEvent[]
   workspaceId: string
   allRuns?: any[]
+  timeLogs?: any[]
 }
 
 export const OverviewTab: FC<OverviewTabProps> = ({
@@ -33,7 +34,8 @@ export const OverviewTab: FC<OverviewTabProps> = ({
   workflows = [],
   history = [],
   workspaceId,
-  allRuns = []
+  allRuns = [],
+  timeLogs = []
 }) => {
   const queryClient = useQueryClient()
   // Helper function to safely convert dates
@@ -491,101 +493,9 @@ export const OverviewTab: FC<OverviewTabProps> = ({
                         .slice()
                         .sort((a: any, b: any) => a.at.seconds - b.at.seconds)
 
-                      // Helper function to calculate threshold met date for any stage
-                      // This function should be defined before it's used in the stageChanges forEach
-                      const calculateCurrentStageThresholdMetAt = (stageId: string, runs: any[]): number | null => {
-                        if (!stageId || !runs || runs.length === 0) return null
-
-                        const stageRuns = runs.filter((r: any) => r.stageId === stageId).sort((a: any, b: any) => {
-                          const aTime = a.at?.seconds || (a.at ? Math.floor(new Date(a.at).getTime() / 1000) : 0)
-                          const bTime = b.at?.seconds || (b.at ? Math.floor(new Date(b.at).getTime() / 1000) : 0)
-                          return aTime - bTime
-                        })
-
-                        if (stageRuns.length === 0) return null
-
-                        // Get stage info
-                        const workflow = workflows.find((w: any) => w.id === job.workflowId)
-                        const stageInfo = workflow?.stages?.find((s: any) => s.id === stageId)
-                        const stageInputUOM = (stageInfo as any)?.inputUOM || ''
-                        const stageOutputUOM = (stageInfo as any)?.outputUOM || ''
-                        const numberUp = job.productionSpecs?.numberUp || 1
-
-                        // Find previous stage
-                        const planned: string[] = (job as any).plannedStageIds || []
-                        const currentStageIndex = planned.indexOf(stageId)
-                        const previousStageId = currentStageIndex > 0 ? planned[currentStageIndex - 1] : null
-
-                        // Calculate planned quantity
-                        let plannedQty: number
-                        if (previousStageId) {
-                          const previousStageRuns = runs.filter((r: any) => r.stageId === previousStageId)
-                          const previousStageTotalOutput = previousStageRuns.reduce((sum: number, r: any) => sum + Number(r.qtyGood || 0), 0)
-
-                          if (previousStageTotalOutput > 0) {
-                            const previousStageInfo = workflow?.stages?.find((s: any) => s.id === previousStageId)
-                            const previousStageOutputUOM = (previousStageInfo as any)?.outputUOM || ''
-
-                            // Convert previous output to current input UOM
-                            let currentInput: number
-                            if (previousStageOutputUOM === stageInputUOM) {
-                              currentInput = previousStageTotalOutput
-                            } else if (previousStageOutputUOM === 'cartoon' && stageInputUOM === 'sheets' && numberUp > 0) {
-                              currentInput = previousStageTotalOutput / numberUp
-                            } else if (previousStageOutputUOM === 'sheets' && stageInputUOM === 'cartoon' && numberUp > 0) {
-                              currentInput = previousStageTotalOutput * numberUp
-                            } else {
-                              currentInput = previousStageTotalOutput
-                            }
-
-                            // Convert current input to output UOM
-                            if (stageInputUOM === stageOutputUOM) {
-                              plannedQty = currentInput
-                            } else if (stageInputUOM === 'sheets' && stageOutputUOM === 'cartoon' && numberUp > 0) {
-                              plannedQty = currentInput * numberUp
-                            } else if (stageInputUOM === 'cartoon' && stageOutputUOM === 'sheets' && numberUp > 0) {
-                              plannedQty = currentInput / numberUp
-                            } else {
-                              plannedQty = currentInput
-                            }
-                          } else {
-                            plannedQty = 0
-                          }
-                        } else {
-                          // First stage
-                          if (stageOutputUOM === 'cartoon') {
-                            const boxQty = job.packaging?.plannedBoxes || 0
-                            const pcsPerBox = job.packaging?.pcsPerBox || 1
-                            plannedQty = boxQty * pcsPerBox
-                          } else {
-                            const bom = Array.isArray(job.bom) ? job.bom : []
-                            const sheetItem = bom.find((item: any) => {
-                              const uom = String(item.uom || '').toLowerCase()
-                              return ['sht', 'sheet', 'sheets'].includes(uom)
-                            })
-                            plannedQty = sheetItem ? Number(sheetItem.qtyRequired || 0) : (job.output?.[0]?.qtyPlanned || Number((job as any).quantity || 0))
-                          }
-                        }
-
-                        const WASTAGE_THRESHOLD_LOWER = 400
-                        const completionThreshold = Math.max(0, plannedQty - WASTAGE_THRESHOLD_LOWER)
-
-                        // Find when threshold was met
-                        let cumulativeTotal = 0
-                        for (const run of stageRuns) {
-                          const qtyGood = Number(run.qtyGood || 0) // Already in output UOM
-                          cumulativeTotal += qtyGood
-
-                          if (cumulativeTotal >= completionThreshold) {
-                            const runAt = run.at
-                            if (runAt?.seconds) {
-                              return runAt.seconds
-                            } else if (runAt) {
-                              return Math.floor(new Date(runAt).getTime() / 1000)
-                            }
-                          }
-                        }
-
+                      // We no longer use production quantity thresholds to determine times.
+                      // All timing is based purely on QR-driven events (history.at) and time logs.
+                      const calculateCurrentStageThresholdMetAt = (_stageId: string, _runs: any[]): number | null => {
                         return null
                       }
 
@@ -593,47 +503,117 @@ export const OverviewTab: FC<OverviewTabProps> = ({
                       const completedAtByStage = new Map<string, number>()
                       // Map when a stage was STARTED (i.e., when the job moved into the stage)
                       const startedAtByStage = new Map<string, number>()
+                      
+                      // First, populate startedAtByStage and completedAtByStage from timeLogs (most accurate source)
+                      if (timeLogs && timeLogs.length > 0) {
+                        timeLogs.forEach((log: any) => {
+                          const stageId = String(log.stageId || '')
+                          if (!stageId) return
+                          
+                          // Get startedAt timestamp
+                          let startedAtSeconds: number | null = null
+                          if (log.startedAt?.seconds) {
+                            startedAtSeconds = log.startedAt.seconds
+                          } else if (log.startedAt) {
+                            startedAtSeconds = Math.floor(new Date(log.startedAt).getTime() / 1000)
+                          }
+                          
+                          if (startedAtSeconds) {
+                            // Use earliest timeLog for each stage
+                            const existing = startedAtByStage.get(stageId)
+                            if (!existing || startedAtSeconds < existing) {
+                              startedAtByStage.set(stageId, startedAtSeconds)
+                            }
+                          }
+                          
+                          // Get stoppedAt timestamp (if stage was stopped/finished)
+                          let stoppedAtSeconds: number | null = null
+                          if (log.stoppedAt?.seconds) {
+                            stoppedAtSeconds = log.stoppedAt.seconds
+                          } else if (log.stoppedAt) {
+                            stoppedAtSeconds = Math.floor(new Date(log.stoppedAt).getTime() / 1000)
+                          }
+                          
+                          if (stoppedAtSeconds) {
+                            // Use latest stoppedAt for each stage (when stage was actually finished)
+                            const existing = completedAtByStage.get(stageId)
+                            if (!existing || stoppedAtSeconds > existing) {
+                              completedAtByStage.set(stageId, stoppedAtSeconds)
+                            }
+                          }
+                        })
+                      }
+                      
+                      // Then, use history stage_change events as fallback or to fill gaps
                       stageChanges.forEach((h: any) => {
                         const prevId = String(h.payload?.previousStageId)
                         const newId = String(h.payload?.newStageId)
 
-                        // Set start time for new stage first
-                        if (newId) {
-                          // keep first occurrence as start
-                          if (!startedAtByStage.has(newId)) {
-                            startedAtByStage.set(newId, h.at.seconds)
-                          }
+                        // Set start time for new stage if not already set from timeLogs
+                        if (newId && !startedAtByStage.has(newId)) {
+                          startedAtByStage.set(newId, h.at.seconds)
                         }
 
-                        // Set finish time for previous stage
-                        if (prevId && !completedAtByStage.has(prevId)) {
-                          // Use threshold met timestamp if available, otherwise calculate it from production runs
+                        // Set finish time for previous stage when moving to next stage
+                        if (prevId) {
+                          const stageStartTime = startedAtByStage.get(prevId)
+                          
+                          // If we're moving from prevId to newId, prevId is finished
+                          // Finished time = stage change time (when we moved to next stage)
+                          // But prefer threshold met time if available and it's after start time
+                          let finishedTime = h.at.seconds
+                          
+                          // Try to use threshold met timestamp if available
                           let thresholdMetAt = h.payload?.previousStageThresholdMetAt
-
-                          // If threshold met timestamp not in history, calculate it from production runs
                           if (!thresholdMetAt) {
                             thresholdMetAt = calculateCurrentStageThresholdMetAt(prevId, runs)
                           }
-
-                          const stageStartTime = startedAtByStage.get(prevId) || h.at.seconds
-
-                          // Finished time should not be before started time
-                          if (thresholdMetAt && thresholdMetAt >= stageStartTime) {
-                            completedAtByStage.set(prevId, thresholdMetAt)
+                          
+                          // Use threshold met time if it's valid and after start time
+                          if (thresholdMetAt && stageStartTime && thresholdMetAt >= stageStartTime) {
+                            finishedTime = thresholdMetAt
+                          } else if (stageStartTime) {
+                            // Ensure finished time is not before start time
+                            finishedTime = Math.max(h.at.seconds, stageStartTime)
+                          }
+                          
+                          // Only set if not already set (keep earliest completion time)
+                          if (!completedAtByStage.has(prevId)) {
+                            completedAtByStage.set(prevId, finishedTime)
                           } else {
-                            // Use stage change time, but ensure it's not before start time
-                            completedAtByStage.set(prevId, Math.max(h.at.seconds, stageStartTime))
+                            // Use earlier completion time if multiple exist
+                            const existing = completedAtByStage.get(prevId)!
+                            if (finishedTime < existing) {
+                              completedAtByStage.set(prevId, finishedTime)
+                            }
                           }
                         }
                       })
 
+                      // For stages that have been passed (we moved to next stage), 
+                      // set finished time = next stage's started time if not already set
+                      const planned: string[] = (job as any).plannedStageIds || []
+                      const currentStageIndex = job.currentStageId ? planned.indexOf(job.currentStageId) : -1
+      
+                      for (let i = 0; i < planned.length; i++) {
+                        const stageId = planned[i]
+                        const nextStageId = i < planned.length - 1 ? planned[i + 1] : null
+                        
+                        // If this stage is before current stage, it should be finished
+                        // Finished time = next stage's started time (or stage change time)
+                        if (currentStageIndex >= 0 && i < currentStageIndex && !completedAtByStage.has(stageId)) {
+                          const nextStageStartTime = nextStageId ? startedAtByStage.get(nextStageId) : null
+                          if (nextStageStartTime) {
+                            completedAtByStage.set(stageId, nextStageStartTime)
+                          }
+                        }
+                      }
+
                       // Check threshold met date for ALL stages (not just last stage)
                       // If threshold is met but stage hasn't been moved yet, still show "Finished" time
-                      const planned: string[] = (job as any).plannedStageIds || []
-
                       // For each stage, check if threshold is met (even if stage hasn't been moved yet)
                       for (const stageId of planned) {
-                        // Skip if already completed (from history)
+                        // Skip if already completed (from history or stage progression)
                         if (completedAtByStage.has(stageId)) continue
 
                         // Calculate threshold met date for this stage (including current stage for timeline display)
@@ -654,11 +634,35 @@ export const OverviewTab: FC<OverviewTabProps> = ({
                       // If threshold met date was not found, we still don't use job finished date
                       // (this means threshold was not met, so stage should not show as finished)
 
-                      const rows = planned.map((sid) => {
+                      // Helper function to format timestamp
+                      const formatTimestamp = (seconds: number | undefined): string => {
+                        if (!seconds) return '-'
+                        try {
+                          const date = new Date(seconds * 1000)
+                          // Format: DD/MM/YYYY HH:MM
+                          const day = String(date.getDate()).padStart(2, '0')
+                          const month = String(date.getMonth() + 1).padStart(2, '0')
+                          const year = date.getFullYear()
+                          const hours = String(date.getHours()).padStart(2, '0')
+                          const minutes = String(date.getMinutes()).padStart(2, '0')
+                          return `${day}/${month}/${year} ${hours}:${minutes}`
+                        } catch {
+                          return '-'
+                        }
+                      }
+
+                      const rows = planned.map((sid, index) => {
                         const tsFinish = completedAtByStage.get(sid)
-                        const tsStart = startedAtByStage.get(sid)
-                        const started = tsStart ? new Date(tsStart * 1000).toLocaleString('tr-TR') : '-'
-                        const finished = tsFinish ? new Date(tsFinish * 1000).toLocaleString('tr-TR') : '-'
+                        let tsStart = startedAtByStage.get(sid)
+                        
+                        // If job is draft and this is the first stage, don't show "Started" time
+                        // (job hasn't been released yet, so first stage shouldn't show as started)
+                        if (job.status === 'draft' && index === 0) {
+                          tsStart = undefined
+                        }
+                        
+                        const started = formatTimestamp(tsStart)
+                        const finished = formatTimestamp(tsFinish)
                         let status: 'Done' | 'Current' | '-' = '-'
                         if (job.status === 'done') {
                           status = 'Done'
@@ -674,7 +678,16 @@ export const OverviewTab: FC<OverviewTabProps> = ({
                       })
                       if (job.status === 'done') {
                         const f = getFinishDate()
-                        rows.push({ stage: 'Job Finished', started: f ? new Date((f as any).seconds ? (f as any).seconds * 1000 : f).toLocaleString('tr-TR') : '-', finished: f ? new Date((f as any).seconds ? (f as any).seconds * 1000 : f).toLocaleString('tr-TR') : '-', status: 'Done', key: '__finished__' })
+                        let finishSeconds: number | undefined
+                        if (f) {
+                          if ((f as any).seconds) {
+                            finishSeconds = (f as any).seconds
+                          } else {
+                            finishSeconds = Math.floor(new Date(f).getTime() / 1000)
+                          }
+                        }
+                        const finishFormatted = formatTimestamp(finishSeconds)
+                        rows.push({ stage: 'Job Finished', started: finishFormatted, finished: finishFormatted, status: 'Done', key: '__finished__' })
                       }
                       if (rows.length === 0) return <p className="text-sm text-gray-500">No movements recorded yet.</p>
                       return (

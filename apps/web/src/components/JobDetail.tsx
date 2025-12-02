@@ -3,13 +3,22 @@ import {
   type Job,
   type Ticket,
   type Consumption,
+  type ProductionRun,
+  type HistoryEntry,
+  type TimeLog,
   getJob,
   listJobTickets,
   listJobConsumptions,
   listJobHistory,
   createTicket,
   createConsumption,
-  listJobProductionRuns
+  listJobProductionRuns,
+  subscribeToJob,
+  subscribeToJobConsumptions,
+  subscribeToJobProductionRuns,
+  subscribeToJobHistory,
+  subscribeToJobTickets,
+  subscribeToJobTimeLogs
 } from '../api/production-jobs'
 import { listProducts, type ListedProduct } from '../api/inventory'
 import { ConfirmInventoryPostingModal } from './ConfirmInventoryPostingModal'
@@ -56,7 +65,7 @@ interface JobDetailProps {
 
 type TabType = 'overview' | 'tickets' | 'materials' | 'consumptions' | 'output' | 'packaging' | 'qrcode' | 'history' | 'files'
 
-export function JobDetail({ job, workspaceId, onClose, onDelete, workcenters = [], resources = [] }: JobDetailProps) {
+export function JobDetail({ job: initialJob, workspaceId, onClose, onDelete, workcenters = [], resources = [] }: JobDetailProps) {
   const [activeTab, setActiveTab] = useState<TabType>('overview')
   const [showCreateTicket, setShowCreateTicket] = useState(false)
   const [showCreateConsumption, setShowCreateConsumption] = useState(false)
@@ -67,6 +76,79 @@ export function JobDetail({ job, workspaceId, onClose, onDelete, workcenters = [
   const [showPostToInventoryPrompt, setShowPostToInventoryPrompt] = useState(false)
   const [showDeliveryNoteModal, setShowDeliveryNoteModal] = useState(false)
   const [showExportMenu, setShowExportMenu] = useState(false)
+  
+  // Real-time job state - starts with initial job and updates via subscription
+  const [job, setJob] = useState<Job>(initialJob)
+  
+  // Real-time subscription for job updates
+  useEffect(() => {
+    if (!workspaceId || !initialJob?.id) return
+
+    const unsubscribe = subscribeToJob(
+      workspaceId,
+      initialJob.id,
+      (updatedJob) => {
+        if (updatedJob) {
+          setJob(updatedJob)
+        }
+      },
+      (error) => {
+        console.error('[JobDetail] Job subscription error:', error)
+      }
+    )
+
+    return () => {
+      unsubscribe()
+    }
+  }, [workspaceId, initialJob?.id])
+  
+  // Update local state when initialJob prop changes
+  useEffect(() => {
+    setJob(initialJob)
+  }, [initialJob])
+
+  // Real-time states for sub-collections
+  const [tickets, setTickets] = useState<Ticket[]>([])
+  const [consumptions, setConsumptions] = useState<Consumption[]>([])
+  const [history, setHistory] = useState<HistoryEntry[]>([])
+  const [allRuns, setAllRuns] = useState<ProductionRun[]>([])
+  const [timeLogs, setTimeLogs] = useState<TimeLog[]>([])
+
+  // Real-time subscription for tickets
+  useEffect(() => {
+    if (!workspaceId || !initialJob?.id) return
+    const unsubscribe = subscribeToJobTickets(workspaceId, initialJob.id, setTickets)
+    return () => unsubscribe()
+  }, [workspaceId, initialJob?.id])
+
+  // Real-time subscription for consumptions
+  useEffect(() => {
+    if (!workspaceId || !initialJob?.id) return
+    const unsubscribe = subscribeToJobConsumptions(workspaceId, initialJob.id, setConsumptions)
+    return () => unsubscribe()
+  }, [workspaceId, initialJob?.id])
+
+  // Real-time subscription for history
+  useEffect(() => {
+    if (!workspaceId || !initialJob?.id) return
+    const unsubscribe = subscribeToJobHistory(workspaceId, initialJob.id, setHistory)
+    return () => unsubscribe()
+  }, [workspaceId, initialJob?.id])
+
+  // Real-time subscription for production runs
+  useEffect(() => {
+    if (!workspaceId || !initialJob?.id) return
+    const unsubscribe = subscribeToJobProductionRuns(workspaceId, initialJob.id, setAllRuns)
+    return () => unsubscribe()
+  }, [workspaceId, initialJob?.id])
+
+  // Real-time subscription for time logs
+  useEffect(() => {
+    if (!workspaceId || !initialJob?.id) return
+    const unsubscribe = subscribeToJobTimeLogs(workspaceId, initialJob.id, setTimeLogs)
+    return () => unsubscribe()
+  }, [workspaceId, initialJob?.id])
+
   // Inventory products for modal
   const { data: products = [] } = useQuery<ListedProduct[]>({
     queryKey: ['products', workspaceId],
@@ -109,32 +191,10 @@ export function JobDetail({ job, workspaceId, onClose, onDelete, workcenters = [
     }
   }, [showExportMenu])
 
-  // Fetch related data
-  const { data: tickets = [], isLoading: ticketsLoading } = useQuery({
-    queryKey: ['jobTickets', workspaceId, job.id],
-    queryFn: () => listJobTickets(workspaceId, job.id),
-  })
-
-  const { data: consumptions = [] } = useQuery({
-    queryKey: ['jobConsumptions', workspaceId, job.id],
-    queryFn: () => listJobConsumptions(workspaceId, job.id),
-  })
-
-  const { data: history = [] } = useQuery({
-    queryKey: ['jobHistory', workspaceId, job.id],
-    queryFn: () => listJobHistory(workspaceId, job.id),
-  })
-
+  // Fetch workflows (static data, doesn't need real-time)
   const { data: workflows = [] } = useQuery({
     queryKey: ['workflows', workspaceId],
     queryFn: () => listWorkflows(workspaceId),
-  })
-
-  // Fetch production runs for threshold calculation in timeline
-  const { data: allRuns = [] } = useQuery({
-    queryKey: ['jobRuns', workspaceId, job.id],
-    queryFn: () => listJobProductionRuns(workspaceId, job.id),
-    enabled: !!workspaceId && !!job.id,
   })
 
   // Mutations
@@ -228,6 +288,7 @@ export function JobDetail({ job, workspaceId, onClose, onDelete, workcenters = [
           history={history}
           workspaceId={workspaceId}
           allRuns={allRuns}
+          timeLogs={timeLogs}
         />
       )
     }
@@ -236,7 +297,7 @@ export function JobDetail({ job, workspaceId, onClose, onDelete, workcenters = [
       return (
         <TicketsTab
           tickets={tickets}
-          isLoading={ticketsLoading}
+          isLoading={false}
           onCreateTicket={() => setShowCreateTicket(true)}
         />
       )

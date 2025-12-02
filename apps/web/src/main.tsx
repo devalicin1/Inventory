@@ -39,9 +39,10 @@ function ProductionSettingsWrapper() {
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      refetchOnWindowFocus: false,
+      refetchOnWindowFocus: true, // Refetch when window regains focus for real-time updates
       retry: 1,
-      staleTime: 5 * 60 * 1000, // 5 minutes
+      staleTime: 30 * 1000, // 30 seconds - shorter for more responsive updates
+      gcTime: 5 * 60 * 1000, // 5 minutes garbage collection time (formerly cacheTime)
     },
   },
 })

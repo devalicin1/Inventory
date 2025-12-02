@@ -217,28 +217,27 @@ export const JobSpecsStep: React.FC<JobSpecsStepProps> = ({
     };
 
     return (
-        <div className="max-w-6xl mx-auto space-y-6">
-            <div className="mb-8">
-                <h2 className="text-2xl font-bold text-gray-900">Product Specifications</h2>
-                <p className="text-gray-600 mt-2">Enter technical parameters and production details</p>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="space-y-8">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 <div className="space-y-6">
-                    <Card>
-                        <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                            <CogIcon className="h-5 w-5 text-primary-600" />
-                            Production Specifications
-                        </h3>
+                    <Card className="overflow-hidden">
+                        <div className="p-5 bg-gradient-to-r from-indigo-50 to-purple-50 border-b border-indigo-100">
+                            <h3 className="text-lg font-bold text-gray-900 flex items-center gap-3">
+                                <div className="p-2 bg-indigo-500 rounded-xl shadow-lg shadow-indigo-200">
+                                    <CogIcon className="h-5 w-5 text-white" />
+                                </div>
+                                Production Specifications
+                            </h3>
+                        </div>
 
-                        <div className="space-y-6">
+                        <div className="p-6 space-y-6">
                             {/* Product Dimensions */}
-                            <div className="border-b border-gray-200 pb-4">
-                                <h4 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
-                                    <CubeIcon className="h-4 w-4 text-primary-500" />
+                            <div className="pb-5 border-b-2 border-gray-100">
+                                <h4 className="text-sm font-bold text-gray-900 mb-4 flex items-center gap-2">
+                                    <CubeIcon className="h-5 w-5 text-indigo-500" />
                                     Product Dimensions
                                 </h4>
-                                <div className="grid grid-cols-3 gap-3">
+                                <div className="grid grid-cols-3 gap-4">
                                     <Input
                                         type="number"
                                         label="Width (mm) *"
@@ -261,18 +260,18 @@ export const JobSpecsStep: React.FC<JobSpecsStepProps> = ({
                             </div>
 
                             {/* Sheet Dimensions */}
-                            <div className="border-b border-gray-200 pb-4">
-                                <h4 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
-                                    <DocumentTextIcon className="h-4 w-4 text-primary-500" />
+                            <div className="pb-5 border-b-2 border-gray-100">
+                                <h4 className="text-sm font-bold text-gray-900 mb-4 flex items-center gap-2">
+                                    <DocumentTextIcon className="h-5 w-5 text-indigo-500" />
                                     Sheet Dimensions
                                 </h4>
-                                <div className="mb-3">
-                                    <label className="block text-sm font-medium text-gray-700 mb-2">Select Sheet from Inventory</label>
+                                <div className="mb-4">
+                                    <label className="block text-sm font-semibold text-gray-700 mb-2">Select Sheet from Inventory</label>
                                     <div className="relative">
                                         {/* Search and Filter Bar */}
-                                        <div className="mb-2 space-y-2">
+                                        <div className="mb-3 space-y-3">
                                             <div className="relative">
-                                                <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+                                                <MagnifyingGlassIcon className="absolute left-4 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
                                                 <input
                                                     type="text"
                                                     placeholder="Search by SKU or name..."
@@ -282,19 +281,19 @@ export const JobSpecsStep: React.FC<JobSpecsStepProps> = ({
                                                         setShowSheetDropdown(true);
                                                     }}
                                                     onFocus={() => setShowSheetDropdown(true)}
-                                                    className="block w-full pl-10 pr-3 py-2 rounded-lg border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 border bg-white text-sm"
+                                                    className="block w-full pl-12 pr-4 py-3 rounded-xl border-2 border-gray-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 bg-white text-base transition-all"
                                                 />
                                             </div>
                                             {groups.length > 0 && (
-                                                <div className="flex items-center gap-2">
-                                                    <FolderIcon className="h-4 w-4 text-gray-400" />
+                                                <div className="flex items-center gap-3">
+                                                    <FolderIcon className="h-5 w-5 text-gray-400" />
                                                     <select
                                                         value={selectedGroupId}
                                                         onChange={(e) => {
                                                             setSelectedGroupId(e.target.value);
                                                             setShowSheetDropdown(true);
                                                         }}
-                                                        className="flex-1 text-sm rounded-lg border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 py-1.5 px-2 border bg-white"
+                                                        className="flex-1 rounded-xl border-2 border-gray-200 py-3 px-4 text-base focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 bg-white transition-all"
                                                     >
                                                         <option value="">All Groups</option>
                                                         {groups.map(g => (
@@ -312,7 +311,7 @@ export const JobSpecsStep: React.FC<JobSpecsStepProps> = ({
                                             <button
                                                 type="button"
                                                 onClick={() => setShowSheetDropdown(!showSheetDropdown)}
-                                                className="block w-full rounded-lg border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 py-2.5 px-3 border bg-white text-left flex items-center justify-between"
+                                                className="block w-full rounded-xl border-2 border-gray-200 py-3 px-4 text-base focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 bg-white text-left flex items-center justify-between transition-all"
                                             >
                                                 <span className={selectedSheet ? 'text-gray-900' : 'text-gray-500'}>
                                                     {selectedSheet 
@@ -323,18 +322,18 @@ export const JobSpecsStep: React.FC<JobSpecsStepProps> = ({
                                             </button>
                                             
                                             {showSheetDropdown && (
-                                                <div className="absolute z-50 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-96 overflow-auto">
+                                                <div className="absolute z-50 w-full mt-2 bg-white border-2 border-gray-200 rounded-xl shadow-xl max-h-96 overflow-auto">
                                                     {filteredSheets.length === 0 ? (
-                                                        <div className="px-4 py-3 text-sm text-gray-500 text-center">
+                                                        <div className="px-4 py-6 text-base text-gray-500 text-center">
                                                             No sheets found
                                                         </div>
                                                     ) : (
-                                                        <div className="py-1">
+                                                        <div className="py-2">
                                                             {Array.from(groupedSheets.entries()).map(([groupId, groupSheets]) => (
                                                                 <div key={groupId}>
                                                                     {groupId !== '__ungrouped__' && groups.length > 0 && (
-                                                                        <div className="px-3 py-2 bg-gray-50 border-b border-gray-200 text-xs font-semibold text-gray-700 flex items-center gap-1">
-                                                                            <FolderIcon className="h-3 w-3" />
+                                                                        <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 text-xs font-bold text-gray-700 flex items-center gap-2 uppercase tracking-wider">
+                                                                            <FolderIcon className="h-4 w-4" />
                                                                             {getGroupPath(groupId)}
                                                                         </div>
                                                                     )}
@@ -417,15 +416,15 @@ export const JobSpecsStep: React.FC<JobSpecsStepProps> = ({
                                                                                     }));
                                                                                 }
                                                                             }}
-                                                                            className={`w-full px-4 py-2 text-left text-sm hover:bg-primary-50 transition-colors ${
-                                                                                selectedSheetId === p.id ? 'bg-primary-100' : ''
+                                                                            className={`w-full px-4 py-3 text-left hover:bg-indigo-50 transition-colors ${
+                                                                                selectedSheetId === p.id ? 'bg-indigo-100' : ''
                                                                             }`}
                                                                         >
-                                                                            <div className="flex items-center gap-2">
-                                                                                <DocumentTextIcon className="h-4 w-4 text-gray-400 flex-shrink-0" />
+                                                                            <div className="flex items-center gap-3">
+                                                                                <DocumentTextIcon className="h-5 w-5 text-gray-400 flex-shrink-0" />
                                                                                 <div className="flex-1 min-w-0">
                                                                                     <div className="font-medium text-gray-900 truncate">{decodeProductName(p.name)}</div>
-                                                                                    <div className="text-xs text-gray-500">SKU: {p.sku}</div>
+                                                                                    <div className="text-sm text-gray-500">SKU: {p.sku}</div>
                                                                                 </div>
                                                                             </div>
                                                                         </button>
@@ -441,16 +440,16 @@ export const JobSpecsStep: React.FC<JobSpecsStepProps> = ({
                                     
                                     {/* Selected Sheet Info */}
                                     {selectedSheet && (
-                                        <div className="mt-2 p-3 bg-primary-50 rounded-lg border border-primary-200 text-sm">
-                                            <div className="font-medium text-primary-900">{decodeProductName(selectedSheet.name)}</div>
-                                            <div className="text-primary-700 mt-1">
+                                        <div className="mt-3 p-4 bg-gradient-to-br from-indigo-50 to-purple-50 rounded-xl border-2 border-indigo-200">
+                                            <div className="font-bold text-gray-900">{decodeProductName(selectedSheet.name)}</div>
+                                            <div className="text-gray-600 mt-1">
                                                 SKU: {selectedSheet.sku}
                                                 {selectedSheet.groupId && ` • Group: ${getGroupPath(selectedSheet.groupId)}`}
                                             </div>
                                         </div>
                                     )}
                                 </div>
-                                <div className="grid grid-cols-2 gap-3">
+                                <div className="grid grid-cols-2 gap-4">
                                     <Input
                                         type="number"
                                         label="Sheet Width (mm)"
@@ -467,12 +466,12 @@ export const JobSpecsStep: React.FC<JobSpecsStepProps> = ({
                             </div>
 
                             {/* Forme Dimensions */}
-                            <div className="border-b border-gray-200 pb-4">
-                                <h4 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
-                                    <WrenchScrewdriverIcon className="h-4 w-4 text-primary-500" />
+                            <div className="pb-5 border-b-2 border-gray-100">
+                                <h4 className="text-sm font-bold text-gray-900 mb-4 flex items-center gap-2">
+                                    <WrenchScrewdriverIcon className="h-5 w-5 text-indigo-500" />
                                     Forme Dimensions
                                 </h4>
-                                <div className="grid grid-cols-2 gap-3">
+                                <div className="grid grid-cols-2 gap-4">
                                     <Input
                                         type="number"
                                         label="Forme Width (mm)"
@@ -490,8 +489,8 @@ export const JobSpecsStep: React.FC<JobSpecsStepProps> = ({
 
                             {/* Parameters */}
                             <div>
-                                <h4 className="text-sm font-semibold text-gray-900 mb-3">Production Parameters</h4>
-                                <div className="grid grid-cols-2 gap-3">
+                                <h4 className="text-sm font-bold text-gray-900 mb-4">Production Parameters</h4>
+                                <div className="grid grid-cols-2 gap-4">
                                     <Input
                                         type="number"
                                         label="Number Up *"
@@ -505,7 +504,7 @@ export const JobSpecsStep: React.FC<JobSpecsStepProps> = ({
                                         onChange={(e) => updateParam('printedColors', Number(e.target.value))}
                                     />
                                 </div>
-                                <div className="grid grid-cols-2 gap-3 mt-3">
+                                <div className="grid grid-cols-2 gap-4 mt-4">
                                     <Input
                                         label="Varnish"
                                         value={formData.productionSpecs.varnish}
@@ -517,7 +516,7 @@ export const JobSpecsStep: React.FC<JobSpecsStepProps> = ({
                                         onChange={(e) => updateParam('board', e.target.value)}
                                     />
                                 </div>
-                                <div className="grid grid-cols-2 gap-3 mt-3">
+                                <div className="grid grid-cols-2 gap-4 mt-4">
                                     <Input
                                         type="number"
                                         label="Overs Percentage"
@@ -531,7 +530,7 @@ export const JobSpecsStep: React.FC<JobSpecsStepProps> = ({
                                         onChange={(e) => updateParam('microns', Number(e.target.value))}
                                     />
                                 </div>
-                                <div className="grid grid-cols-2 gap-3 mt-3">
+                                <div className="grid grid-cols-2 gap-4 mt-4">
                                     <Input
                                         label="GSM"
                                         value={formData.productionSpecs.gsm}
@@ -550,60 +549,66 @@ export const JobSpecsStep: React.FC<JobSpecsStepProps> = ({
                 </div>
 
                 <div className="space-y-6">
-                    <Card>
-                        <h3 className="text-lg font-semibold text-gray-900 mb-4">Specifications Summary</h3>
-                        <div className="space-y-3 text-sm">
-                            <div className="flex justify-between py-2 border-b border-gray-100">
-                                <span className="text-gray-600">Quantity (PCS)</span>
-                                <span className="font-medium">{quantityInPcs.toLocaleString()}</span>
-                            </div>
-                            <div className="flex justify-between py-2 border-b border-gray-100">
-                                <span className="text-gray-600">Theoretical Number Up</span>
-                                <span className="font-medium">{theoreticalNumberUp ?? 'N/A'}</span>
-                            </div>
-                            <div className="flex justify-between py-2 border-b border-gray-100">
-                                <span className="text-gray-600">Sheets Needed</span>
-                                <span className="font-medium">{sheetsNeeded ?? 'N/A'}</span>
-                            </div>
-                            <div className="flex justify-between py-2 border-b border-gray-100">
-                                <span className="text-gray-600">Sheets with Overs</span>
-                                <span className="font-medium">{sheetsNeededWithOvers ?? 'N/A'}</span>
-                            </div>
-                            <div className="pt-2">
-                                <div className="flex justify-between items-center mb-3">
-                                    <label className="text-gray-600 font-medium">Sheet Wastage</label>
-                                    <input
-                                        type="number"
-                                        min="0"
-                                        value={formData.productionSpecs.sheetWastage || ''}
-                                        onChange={(e) => updateParam('sheetWastage', Number(e.target.value))}
-                                        className="w-24 rounded-lg border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 py-1.5 px-3 border text-right"
-                                        placeholder="0"
-                                    />
+                    <Card className="overflow-hidden">
+                        <div className="p-5 bg-gradient-to-r from-cyan-50 to-blue-50 border-b border-cyan-100">
+                            <h3 className="text-lg font-bold text-gray-900">Specifications Summary</h3>
+                        </div>
+                        <div className="p-6">
+                            <div className="space-y-3">
+                                <div className="flex justify-between items-center p-4 bg-gray-50 rounded-xl">
+                                    <span className="text-gray-600 font-medium">Quantity (PCS)</span>
+                                    <span className="text-xl font-bold text-gray-900">{quantityInPcs.toLocaleString()}</span>
+                                </div>
+                                <div className="flex justify-between items-center p-4 bg-gray-50 rounded-xl">
+                                    <span className="text-gray-600 font-medium">Theoretical Number Up</span>
+                                    <span className="text-xl font-bold text-gray-900">{theoreticalNumberUp ?? 'N/A'}</span>
+                                </div>
+                                <div className="flex justify-between items-center p-4 bg-gray-50 rounded-xl">
+                                    <span className="text-gray-600 font-medium">Sheets Needed</span>
+                                    <span className="text-xl font-bold text-gray-900">{sheetsNeeded ?? 'N/A'}</span>
+                                </div>
+                                <div className="flex justify-between items-center p-4 bg-gray-50 rounded-xl">
+                                    <span className="text-gray-600 font-medium">Sheets with Overs</span>
+                                    <span className="text-xl font-bold text-gray-900">{sheetsNeededWithOvers ?? 'N/A'}</span>
+                                </div>
+                                <div className="p-4 bg-gray-50 rounded-xl">
+                                    <div className="flex justify-between items-center">
+                                        <label className="text-gray-600 font-medium">Sheet Wastage</label>
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            value={formData.productionSpecs.sheetWastage || ''}
+                                            onChange={(e) => updateParam('sheetWastage', Number(e.target.value))}
+                                            className="w-28 rounded-xl border-2 border-gray-200 py-2 px-4 text-right font-bold focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100 transition-all"
+                                            placeholder="0"
+                                        />
+                                    </div>
+                                </div>
+                                <div className="flex justify-between items-center p-4 bg-gradient-to-r from-cyan-100 to-blue-100 rounded-xl border-2 border-cyan-200">
+                                    <span className="text-gray-900 font-bold">Sheets with Wastage</span>
+                                    <span className="text-2xl font-bold text-cyan-700">{sheetsNeededWithWastage ?? 'N/A'}</span>
                                 </div>
                             </div>
-                            <div className="flex justify-between py-2 border-t border-gray-200 pt-2">
-                                <span className="text-gray-900 font-semibold">Sheets with Wastage</span>
-                                <span className="font-bold text-primary-600">{sheetsNeededWithWastage ?? 'N/A'}</span>
-                            </div>
-                        </div>
 
-                        {theoreticalNumberUp !== undefined && formData.productionSpecs.numberUp && theoreticalNumberUp !== formData.productionSpecs.numberUp && (
-                            <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 text-amber-800 p-3 text-sm">
-                                Layout mismatch: theoretical {theoreticalNumberUp} ≠ entered {formData.productionSpecs.numberUp}
-                            </div>
-                        )}
+                            {theoreticalNumberUp !== undefined && formData.productionSpecs.numberUp && theoreticalNumberUp !== formData.productionSpecs.numberUp && (
+                                <div className="mt-4 rounded-xl border-2 border-amber-300 bg-amber-50 text-amber-800 p-4 font-medium">
+                                    ⚠️ Layout mismatch: theoretical {theoreticalNumberUp} ≠ entered {formData.productionSpecs.numberUp}
+                                </div>
+                            )}
+                        </div>
                     </Card>
 
-                    <Card>
-                        <h3 className="text-lg font-semibold text-gray-900 mb-4">Additional Specifications</h3>
-                        <div className="space-y-4">
-                            <div className="border-b border-gray-200 pb-4">
-                                <h4 className="text-sm font-semibold text-gray-900 mb-3 flex items-center gap-2">
-                                    <WrenchScrewdriverIcon className="h-4 w-4 text-primary-500" />
+                    <Card className="overflow-hidden">
+                        <div className="p-5 bg-gradient-to-r from-slate-50 to-gray-50 border-b border-slate-100">
+                            <h3 className="text-lg font-bold text-gray-900">Additional Specifications</h3>
+                        </div>
+                        <div className="p-6 space-y-5">
+                            <div className="pb-5 border-b-2 border-gray-100">
+                                <h4 className="text-sm font-bold text-gray-900 mb-4 flex items-center gap-2">
+                                    <WrenchScrewdriverIcon className="h-5 w-5 text-slate-500" />
                                     CutTo Dimensions
                                 </h4>
-                                <div className="grid grid-cols-2 gap-3">
+                                <div className="grid grid-cols-2 gap-4">
                                     <Input
                                         type="number"
                                         label="CutTo Width (mm)"

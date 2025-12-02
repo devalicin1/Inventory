@@ -17,7 +17,8 @@ import {
   setJobStatus,
   deleteJob,
   createProductionRun,
-  listJobProductionRuns
+  listJobProductionRuns,
+  subscribeToJobs
 } from '../api/production-jobs'
 import { toCSV, downloadCSV } from '../utils/csv'
 import { generateJobPDFBlob, downloadJobPDF } from '../utils/pdfGenerator'
@@ -506,11 +507,61 @@ export function Production() {
   // Mock workspace ID - in real app, get from context
   const workspaceId = 'demo-workspace'
 
-  // Fetch data
+  // Fetch data with initial load
   const { data: jobsData, isLoading: jobsLoading, error: jobsError } = useQuery({
     queryKey: ['jobs', workspaceId, filters],
     queryFn: () => listJobs(workspaceId, filters),
+    staleTime: Infinity, // Don't refetch automatically - we use real-time subscription
   })
+
+  // Real-time subscription for jobs - updates immediately when data changes in Firestore
+  useEffect(() => {
+    if (!workspaceId) return
+
+    const unsubscribe = subscribeToJobs(
+      workspaceId,
+      (allJobs) => {
+        // Apply filters client-side (same logic as listJobs)
+        let filtered = [...allJobs]
+        
+        if (filters.status && filters.status.length > 0) {
+          filtered = filtered.filter(job => filters.status!.includes(job.status))
+        }
+        if (filters.stageId) {
+          filtered = filtered.filter(job => job.currentStageId === filters.stageId)
+        }
+        if (filters.workcenterId) {
+          filtered = filtered.filter(job => job.workcenterId === filters.workcenterId)
+        }
+        if (filters.assigneeId) {
+          filtered = filtered.filter(job => job.assignees?.includes(filters.assigneeId!))
+        }
+        if (filters.priority && filters.priority.length > 0) {
+          filtered = filtered.filter(job => filters.priority!.includes(job.priority))
+        }
+        if (filters.customerId) {
+          filtered = filtered.filter(job => (job.customer as any)?.id === filters.customerId)
+        }
+        if (filters.dueBefore) {
+          filtered = filtered.filter(job => {
+            if (!job.dueDate) return false
+            const dueDate = job.dueDate.seconds ? new Date(job.dueDate.seconds * 1000) : new Date(job.dueDate)
+            return dueDate <= filters.dueBefore!
+          })
+        }
+        
+        // Update the query cache with filtered real-time data
+        queryClient.setQueryData(['jobs', workspaceId, filters], { jobs: filtered })
+      },
+      (error) => {
+        console.error('[Production] Real-time subscription error:', error)
+      }
+    )
+
+    return () => {
+      unsubscribe()
+    }
+  }, [workspaceId, queryClient, filters])
 
   const { data: workflows = [] } = useQuery({
     queryKey: ['workflows', workspaceId],
@@ -593,11 +644,11 @@ export function Production() {
   const statusMutation = useMutation({
     mutationFn: ({ jobId, status, blockReason }: { jobId: string; status: Job['status']; blockReason?: string }) =>
       setJobStatus(workspaceId, jobId, status, blockReason),
-    onSuccess: (_data, variables) => {
+    onSuccess: async (_data, variables) => {
       // Refresh both the board list and the specific job detail so Workflow Path updates immediately
-      queryClient.invalidateQueries({ queryKey: ['jobs', workspaceId] })
+      await queryClient.invalidateQueries({ queryKey: ['jobs', workspaceId] })
       if (variables?.jobId) {
-        queryClient.invalidateQueries({ queryKey: ['job', workspaceId, variables.jobId] })
+        await queryClient.invalidateQueries({ queryKey: ['job', workspaceId, variables.jobId] })
       }
     },
   })
@@ -605,8 +656,8 @@ export function Production() {
   const moveJobMutation = useMutation({
     mutationFn: ({ jobId, newStageId, note }: { jobId: string; newStageId: string; note?: string }) =>
       moveJobToStage(workspaceId, jobId, newStageId, 'current-user', note),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['jobs', workspaceId] })
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['jobs', workspaceId] })
     },
     onError: (err: any) => {
       alert(err?.message || 'Move failed')
@@ -615,8 +666,8 @@ export function Production() {
 
   const deleteJobMutation = useMutation({
     mutationFn: (jobId: string) => deleteJob(workspaceId, jobId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['jobs', workspaceId] })
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['jobs', workspaceId] })
       setSelectedJob(null)
     },
   })
@@ -1112,103 +1163,85 @@ export function Production() {
         </Card>
       )}
 
-      {/* Primary Stats Grid - Matching Dashboard Style */}
-      <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
+      {/* Stats Grid - Minimalist Professional Design */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Total Jobs */}
-        <Card className="relative overflow-hidden border-l-4 border-l-primary-500">
-          <div className="p-1">
-            <div className="flex items-center justify-between">
-              <p className="truncate text-sm font-medium text-gray-500">Total Jobs</p>
-              <div className="rounded-md bg-primary-50 p-2">
-                <ChartBarIcon className="h-5 w-5 text-primary-600" aria-hidden="true" />
-              </div>
+        <div className="bg-white rounded-2xl p-5 border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
+          <div className="flex items-center justify-between mb-4">
+            <div className="w-10 h-10 rounded-xl bg-slate-900 flex items-center justify-center">
+              <ChartBarIcon className="h-5 w-5 text-white" />
             </div>
-            <div className="mt-4 flex items-baseline">
-              {jobsLoading ? (
-                <div className="h-8 w-16 animate-pulse bg-gray-200 rounded" />
-              ) : (
-                <p className="text-3xl font-semibold text-gray-900">{filteredJobs.length}</p>
-              )}
-            </div>
-            <div className="mt-1">
-              <p className="text-xs text-gray-500">{filteredJobs.filter(j => j.status === 'in_progress').length} in progress</p>
-            </div>
+            <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">Total</span>
           </div>
-        </Card>
+          <div className="text-3xl font-bold text-gray-900 tracking-tight">{filteredJobs.length}</div>
+          <div className="mt-1 text-sm text-gray-500">
+            <span className="text-blue-600 font-medium">{filteredJobs.filter(j => j.status === 'in_progress').length}</span> active
+          </div>
+        </div>
 
         {/* In Progress */}
-        <Card className="relative overflow-hidden border-l-4 border-l-yellow-500">
-          <div className="p-1">
-            <div className="flex items-center justify-between">
-              <p className="truncate text-sm font-medium text-gray-500">In Progress</p>
-              <div className="rounded-md bg-yellow-50 p-2">
-                <ClockIcon className="h-5 w-5 text-yellow-600" aria-hidden="true" />
-              </div>
+        <div className="bg-gradient-to-br from-amber-50 to-orange-50 rounded-2xl p-5 border border-amber-100 shadow-sm hover:shadow-md transition-shadow">
+          <div className="flex items-center justify-between mb-4">
+            <div className="w-10 h-10 rounded-xl bg-amber-500 flex items-center justify-center shadow-lg shadow-amber-200">
+              <ClockIcon className="h-5 w-5 text-white" />
             </div>
-            <div className="mt-4 flex items-baseline">
-              {jobsLoading ? (
-                <div className="h-8 w-16 animate-pulse bg-gray-200 rounded" />
-              ) : (
-                <p className="text-3xl font-semibold text-gray-900">
-                  {filteredJobs.filter(job => job.status === 'in_progress').length}
-                </p>
-              )}
-            </div>
-            <div className="mt-1">
-              <p className="text-xs text-gray-500">{filteredJobs.filter(j => j.status === 'released').length} ready to start</p>
-            </div>
+            <span className="text-xs font-medium text-amber-600 uppercase tracking-wider">Active</span>
           </div>
-        </Card>
+          <div className="text-3xl font-bold text-gray-900 tracking-tight">
+            {filteredJobs.filter(job => job.status === 'in_progress').length}
+          </div>
+          <div className="mt-1 text-sm text-gray-600">
+            <span className="text-amber-600 font-medium">{filteredJobs.filter(j => j.status === 'released').length}</span> ready
+          </div>
+        </div>
 
         {/* Blocked */}
-        <Card className="relative overflow-hidden border-l-4 border-l-red-500">
-          <div className="p-1">
-            <div className="flex items-center justify-between">
-              <p className="truncate text-sm font-medium text-gray-500">Blocked</p>
-              <div className="rounded-md bg-red-50 p-2">
-                <ExclamationTriangleIcon className="h-5 w-5 text-red-600" aria-hidden="true" />
-              </div>
+        <div className={`rounded-2xl p-5 border shadow-sm hover:shadow-md transition-shadow ${
+          filteredJobs.filter(job => job.status === 'blocked').length > 0 
+            ? 'bg-gradient-to-br from-red-50 to-rose-50 border-red-200' 
+            : 'bg-white border-gray-100'
+        }`}>
+          <div className="flex items-center justify-between mb-4">
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+              filteredJobs.filter(job => job.status === 'blocked').length > 0 
+                ? 'bg-red-500 shadow-lg shadow-red-200' 
+                : 'bg-gray-200'
+            }`}>
+              <ExclamationTriangleIcon className={`h-5 w-5 ${
+                filteredJobs.filter(job => job.status === 'blocked').length > 0 ? 'text-white' : 'text-gray-400'
+              }`} />
             </div>
-            <div className="mt-4 flex items-baseline">
-              {jobsLoading ? (
-                <div className="h-8 w-16 animate-pulse bg-gray-200 rounded" />
-              ) : (
-                <p className="text-3xl font-semibold text-gray-900">
-                  {filteredJobs.filter(job => job.status === 'blocked').length}
-                </p>
-              )}
-            </div>
-            <div className="mt-1">
-              <p className="text-xs text-gray-500">Needs attention</p>
-            </div>
+            <span className={`text-xs font-medium uppercase tracking-wider ${
+              filteredJobs.filter(job => job.status === 'blocked').length > 0 ? 'text-red-600' : 'text-gray-400'
+            }`}>Blocked</span>
           </div>
-        </Card>
+          <div className={`text-3xl font-bold tracking-tight ${
+            filteredJobs.filter(job => job.status === 'blocked').length > 0 ? 'text-red-600' : 'text-gray-300'
+          }`}>
+            {filteredJobs.filter(job => job.status === 'blocked').length}
+          </div>
+          <div className="mt-1 text-sm text-gray-500">
+            {filteredJobs.filter(job => job.status === 'blocked').length > 0 ? 'Needs attention' : 'All clear'}
+          </div>
+        </div>
 
         {/* Completed */}
-        <Card className="relative overflow-hidden border-l-4 border-l-emerald-500">
-          <div className="p-1">
-            <div className="flex items-center justify-between">
-              <p className="truncate text-sm font-medium text-gray-500">Completed</p>
-              <div className="rounded-md bg-emerald-50 p-2">
-                <CheckIcon className="h-5 w-5 text-emerald-600" aria-hidden="true" />
-              </div>
+        <div className="bg-gradient-to-br from-emerald-50 to-green-50 rounded-2xl p-5 border border-emerald-100 shadow-sm hover:shadow-md transition-shadow">
+          <div className="flex items-center justify-between mb-4">
+            <div className="w-10 h-10 rounded-xl bg-emerald-500 flex items-center justify-center shadow-lg shadow-emerald-200">
+              <CheckIcon className="h-5 w-5 text-white" />
             </div>
-            <div className="mt-4 flex items-baseline">
-              {jobsLoading ? (
-                <div className="h-8 w-16 animate-pulse bg-gray-200 rounded" />
-              ) : (
-                <p className="text-3xl font-semibold text-gray-900">
-                  {filteredJobs.filter(job => job.status === 'done').length}
-                </p>
-              )}
-            </div>
-            <div className="mt-1">
-              <p className="text-xs text-gray-500">
-                {filteredJobs.filter(j => j.status === 'done' && isThisWeek(new Date(j.updatedAt))).length} this week
-              </p>
-            </div>
+            <span className="text-xs font-medium text-emerald-600 uppercase tracking-wider">Done</span>
           </div>
-        </Card>
+          <div className="text-3xl font-bold text-gray-900 tracking-tight">
+            {filteredJobs.filter(job => job.status === 'done').length}
+          </div>
+          <div className="mt-1 text-sm text-gray-600">
+            <span className="text-emerald-600 font-medium">
+              {filteredJobs.filter(j => j.status === 'done' && isThisWeek(new Date(j.updatedAt))).length}
+            </span> this week
+          </div>
+        </div>
       </div>
 
       {/* Enhanced View Controls */}
@@ -1364,146 +1397,204 @@ export function Production() {
           </div>
 
           <div className="bg-white rounded-xl sm:rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-            {/* Mobile Card List View */}
-            <div className="md:hidden space-y-4 p-4">
-              {filteredJobs.map((job) => {
-                const isReadyToMove = jobsReadyToMove.some(r => r.job.id === job.id)
-                const stageName = job.status === 'draft' ? '-' : (job.status === 'done' ? 'DONE' : getStageName(job.currentStageId))
+            {/* Mobile Card List View - Premium Minimalist */}
+            <div className="md:hidden space-y-3 p-4">
+              {filteredJobs.length === 0 ? (
+                <div className="text-center py-12">
+                  <ChartBarIcon className="w-12 h-12 mx-auto text-gray-300 mb-3" />
+                  <p className="text-gray-500 font-medium">No jobs found</p>
+                  <p className="text-sm text-gray-400 mt-1">Try adjusting your filters</p>
+                </div>
+              ) : (
+                filteredJobs.map((job) => {
+                  const isReadyToMove = jobsReadyToMove.some(r => r.job.id === job.id)
+                  const isReadyToComplete = jobsReadyToComplete.some(j => j.id === job.id)
+                  const stageName = job.status === 'draft' ? '-' : (job.status === 'done' ? 'DONE' : getStageName(job.currentStageId))
 
-                // Calculate actions logic
-                const planned: string[] = (job as any).plannedStageIds || []
-                const allStages = (workflows.find(w => w.id === job.workflowId) || workflows[0])?.stages || []
-                const currentIdx = planned.length > 0 ? planned.indexOf(job.currentStageId) : allStages.findIndex((s: any) => s.id === job.currentStageId)
-                const nextId = planned.length > 0 ? planned[currentIdx + 1] : (allStages[currentIdx + 1]?.id)
-                const nextName = nextId ? (allStages.find((s: any) => s.id === nextId)?.name || 'Next') : null
-                const canShowNextStage = nextId && (job.status === 'released' || job.status === 'in_progress')
-                const requireOutput = ((job as any).requireOutputToAdvance !== false)
-                const thresholdCheck = checkStageThreshold(job, job.currentStageId, workflows)
-                const isThresholdMet = thresholdCheck.isThresholdMet
-                const isReady = requireOutput ? isThresholdMet : true
+                  // Calculate actions logic
+                  const planned: string[] = (job as any).plannedStageIds || []
+                  const allStages = (workflows.find(w => w.id === job.workflowId) || workflows[0])?.stages || []
+                  const currentIdx = planned.length > 0 ? planned.indexOf(job.currentStageId) : allStages.findIndex((s: any) => s.id === job.currentStageId)
+                  const nextId = planned.length > 0 ? planned[currentIdx + 1] : (allStages[currentIdx + 1]?.id)
+                  const nextName = nextId ? (allStages.find((s: any) => s.id === nextId)?.name || 'Next') : null
+                  const canShowNextStage = nextId && (job.status === 'released' || job.status === 'in_progress')
+                  const requireOutput = ((job as any).requireOutputToAdvance !== false)
+                  const thresholdCheck = checkStageThreshold(job, job.currentStageId, workflows)
+                  const isThresholdMet = thresholdCheck.isThresholdMet
+                  const isReady = requireOutput ? isThresholdMet : true
 
-                const renderActions = () => (
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      {job.status === 'draft' && (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); handleStatusChange(job.id, 'released') }}
-                          className="text-white bg-blue-600 hover:bg-blue-700 font-semibold text-sm px-4 py-2 rounded-lg shadow-sm transition-colors"
-                        >
-                          Release
-                        </button>
-                      )}
+                  // Status styling
+                  const getStatusStyle = (status: string) => {
+                    switch (status) {
+                      case 'draft': return 'bg-gray-100 text-gray-600'
+                      case 'released': return 'bg-blue-100 text-blue-700'
+                      case 'in_progress': return 'bg-amber-100 text-amber-700'
+                      case 'blocked': return 'bg-red-100 text-red-700'
+                      case 'done': return 'bg-emerald-100 text-emerald-700'
+                      case 'cancelled': return 'bg-gray-100 text-gray-500'
+                      default: return 'bg-gray-100 text-gray-600'
+                    }
+                  }
 
-                      {(job.status === 'released' || job.status === 'in_progress') && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            if (canShowNextStage) {
-                              setConfirmMove({ open: true, job, targetStageId: nextId!, targetStageName: nextName || 'Next' })
-                            } else {
-                              const currentStageName = getStageName(job.currentStageId)
-                              setConfirmMove({ open: true, job, targetStageId: job.currentStageId, targetStageName: currentStageName })
-                            }
-                          }}
-                          className="text-white bg-green-600 hover:bg-green-700 font-semibold text-sm px-4 py-2 rounded-lg shadow-sm transition-colors"
-                        >
-                          Output
-                        </button>
-                      )}
+                  // Card border color based on status
+                  const getCardBorder = (status: string) => {
+                    switch (status) {
+                      case 'in_progress': return 'border-l-4 border-l-amber-500'
+                      case 'blocked': return 'border-l-4 border-l-red-500'
+                      case 'done': return 'border-l-4 border-l-emerald-500'
+                      case 'released': return 'border-l-4 border-l-blue-500'
+                      default: return 'border-l-4 border-l-gray-300'
+                    }
+                  }
 
-                      {canShowNextStage && isReady && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (!(job.status === 'released' || job.status === 'in_progress')) {
-                              setRequireRelease({ open: true, job, targetStageId: nextId!, targetStageName: nextName || 'Next' })
-                              return
-                            }
-                            setConfirmMove({ open: true, job, targetStageId: nextId!, targetStageName: nextName || 'Next' })
-                          }}
-                          className="text-white bg-gray-700 hover:bg-gray-800 font-semibold text-sm px-4 py-2 rounded-lg shadow-sm transition-colors"
-                        >
-                          Next Stage
-                        </button>
-                      )}
-                    </div>
-
-                    <button
-                      onClick={(e) => { e.stopPropagation(); setSelectedJob(job) }}
-                      className="text-blue-600 hover:text-blue-700 hover:bg-blue-50 font-semibold text-sm px-4 py-2 rounded-lg transition-colors"
+                  return (
+                    <div
+                      key={job.id}
+                      onClick={() => setSelectedJob(job)}
+                      className={`bg-white rounded-xl overflow-hidden shadow-sm border border-gray-100 active:bg-gray-50 transition-all ${getCardBorder(job.status)}`}
                     >
-                      Details
-                    </button>
-                  </div>
-                )
-
-                return (
-                  <div
-                    key={job.id}
-                    className="bg-white p-5 sm:p-4 active:bg-gray-50 transition-colors rounded-lg shadow-sm border border-gray-200"
-                  >
-                    {/* Top Row: Job Code, Status, Date */}
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-2.5 flex-1 min-w-0">
-                        <span className="font-bold text-lg text-gray-900 truncate">{job.code}</span>
-                        <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${getStatusColor(job.status)} whitespace-nowrap flex-shrink-0`}>
-                          {job.status.replace('_', ' ').toUpperCase()}
-                        </span>
-                      </div>
-                      <div className="text-right flex-shrink-0 ml-3">
-                        <div className="text-xs font-semibold text-gray-600">{formatDate(job.dueDate)}</div>
-                      </div>
-                    </div>
-
-                    {/* Customer Name */}
-                    <div className="mb-3">
-                      <div className="text-sm font-semibold text-gray-800 uppercase tracking-wide">
-                        {job.customer.name}
-                      </div>
-                    </div>
-
-                    {/* Product Info */}
-                    <div className="mb-3 space-y-2">
-                      {job.sku && (
-                        <div className="flex items-center gap-2">
-                          <span className="bg-gray-100 text-gray-700 px-2.5 py-1 rounded-md text-xs font-semibold">
-                            {job.sku}
-                          </span>
+                      {/* Header */}
+                      <div className="p-4 pb-3">
+                        <div className="flex items-start justify-between gap-3 mb-3">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="font-bold text-base text-gray-900">{job.code}</span>
+                              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${getStatusStyle(job.status)}`}>
+                                {job.status.replace('_', ' ')}
+                              </span>
+                            </div>
+                            <div className="text-sm font-medium text-gray-700 truncate">
+                              {job.customer?.name || 'No Customer'}
+                            </div>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <div className="text-xs text-gray-400 uppercase tracking-wider mb-0.5">Due</div>
+                            <div className="text-sm font-semibold text-gray-900">{formatDate(job.dueDate)}</div>
+                          </div>
                         </div>
-                      )}
-                      <div className="text-sm text-gray-600 leading-relaxed">
-                        {job.productName}
+
+                        {/* Product Info */}
+                        <div className="flex items-center gap-2 mb-3">
+                          {job.sku && (
+                            <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded text-xs font-mono font-medium">
+                              {job.sku}
+                            </span>
+                          )}
+                          {job.quantity && (
+                            <span className="text-xs text-gray-500">
+                              Qty: <span className="font-semibold text-gray-700">{job.quantity}</span>
+                            </span>
+                          )}
+                        </div>
+
+                        {job.productName && (
+                          <p className="text-sm text-gray-600 line-clamp-1 mb-3">{job.productName}</p>
+                        )}
+
+                        {/* Stage & Status Badges */}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {stageName !== '-' && stageName !== 'DONE' && (
+                            <div className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 text-slate-700 rounded-lg text-xs font-medium">
+                              <Cog6ToothIcon className="h-3.5 w-3.5" />
+                              {stageName}
+                            </div>
+                          )}
+                          {stageName === 'DONE' && (
+                            <div className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-100 text-emerald-700 rounded-lg text-xs font-medium">
+                              <CheckIcon className="h-3.5 w-3.5" />
+                              Completed
+                            </div>
+                          )}
+                          {isReadyToMove && (
+                            <div className="inline-flex items-center gap-1 px-2.5 py-1 bg-orange-100 text-orange-700 rounded-lg text-xs font-semibold animate-pulse">
+                              <ArrowRightIcon className="h-3.5 w-3.5" />
+                              Ready to move
+                            </div>
+                          )}
+                          {isReadyToComplete && job.status !== 'done' && (
+                            <div className="inline-flex items-center gap-1 px-2.5 py-1 bg-green-100 text-green-700 rounded-lg text-xs font-semibold">
+                              <CheckIcon className="h-3.5 w-3.5" />
+                              Ready to complete
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Actions */}
+                      <div 
+                        onClick={(e) => e.stopPropagation()} 
+                        className="px-4 py-3 bg-gray-50 border-t border-gray-100 flex items-center justify-between gap-2"
+                      >
+                        <div className="flex items-center gap-2">
+                          {job.status === 'draft' && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleStatusChange(job.id, 'released') }}
+                              className="text-white bg-blue-600 hover:bg-blue-700 font-semibold text-xs px-3 py-2 rounded-lg transition-colors"
+                            >
+                              Release
+                            </button>
+                          )}
+
+                          {(job.status === 'released' || job.status === 'in_progress') && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                if (canShowNextStage) {
+                                  setConfirmMove({ open: true, job, targetStageId: nextId!, targetStageName: nextName || 'Next' })
+                                } else {
+                                  const currentStageName = getStageName(job.currentStageId)
+                                  setConfirmMove({ open: true, job, targetStageId: job.currentStageId, targetStageName: currentStageName })
+                                }
+                              }}
+                              className="text-white bg-emerald-600 hover:bg-emerald-700 font-semibold text-xs px-3 py-2 rounded-lg transition-colors flex items-center gap-1"
+                            >
+                              <PlusIcon className="h-3.5 w-3.5" />
+                              Output
+                            </button>
+                          )}
+
+                          {canShowNextStage && isReady && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (!(job.status === 'released' || job.status === 'in_progress')) {
+                                  setRequireRelease({ open: true, job, targetStageId: nextId!, targetStageName: nextName || 'Next' })
+                                  return
+                                }
+                                setConfirmMove({ open: true, job, targetStageId: nextId!, targetStageName: nextName || 'Next' })
+                              }}
+                              className="text-white bg-slate-700 hover:bg-slate-800 font-semibold text-xs px-3 py-2 rounded-lg transition-colors flex items-center gap-1"
+                            >
+                              <ArrowRightIcon className="h-3.5 w-3.5" />
+                              Next
+                            </button>
+                          )}
+
+                          {isReadyToComplete && job.status !== 'done' && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setConfirmComplete({ open: true, job }) }}
+                              className="text-white bg-green-600 hover:bg-green-700 font-semibold text-xs px-3 py-2 rounded-lg transition-colors"
+                            >
+                              Complete
+                            </button>
+                          )}
+                        </div>
+
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setSelectedJob(job) }}
+                          className="text-slate-600 hover:text-slate-800 font-medium text-xs px-3 py-2 rounded-lg hover:bg-slate-100 transition-colors"
+                        >
+                          Details →
+                        </button>
                       </div>
                     </div>
-
-                    {/* Stage Info & Ready Badge */}
-                    {(stageName !== '-' && stageName !== 'DONE') || isReadyToMove ? (
-                      <div className="flex items-center gap-2 mb-3 flex-wrap">
-                        {stageName !== '-' && stageName !== 'DONE' && (
-                          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 text-blue-700 rounded-md text-xs font-semibold border border-blue-200">
-                            <span>{stageName}</span>
-                          </div>
-                        )}
-                        {isReadyToMove && (
-                          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-orange-50 text-orange-700 rounded-md text-xs font-semibold border border-orange-200">
-                            <ArrowRightIcon className="h-3.5 w-3.5" />
-                            <span>Ready for next stage</span>
-                          </div>
-                        )}
-                      </div>
-                    ) : null}
-
-                    {/* Actions Row */}
-                    <div onClick={(e) => e.stopPropagation()} className="pt-3 border-t border-gray-200">
-                      {renderActions()}
-                    </div>
-                  </div>
-                )
-              })}
+                  )
+                })
+              )}
             </div>
 
             {/* Desktop Table View */}
-            <div className="hidden md:block">
+            <div className="hidden md:block overflow-hidden">
               <DataTable
                 data={filteredJobs.map(job => {
                   const isReadyToMove = jobsReadyToMove.some(r => r.job.id === job.id)
@@ -1517,13 +1608,10 @@ export function Production() {
                         const stageName = item.status === 'draft' ? '-' : (item.status === 'done' ? 'DONE' : getStageName(item.currentStageId))
                         const isReady = item._isReadyToMove
                         return (
-                          <div className="flex items-center gap-2">
-                            <span>{stageName}</span>
+                          <div className="flex items-center gap-1">
+                            <span className="truncate">{stageName}</span>
                             {isReady && (
-                              <span className="px-2 py-0.5 bg-orange-100 text-orange-700 rounded-full text-xs font-medium flex items-center gap-1">
-                                <ArrowRightIcon className="h-3 w-3" />
-                                Ready
-                              </span>
+                              <span className="shrink-0 w-2 h-2 bg-orange-500 rounded-full animate-pulse" title="Ready to move" />
                             )}
                           </div>
                         )
@@ -1546,11 +1634,11 @@ export function Production() {
                   const isReady = requireOutput ? isThresholdMet : true
 
                   return (
-                    <div className="flex items-center justify-end space-x-2">
+                    <div className="flex items-center justify-end gap-1">
                       {job.status === 'draft' && (
                         <button
                           onClick={(e) => { e.stopPropagation(); handleStatusChange(job.id, 'released') }}
-                          className="text-white bg-blue-600 hover:bg-blue-700 font-medium text-sm px-3 py-1.5 rounded-lg shadow-sm border border-transparent transition-colors"
+                          className="text-white bg-blue-600 hover:bg-blue-700 font-medium text-xs px-2 py-1 rounded transition-colors"
                           title="Release job"
                         >
                           Release
@@ -1562,23 +1650,21 @@ export function Production() {
                         <button
                           onClick={(e) => {
                             e.stopPropagation()
-                            // Always open move modal for output entry (even if no next stage)
                             if (canShowNextStage) {
                               setConfirmMove({ open: true, job, targetStageId: nextId!, targetStageName: nextName || 'Next' })
                             } else {
-                              // If no next stage, open modal with dummy target (just for output entry)
                               const currentStageName = getStageName(job.currentStageId)
                               setConfirmMove({ open: true, job, targetStageId: job.currentStageId, targetStageName: currentStageName })
                             }
                           }}
-                          className="text-white bg-green-600 hover:bg-green-700 font-medium text-sm px-3 py-1.5 rounded-lg shadow-sm border border-transparent transition-colors"
-                          title="Add production output"
+                          className="text-white bg-green-600 hover:bg-green-700 p-1 rounded transition-colors"
+                          title="Add output"
                         >
-                          Add Output
+                          <PlusIcon className="h-4 w-4" />
                         </button>
                       )}
 
-                      {/* Next Stage button - only if there's a next stage AND threshold is met */}
+                      {/* Next Stage button */}
                       {canShowNextStage && isReady && (
                         <button
                           onClick={(e) => {
@@ -1589,10 +1675,10 @@ export function Production() {
                             }
                             setConfirmMove({ open: true, job, targetStageId: nextId!, targetStageName: nextName || 'Next' })
                           }}
-                          className="text-sm px-3 py-1.5 rounded-lg shadow-sm border border-transparent transition-colors text-white bg-gray-700 hover:bg-gray-800"
+                          className="text-white bg-gray-700 hover:bg-gray-800 p-1 rounded transition-colors"
                           title={`Move to ${nextName}`}
                         >
-                          Next Stage
+                          <ArrowRightIcon className="h-4 w-4" />
                         </button>
                       )}
 
@@ -1602,21 +1688,20 @@ export function Production() {
                         return canShowComplete ? (
                           <button
                             onClick={(e) => { e.stopPropagation(); setConfirmComplete({ open: true, job }) }}
-                            className="text-white bg-green-600 hover:bg-green-700 font-medium text-sm px-3 py-1.5 rounded-lg shadow-sm border border-transparent transition-colors"
-                            title="Mark as Completed"
+                            className="text-white bg-emerald-600 hover:bg-emerald-700 p-1 rounded transition-colors"
+                            title="Complete"
                           >
-                            Complete
+                            <CheckIcon className="h-4 w-4" />
                           </button>
                         ) : null
                       })()}
 
-                      {/* Duplicate */}
                       <button
                         onClick={(e) => { e.stopPropagation(); setInitialJobForCreate(job); setShowCreateForm(true) }}
-                        className="text-gray-700 hover:text-gray-900 text-sm px-3 py-1.5 rounded-lg hover:bg-gray-50 transition-colors"
+                        className="text-gray-500 hover:text-gray-700 p-1 rounded hover:bg-gray-100 transition-colors"
                         title="Duplicate job"
                       >
-                        Duplicate
+                        <Squares2X2Icon className="h-4 w-4" />
                       </button>
 
                       <button
@@ -1624,9 +1709,10 @@ export function Production() {
                           e.stopPropagation()
                           setSelectedJob(job)
                         }}
-                        className="text-blue-600 hover:text-blue-900 font-medium text-sm px-3 py-1.5 rounded-lg hover:bg-blue-50 transition-colors"
+                        className="text-blue-600 hover:text-blue-800 p-1 rounded hover:bg-blue-50 transition-colors"
+                        title="View details"
                       >
-                        Details
+                        <MagnifyingGlassIcon className="h-4 w-4" />
                       </button>
 
                       <button
@@ -1634,7 +1720,7 @@ export function Production() {
                           e.stopPropagation()
                           handleDeleteJob(job.id)
                         }}
-                        className="text-red-600 hover:text-red-900 p-1.5 rounded-lg hover:bg-red-50 transition-colors"
+                        className="text-red-500 hover:text-red-700 p-1 rounded hover:bg-red-50 transition-colors"
                         title="Delete job"
                       >
                         <TrashIcon className="h-4 w-4" />

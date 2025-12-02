@@ -158,37 +158,40 @@ export const ConfirmInventoryPostingModal: FC<Props> = ({ job, workspaceId, prod
   const invalid = rows.some(r => r.selected && (!((r.productId || products.find(p => p.sku === r.sku)?.id)) || Number(r.qty) <= 0))
 
   return (
-    <div className="fixed inset-0 z-[60] backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-7xl border border-gray-200 flex flex-col max-h-[90vh]">
-        {/* Compact Header */}
-        <div className="p-4 border-b border-gray-200 flex items-center justify-between bg-white">
-          <div className="flex items-center space-x-3">
-            <CheckBadgeIcon className="h-5 w-5 text-emerald-600" />
-            <div>
-              <h3 className="text-lg font-semibold text-gray-900">Complete Production Job</h3>
-              <p className="text-sm text-gray-600">
+    <div className="fixed inset-0 z-[60] bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div className="bg-white w-full sm:rounded-2xl sm:shadow-2xl sm:w-full sm:max-w-7xl border-0 sm:border border-gray-200 flex flex-col h-full sm:h-auto sm:max-h-[90vh]">
+        {/* Mobile Header - Full Width */}
+        <div className="p-4 sm:p-4 border-b border-gray-200 flex items-center justify-between bg-gradient-to-r from-emerald-500 to-emerald-600 sm:bg-white">
+          <div className="flex items-center space-x-3 flex-1">
+            <div className="w-10 h-10 sm:w-8 sm:h-8 bg-white/20 sm:bg-transparent rounded-xl sm:rounded-none flex items-center justify-center">
+              <CheckBadgeIcon className="h-6 w-6 sm:h-5 sm:w-5 text-white sm:text-emerald-600" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h3 className="text-lg sm:text-lg font-bold text-white sm:text-gray-900">Complete Production Job</h3>
+              <p className="text-sm text-emerald-50 sm:text-gray-600">
                 Job: <span className="font-mono font-medium">#{job.code}</span>
               </p>
             </div>
           </div>
-          <div className="flex items-center space-x-3">
-            <span className="text-sm text-gray-600">
+          <div className="flex items-center space-x-2 sm:space-x-3">
+            <span className="text-xs sm:text-sm text-white/90 sm:text-gray-600 hidden sm:inline">
               {selectedCount} item{selectedCount !== 1 ? 's' : ''} selected
             </span>
             <button
               onClick={onClose}
-              className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+              className="w-10 h-10 sm:w-8 sm:h-8 bg-white/20 sm:bg-transparent text-white sm:text-gray-400 hover:bg-white/30 sm:hover:bg-gray-100 rounded-xl sm:rounded-lg transition-colors flex items-center justify-center"
             >
-              <XMarkIcon className="h-5 w-5" />
+              <XMarkIcon className="h-6 w-6 sm:h-5 sm:w-5" />
             </button>
           </div>
         </div>
 
-        {/* Compact Table */}
-        <div className="flex-1 overflow-auto">
-          <div className="p-4">
-            {/* Table Header - Single Line */}
-            <div className="grid grid-cols-12 gap-2 text-xs font-semibold text-gray-700 pb-2 border-b border-gray-200 uppercase tracking-wide">
+        {/* Scrollable Content */}
+        <div className="flex-1 overflow-y-auto">
+          <div className="p-4 sm:p-4">
+            {/* Mobile: Card View, Desktop: Table View */}
+            {/* Desktop Table Header */}
+            <div className="hidden sm:grid grid-cols-12 gap-2 text-xs font-semibold text-gray-700 pb-2 border-b border-gray-200 uppercase tracking-wide">
               <div className="col-span-1 flex justify-center">
                 <input
                   type="checkbox"
@@ -211,8 +214,27 @@ export const ConfirmInventoryPostingModal: FC<Props> = ({ job, workspaceId, prod
               <div className="col-span-2 text-right">Post Qty</div>
             </div>
 
-            {/* Table Rows */}
-            <div className="divide-y divide-gray-100">
+            {/* Mobile: Select All */}
+            <div className="sm:hidden mb-4 p-3 bg-gray-50 rounded-xl border border-gray-200">
+              <div className="flex items-center justify-between">
+                <label className="flex items-center space-x-3 flex-1">
+                  <input
+                    type="checkbox"
+                    className="h-5 w-5 text-emerald-600 focus:ring-emerald-500 border-gray-300 rounded"
+                    checked={allSelected}
+                    ref={el => { if (el) el.indeterminate = someSelected }}
+                    onChange={e => {
+                      const next = rows.map(r => ({ ...r, selected: e.target.checked }))
+                      setRows(next)
+                    }}
+                  />
+                  <span className="text-sm font-semibold text-gray-900">Select All ({selectedCount} selected)</span>
+                </label>
+              </div>
+            </div>
+
+            {/* Mobile: Card View, Desktop: Table Rows */}
+            <div className="space-y-3 sm:space-y-0 sm:divide-y sm:divide-gray-100">
               {rows.map((r, i) => {
                 const product = products.find(p => p.id === r.productId) || products.find(p => p.sku === r.sku)
                 const targetUom = product?.uom || r.uom
@@ -220,89 +242,176 @@ export const ConfirmInventoryPostingModal: FC<Props> = ({ job, workspaceId, prod
                 const hasProduct = !!(r.productId || products.find(p => p.sku === r.sku)?.id)
 
                 return (
-                  <div key={i} className="grid grid-cols-12 gap-2 items-center py-2 hover:bg-gray-50 transition-colors">
-                    {/* Select */}
-                    <div className="col-span-1 flex justify-center">
-                      <input
-                        type="checkbox"
-                        className="h-4 w-4 text-emerald-600 focus:ring-emerald-500 border-gray-300 rounded"
-                        checked={r.selected}
-                        onChange={e => {
-                          const next = [...rows]
-                          next[i] = { ...next[i], selected: e.target.checked }
-                          setRows(next)
-                        }}
-                      />
-                    </div>
-
-                    {/* SKU */}
-                    <div className="col-span-2">
-                      <span className="font-mono text-xs text-gray-900 font-medium">{r.sku}</span>
-                    </div>
-
-                    {/* Name - Truncated */}
-                    <div className="col-span-2">
-                      <p className="text-xs text-gray-900 truncate" title={r.name}>{r.name}</p>
-                    </div>
-
-                    {/* Product Selection - Compact */}
-                    <div className="col-span-2">
-                      <select
-                        className={`w-full text-xs border rounded px-2 py-1.5 transition-colors ${r.selected && !hasProduct
-                          ? 'border-orange-300 bg-orange-50'
-                          : 'border-gray-300 hover:border-gray-400'
-                          }`}
-                        value={r.productId || (product?.id || '')}
-                        onChange={e => {
-                          const next = [...rows]
-                          next[i] = { ...next[i], productId: e.target.value }
-                          setRows(next)
-                        }}
-                      >
-                        <option value="">Select item...</option>
-                        {products.map(p => (
-                          <option key={p.id} value={p.id}>
-                            {p.sku} - {p.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {/* Quantity Input */}
-                    <div className="col-span-1">
-                      <input
-                        type="number"
-                        min={0}
-                        className="w-full text-xs border border-gray-300 rounded px-2 py-1.5 text-right font-medium hover:border-gray-400 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
-                        value={r.qty}
-                        onChange={e => {
-                          const next = [...rows]
-                          next[i] = { ...next[i], qty: Number(e.target.value) }
-                          setRows(next)
-                        }}
-                      />
-                    </div>
-
-                    {/* Source UOM */}
-                    <div className="col-span-1 text-center">
-                      <span className="text-xs font-medium text-gray-600 bg-gray-100 px-2 py-1 rounded">
-                        {r.uom}
-                      </span>
-                    </div>
-
-                    {/* Pieces in Box */}
-                    <div className="col-span-1 text-center">
-                      <span className="text-xs font-medium text-gray-700">
-                        {pcsPerBox > 0 ? pcsPerBox.toLocaleString() : '-'}
-                      </span>
-                    </div>
-
-                    {/* Converted Quantity */}
-                    <div className="col-span-2 text-right">
-                      <div className="text-sm font-semibold text-gray-900">
-                        {Number.isFinite(converted) ? Number(converted).toLocaleString() : '-'}
+                  <div key={i} className={`${r.selected ? 'bg-emerald-50 border-2 border-emerald-200' : 'bg-white border border-gray-200'} rounded-2xl sm:rounded-none sm:border-0 p-4 sm:p-0 sm:py-2 sm:hover:bg-gray-50 transition-all`}>
+                    {/* Mobile Card Layout */}
+                    <div className="sm:hidden space-y-3">
+                      {/* Header Row */}
+                      <div className="flex items-center justify-between">
+                        <label className="flex items-center space-x-3 flex-1">
+                          <input
+                            type="checkbox"
+                            className="h-5 w-5 text-emerald-600 focus:ring-emerald-500 border-gray-300 rounded"
+                            checked={r.selected}
+                            onChange={e => {
+                              const next = [...rows]
+                              next[i] = { ...next[i], selected: e.target.checked }
+                              setRows(next)
+                            }}
+                          />
+                          <div className="flex-1 min-w-0">
+                            <p className="font-bold text-gray-900 text-base">{r.name}</p>
+                            <p className="font-mono text-sm text-gray-600">{r.sku}</p>
+                          </div>
+                        </label>
+                        <div className="text-right">
+                          <div className="text-lg font-bold text-emerald-600">
+                            {Number.isFinite(converted) ? Number(converted).toLocaleString() : '-'}
+                          </div>
+                          <div className="text-xs text-gray-500">{product?.uom || r.uom}</div>
+                        </div>
                       </div>
-                      <div className="text-xs text-gray-500">{product?.uom || r.uom}</div>
+
+                      {/* Product Selection */}
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-700 mb-2">Inventory Item</label>
+                        <select
+                          className={`w-full text-base border-2 rounded-xl px-4 py-3 transition-colors ${r.selected && !hasProduct
+                            ? 'border-orange-300 bg-orange-50'
+                            : 'border-gray-300 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500'
+                            }`}
+                          value={r.productId || (product?.id || '')}
+                          onChange={e => {
+                            const next = [...rows]
+                            next[i] = { ...next[i], productId: e.target.value }
+                            setRows(next)
+                          }}
+                        >
+                          <option value="">Select item...</option>
+                          {products.map(p => (
+                            <option key={p.id} value={p.id}>
+                              {p.sku} - {p.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Quantity Row */}
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-semibold text-gray-700 mb-2">Quantity</label>
+                          <input
+                            type="number"
+                            min={0}
+                            className="w-full text-base border-2 border-gray-300 rounded-xl px-4 py-3 text-right font-medium focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500"
+                            value={r.qty}
+                            onChange={e => {
+                              const next = [...rows]
+                              next[i] = { ...next[i], qty: Number(e.target.value) }
+                              setRows(next)
+                            }}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-gray-700 mb-2">UOM</label>
+                          <div className="w-full text-base bg-gray-100 border-2 border-gray-200 rounded-xl px-4 py-3 text-center font-medium">
+                            {r.uom}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Conversion Info */}
+                      {pcsPerBox > 0 && (
+                        <div className="text-xs text-gray-600 bg-blue-50 rounded-lg p-2">
+                          <span className="font-semibold">Pieces per Box:</span> {pcsPerBox.toLocaleString()}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Desktop Table Layout */}
+                    <div className="hidden sm:grid grid-cols-12 gap-2 items-center">
+                      {/* Select */}
+                      <div className="col-span-1 flex justify-center">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 text-emerald-600 focus:ring-emerald-500 border-gray-300 rounded"
+                          checked={r.selected}
+                          onChange={e => {
+                            const next = [...rows]
+                            next[i] = { ...next[i], selected: e.target.checked }
+                            setRows(next)
+                          }}
+                        />
+                      </div>
+
+                      {/* SKU */}
+                      <div className="col-span-2">
+                        <span className="font-mono text-xs text-gray-900 font-medium">{r.sku}</span>
+                      </div>
+
+                      {/* Name - Truncated */}
+                      <div className="col-span-2">
+                        <p className="text-xs text-gray-900 truncate" title={r.name}>{r.name}</p>
+                      </div>
+
+                      {/* Product Selection - Compact */}
+                      <div className="col-span-2">
+                        <select
+                          className={`w-full text-xs border rounded px-2 py-1.5 transition-colors ${r.selected && !hasProduct
+                            ? 'border-orange-300 bg-orange-50'
+                            : 'border-gray-300 hover:border-gray-400'
+                            }`}
+                          value={r.productId || (product?.id || '')}
+                          onChange={e => {
+                            const next = [...rows]
+                            next[i] = { ...next[i], productId: e.target.value }
+                            setRows(next)
+                          }}
+                        >
+                          <option value="">Select item...</option>
+                          {products.map(p => (
+                            <option key={p.id} value={p.id}>
+                              {p.sku} - {p.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Quantity Input */}
+                      <div className="col-span-1">
+                        <input
+                          type="number"
+                          min={0}
+                          className="w-full text-xs border border-gray-300 rounded px-2 py-1.5 text-right font-medium hover:border-gray-400 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                          value={r.qty}
+                          onChange={e => {
+                            const next = [...rows]
+                            next[i] = { ...next[i], qty: Number(e.target.value) }
+                            setRows(next)
+                          }}
+                        />
+                      </div>
+
+                      {/* Source UOM */}
+                      <div className="col-span-1 text-center">
+                        <span className="text-xs font-medium text-gray-600 bg-gray-100 px-2 py-1 rounded">
+                          {r.uom}
+                        </span>
+                      </div>
+
+                      {/* Pieces in Box */}
+                      <div className="col-span-1 text-center">
+                        <span className="text-xs font-medium text-gray-700">
+                          {pcsPerBox > 0 ? pcsPerBox.toLocaleString() : '-'}
+                        </span>
+                      </div>
+
+                      {/* Converted Quantity */}
+                      <div className="col-span-2 text-right">
+                        <div className="text-sm font-semibold text-gray-900">
+                          {Number.isFinite(converted) ? Number(converted).toLocaleString() : '-'}
+                        </div>
+                        <div className="text-xs text-gray-500">{product?.uom || r.uom}</div>
+                      </div>
                     </div>
                   </div>
                 )
@@ -310,31 +419,41 @@ export const ConfirmInventoryPostingModal: FC<Props> = ({ job, workspaceId, prod
             </div>
 
             {/* Options Section */}
-            <div className="mt-6 p-4 bg-blue-50 rounded-lg border border-blue-100">
+            <div className="mt-6 p-4 sm:p-4 bg-blue-50 rounded-xl sm:rounded-lg border border-blue-100">
               <div className="flex items-start space-x-3">
-                <div className="flex items-center h-5">
+                <div className="flex items-center h-6 sm:h-5">
                   <input
                     id="auto-consume"
                     name="auto-consume"
                     type="checkbox"
                     checked={autoConsume}
                     onChange={(e) => setAutoConsume(e.target.checked)}
-                    className="focus:ring-blue-500 h-4 w-4 text-blue-600 border-gray-300 rounded"
+                    className="focus:ring-blue-500 h-5 w-5 sm:h-4 sm:w-4 text-blue-600 border-gray-300 rounded"
                   />
                 </div>
-                <div className="ml-3 text-sm">
-                  <label htmlFor="auto-consume" className="font-medium text-blue-900">
+                <div className="ml-3 flex-1">
+                  <label htmlFor="auto-consume" className="text-base sm:text-sm font-semibold text-blue-900 block mb-1">
                     Auto-consume raw materials (Backflushing)
                   </label>
-                  <p className="text-blue-700">
+                  <p className="text-sm sm:text-sm text-blue-700">
                     Automatically deduct raw materials from inventory based on the BOM and the quantity being posted.
                   </p>
                 </div>
               </div>
             </div>
 
-            {/* Compact Help Text */}
-            <div className="mt-4 flex items-center justify-between text-xs text-gray-600">
+            {/* Status Badge - Mobile */}
+            <div className="mt-4 sm:hidden">
+              <div className={`w-full p-4 rounded-xl text-center font-semibold ${invalid ? 'bg-orange-100 text-orange-700 border-2 border-orange-200' : selectedCount === 0 ? 'bg-gray-100 text-gray-700 border-2 border-gray-200' : 'bg-emerald-100 text-emerald-700 border-2 border-emerald-200'
+                }`}>
+                {selectedCount === 0 ? 'Select items to post' :
+                  invalid ? 'Complete required fields' :
+                    'Ready to post'}
+              </div>
+            </div>
+
+            {/* Compact Help Text - Desktop */}
+            <div className="mt-4 hidden sm:flex items-center justify-between text-xs text-gray-600">
               <div className="flex items-center space-x-4">
                 <div className="flex items-center space-x-1">
                   <QuestionMarkCircleIcon className="h-4 w-4" />
@@ -355,32 +474,32 @@ export const ConfirmInventoryPostingModal: FC<Props> = ({ job, workspaceId, prod
           </div>
         </div>
 
-        {/* Compact Footer */}
-        <div className="p-4 border-t border-gray-200 bg-gray-50">
-          <div className="flex items-center justify-between">
+        {/* Footer - Mobile Full Width, Desktop Compact */}
+        <div className="p-4 sm:p-4 border-t border-gray-200 bg-gray-50 sm:bg-gray-50">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-0">
             <button
               onClick={onClose}
               disabled={isSubmitting}
-              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 transition-colors disabled:opacity-50"
+              className="w-full sm:w-auto px-6 py-4 sm:py-2 text-base sm:text-sm font-semibold sm:font-medium text-gray-700 bg-white border-2 sm:border border-gray-300 rounded-xl sm:rounded-lg hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 transition-colors disabled:opacity-50 active:scale-[0.98]"
             >
               Cancel
             </button>
             <button
               disabled={invalid || isSubmitting || selectedCount === 0}
               onClick={handleConfirm}
-              className={`px-6 py-2 text-sm font-medium text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 transition-colors flex items-center space-x-2 ${invalid || isSubmitting || selectedCount === 0
+              className={`w-full sm:w-auto px-6 py-4 sm:py-2 text-base sm:text-sm font-bold sm:font-medium text-white rounded-xl sm:rounded-lg focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 transition-all flex items-center justify-center space-x-2 active:scale-[0.98] ${invalid || isSubmitting || selectedCount === 0
                 ? 'bg-gray-400 cursor-not-allowed'
-                : 'bg-emerald-600 hover:bg-emerald-700'
+                : 'bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 shadow-lg shadow-emerald-500/30'
                 }`}
             >
               {isSubmitting ? (
                 <>
-                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  <div className="w-5 h-5 sm:w-4 sm:h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                   <span>Processing...</span>
                 </>
               ) : (
                 <>
-                  <CheckBadgeIcon className="h-4 w-4" />
+                  <CheckBadgeIcon className="h-5 w-5 sm:h-4 sm:w-4" />
                   <span>Post to Inventory</span>
                 </>
               )}

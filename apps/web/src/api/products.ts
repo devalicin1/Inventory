@@ -11,6 +11,7 @@ import {
   query,
   serverTimestamp,
   updateDoc,
+  onSnapshot,
 } from 'firebase/firestore'
 import { getDownloadURL, ref, uploadBytes, deleteObject } from 'firebase/storage'
 import { generateQRCodeDataURL } from '../utils/qrcode'
@@ -413,4 +414,34 @@ export async function deleteProductTicket(
   ticketId: string
 ): Promise<void> {
   await deleteDoc(doc(db, 'workspaces', workspaceId, 'products', productId, 'tickets', ticketId))
+}
+
+// ===== REAL-TIME SUBSCRIPTIONS =====
+
+/**
+ * Subscribe to real-time updates for all products in a workspace
+ * Returns an unsubscribe function
+ */
+export function subscribeToProducts(
+  workspaceId: string,
+  onData: (products: Product[]) => void,
+  onError?: (error: Error) => void
+): () => void {
+  const col = collection(db, 'workspaces', workspaceId, 'products')
+  const q = query(col, orderBy('name', 'asc'))
+  
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const products = snapshot.docs.map(d => ({
+        id: d.id,
+        ...d.data()
+      })) as Product[]
+      onData(products)
+    },
+    (error) => {
+      console.error('[subscribeToProducts] Error:', error)
+      onError?.(error)
+    }
+  )
 }

@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { DataTable } from '../components/DataTable'
 import { Scanner } from '../components/Scanner'
 import { listProducts } from '../api/inventory'
-import { listGroups, type Group, setProductStatus, deleteProduct, moveProductToGroup, createGroup, deleteGroup, renameGroup, moveGroupParent, createProduct } from '../api/products'
+import { listGroups, type Group, setProductStatus, deleteProduct, moveProductToGroup, createGroup, deleteGroup, renameGroup, moveGroupParent, createProduct, subscribeToProducts } from '../api/products'
 import { listUOMs } from '../api/settings'
 import { createStockTransaction } from '../api/inventory'
 import { ProductForm } from '../components/ProductForm'
@@ -37,7 +37,8 @@ import {
   EllipsisVerticalIcon,
   MinusIcon,
   PlusCircleIcon,
-  MinusCircleIcon
+  MinusCircleIcon,
+  AdjustmentsHorizontalIcon
 } from '@heroicons/react/24/outline'
 import { toCSV, downloadCSV, parseCSV } from '../utils/csv'
 import { Card } from '../components/ui/Card'
@@ -82,7 +83,28 @@ export function Inventory() {
     queryKey: ['products', workspaceId],
     queryFn: () => listProducts(workspaceId!),
     enabled: !!workspaceId,
+    staleTime: Infinity, // Don't refetch automatically - we use real-time subscription
   })
+
+  // Real-time subscription for products - updates immediately when data changes in Firestore
+  useEffect(() => {
+    if (!workspaceId) return
+
+    const unsubscribe = subscribeToProducts(
+      workspaceId,
+      (updatedProducts) => {
+        // Update the query cache with real-time data
+        qc.setQueryData(['products', workspaceId], updatedProducts)
+      },
+      (error) => {
+        console.error('[Inventory] Real-time subscription error:', error)
+      }
+    )
+
+    return () => {
+      unsubscribe()
+    }
+  }, [workspaceId, qc])
 
   const { data: groups = [], isLoading: groupsLoading } = useQuery<Group[]>({
     queryKey: ['groups', workspaceId],
@@ -1316,80 +1338,163 @@ export function Inventory() {
                   </div>
                 </div>
 
-                {/* Product Cards */}
+                {/* Product Cards - Premium Mobile View */}
                 {paginatedProducts.map((item: any) => {
                   const isSelected = selectedIds.includes(item.id)
                   const qtyOnHand = item.qtyOnHand || 0
-                  const isLowStock = qtyOnHand < item.minStock
-                  const isOutOfStock = qtyOnHand === 0
+                  const minStock = item.minStock || 0
+                  const isLowStock = qtyOnHand < minStock && qtyOnHand > 0
+                  const isOutOfStock = qtyOnHand <= 0
+                  const isHealthy = qtyOnHand >= minStock
+                  const isOverstock = qtyOnHand > minStock * 2
                   const showQuickAdjust = quickAdjustProduct === item.id
                   const productGroup = groups.find((g) => (item as any).groupId === g.id)
+                  const stockPercent = minStock > 0 ? Math.min((qtyOnHand / (minStock * 2)) * 100, 100) : (qtyOnHand > 0 ? 100 : 0)
+                  const totalValue = (item.totalValue || 0)
+                  const unitPrice = item.pricePerBox || item.unitCost || 0
+                  const category = item.category || ''
+                  const lastUpdated = item.lastUpdated ? new Date(item.lastUpdated) : null
+                  const hasQR = !!item.qrUrl
+                  const hasBarcode = !!item.barcodeUrl
+
+                  // Category color mapping
+                  const getCategoryColor = (cat: string) => {
+                    const colors: Record<string, string> = {
+                      'Raw Materials': 'bg-amber-100 text-amber-700 border-amber-200',
+                      'Finished Goods': 'bg-blue-100 text-blue-700 border-blue-200',
+                      'Packaging': 'bg-purple-100 text-purple-700 border-purple-200',
+                      'Components': 'bg-cyan-100 text-cyan-700 border-cyan-200',
+                      'default': 'bg-gray-100 text-gray-600 border-gray-200'
+                    }
+                    return colors[cat] || colors['default']
+                  }
 
                   return (
                     <div
                       key={item.id}
-                      className={`bg-white rounded-2xl shadow-sm overflow-hidden transition-all duration-200 ${
+                      className={`bg-white rounded-2xl overflow-hidden transition-all duration-300 ${
                         isSelected
-                          ? 'ring-2 ring-blue-500 shadow-lg'
-                          : 'border border-gray-100'
+                          ? 'ring-2 ring-blue-500 shadow-xl scale-[1.02] -translate-y-1'
+                          : 'shadow-sm border border-gray-100 hover:shadow-lg hover:-translate-y-0.5'
                       }`}
                     >
-                      {/* Stock Status Banner */}
+                      {/* Stock Status Banner - Animated Gradient */}
                       {(isOutOfStock || isLowStock) && (
-                        <div className={`px-4 py-2 ${isOutOfStock ? 'bg-red-500' : 'bg-orange-500'} text-white`}>
-                          <div className="flex items-center justify-between">
+                        <div className={`px-4 py-2.5 relative overflow-hidden ${
+                          isOutOfStock 
+                            ? 'bg-gradient-to-r from-red-500 via-rose-500 to-red-600' 
+                            : 'bg-gradient-to-r from-amber-500 via-orange-500 to-amber-500'
+                        } text-white`}>
+                          {/* Animated shine effect */}
+                          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full animate-[shimmer_2s_infinite]" style={{ animationDuration: '3s' }} />
+                          <div className="flex items-center justify-between relative">
                             <div className="flex items-center gap-2">
-                              <ExclamationTriangleIcon className="h-5 w-5" />
-                              <span className="font-bold text-sm">
-                                {isOutOfStock ? 'OUT OF STOCK' : 'LOW STOCK'}
-                              </span>
+                              <div className={`p-1.5 rounded-lg ${isOutOfStock ? 'bg-white/20' : 'bg-white/20'} backdrop-blur-sm`}>
+                                <ExclamationTriangleIcon className="h-4 w-4" />
+                              </div>
+                              <div>
+                                <span className="font-bold text-sm tracking-wide block">
+                                  {isOutOfStock ? 'OUT OF STOCK' : 'LOW STOCK'}
+                                </span>
+                                <span className="text-[10px] opacity-80">
+                                  {isOutOfStock ? 'Reorder immediately' : 'Below minimum level'}
+                                </span>
+                              </div>
                             </div>
-                            <span className="text-sm font-medium">
-                              {qtyOnHand.toFixed(0)} / {item.minStock?.toFixed(0) || 0} {item.uom || 'units'}
-                            </span>
+                            <div className="text-right">
+                              <span className="text-lg font-black">{qtyOnHand.toFixed(0)}</span>
+                              <span className="text-xs opacity-80">/{minStock.toFixed(0)}</span>
+                            </div>
                           </div>
                         </div>
                       )}
 
-                      <div className="p-4">
-                        {/* Header with Checkbox and Image */}
-                        <div className="flex items-start gap-3">
-                          {/* Checkbox */}
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={(e) => {
-                              e.stopPropagation()
-                              setSelectedIds(prev =>
-                                e.target.checked
-                                  ? Array.from(new Set([...prev, item.id]))
-                                  : prev.filter(x => x !== item.id)
-                              )
-                            }}
-                            onClick={(e) => e.stopPropagation()}
-                            className="w-6 h-6 mt-1 rounded-lg border-2 border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500 focus:ring-offset-0 shrink-0"
-                          />
+                      {/* Healthy/Overstock subtle indicator */}
+                      {!isOutOfStock && !isLowStock && (
+                        <div className={`h-1 ${isOverstock ? 'bg-gradient-to-r from-blue-400 to-indigo-500' : 'bg-gradient-to-r from-emerald-400 to-green-500'}`} />
+                      )}
 
-                          {/* Product Image */}
+                      <div className="p-4">
+                        {/* Header with Checkbox, Image and Info */}
+                        <div className="flex items-start gap-3">
+                          {/* Checkbox with animation */}
+                          <div className="relative">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={(e) => {
+                                e.stopPropagation()
+                                setSelectedIds(prev =>
+                                  e.target.checked
+                                    ? Array.from(new Set([...prev, item.id]))
+                                    : prev.filter(x => x !== item.id)
+                                )
+                              }}
+                              onClick={(e) => e.stopPropagation()}
+                              className="w-5 h-5 mt-1 rounded-lg border-2 border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500 focus:ring-offset-0 shrink-0 cursor-pointer transition-all checked:scale-110"
+                            />
+                          </div>
+
+                          {/* Product Image - Enhanced with overlay info */}
                           <div 
-                            className="w-16 h-16 rounded-xl overflow-hidden bg-gray-100 border border-gray-200 shrink-0 flex items-center justify-center"
+                            className="relative w-24 h-24 rounded-2xl overflow-hidden bg-gradient-to-br from-gray-50 to-gray-100 border-2 border-gray-100 shrink-0 flex items-center justify-center cursor-pointer group shadow-sm"
                             onClick={() => setSelectedProduct(item)}
                           >
                             {item.imageUrl ? (
                               <img
                                 src={item.imageUrl}
                                 alt={item.name}
-                                className="w-full h-full object-cover"
+                                className="w-full h-full object-cover group-active:scale-110 transition-transform duration-300"
                                 loading="lazy"
                               />
                             ) : (
-                              <CubeIcon className="h-8 w-8 text-gray-300" />
+                              <div className="flex flex-col items-center justify-center">
+                                <CubeIcon className="h-10 w-10 text-gray-300" />
+                                <span className="text-[8px] text-gray-400 mt-1">No image</span>
+                              </div>
+                            )}
+                            
+                            {/* Status indicator ring */}
+                            <div className={`absolute inset-0 rounded-2xl ring-2 ring-inset ${
+                              isOutOfStock ? 'ring-red-400/50' : 
+                              isLowStock ? 'ring-amber-400/50' : 
+                              'ring-transparent'
+                            }`} />
+                            
+                            {/* Top badges */}
+                            <div className="absolute top-1.5 left-1.5 right-1.5 flex justify-between">
+                              {/* Status dot with glow */}
+                              <div className={`w-3 h-3 rounded-full border-2 border-white shadow-lg ${
+                                item.status === 'active' ? 'bg-green-500 shadow-green-200' : 
+                                item.status === 'draft' ? 'bg-gray-400' : 'bg-red-500 shadow-red-200'
+                              }`} />
+                              
+                              {/* QR/Barcode indicator */}
+                              {(hasQR || hasBarcode) && (
+                                <div className="bg-black/60 backdrop-blur-sm rounded-md px-1 py-0.5">
+                                  <QrCodeIcon className="h-3 w-3 text-white" />
+                                </div>
+                              )}
+                            </div>
+                            
+                            {/* Unit price badge */}
+                            {unitPrice > 0 && (
+                              <div className="absolute bottom-1.5 left-1.5 bg-black/70 backdrop-blur-sm text-white text-[9px] font-bold px-1.5 py-0.5 rounded-md">
+                                £{unitPrice.toFixed(2)}
+                              </div>
                             )}
                           </div>
 
                           {/* Product Info */}
                           <div className="flex-1 min-w-0" onClick={() => setSelectedProduct(item)}>
-                            {/* Product Name - Large & Tappable */}
+                            {/* Category tag */}
+                            {category && (
+                              <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold mb-1 border ${getCategoryColor(category)}`}>
+                                {category}
+                              </span>
+                            )}
+                            
+                            {/* Product Name */}
                             <h3 className="text-base font-bold text-gray-900 leading-tight mb-1 active:text-blue-600 line-clamp-2">
                               {(() => {
                                 const name = item.name || 'Unnamed Product'
@@ -1403,88 +1508,166 @@ export function Inventory() {
                               })()}
                             </h3>
                             
-                            {/* SKU + Status row */}
-                            <div className="mt-1 flex items-center flex-wrap gap-1">
-                              <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-gray-100 rounded-md">
-                                <span className="text-[11px] font-mono text-gray-600">{item.sku}</span>
-                              </div>
-
-                              <div className={`inline-flex px-2 py-0.5 rounded-md text-[10px] font-semibold ${
-                                item.status === 'active'
-                                  ? 'bg-green-100 text-green-700'
-                                  : item.status === 'draft'
-                                    ? 'bg-gray-200 text-gray-600'
-                                    : 'bg-red-100 text-red-700'
-                              }`}>
-                                {item.status === 'active' ? 'Active' : item.status === 'draft' ? 'Draft' : 'Inactive'}
-                              </div>
+                            {/* SKU with copy hint */}
+                            <div className="inline-flex items-center gap-1.5 px-2 py-1 bg-gradient-to-r from-gray-50 to-gray-100 rounded-lg mb-2 border border-gray-200">
+                              <span className="text-[11px] font-mono font-bold text-gray-700">{item.sku}</span>
                             </div>
 
-                            {/* Folder info - small, subtle */}
-                            <div className="mt-1 flex items-center gap-1 text-[11px] text-gray-500">
-                              <FolderIcon className="h-3 w-3" />
-                              <span className="truncate">
-                                {productGroup?.name || 'No folder'}
+                            {/* Meta Info Row - Enhanced */}
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              {/* Status Badge */}
+                              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                                item.status === 'active'
+                                  ? 'bg-green-50 text-green-700 border-green-200'
+                                  : item.status === 'draft'
+                                    ? 'bg-gray-50 text-gray-600 border-gray-200'
+                                    : 'bg-red-50 text-red-700 border-red-200'
+                              }`}>
+                                {item.status === 'active' && <CheckCircleIcon className="h-3 w-3" />}
+                                {item.status === 'active' ? 'Active' : item.status === 'draft' ? 'Draft' : 'Inactive'}
+                              </span>
+                              
+                              {/* Folder */}
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] text-gray-500 bg-gray-50 rounded-md">
+                                <FolderIcon className="h-3 w-3" />
+                                <span className="truncate max-w-[60px]">{productGroup?.name || 'No folder'}</span>
+                              </span>
+                              
+                              {/* UOM */}
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] text-gray-500 bg-gray-50 rounded-md">
+                                {item.uom || 'units'}
                               </span>
                             </div>
+                            
+                            {/* Last updated - subtle */}
+                            {lastUpdated && (
+                              <div className="mt-1.5 text-[9px] text-gray-400 flex items-center gap-1">
+                                <ArrowPathIcon className="h-3 w-3" />
+                                Updated {lastUpdated.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+                              </div>
+                            )}
                           </div>
                         </div>
 
-                        {/* Stock Display - Large Numbers */}
-                        <div className={`mt-4 p-4 rounded-xl ${
+                        {/* Stock Display - Premium Card Style */}
+                        <div className={`mt-4 p-4 rounded-2xl border-2 relative overflow-hidden ${
                           isOutOfStock 
-                            ? 'bg-red-50' 
+                            ? 'bg-gradient-to-br from-red-50 to-rose-50 border-red-200' 
                             : isLowStock 
-                              ? 'bg-orange-50' 
-                              : 'bg-gray-50'
+                              ? 'bg-gradient-to-br from-amber-50 to-orange-50 border-amber-200' 
+                              : 'bg-gradient-to-br from-emerald-50 to-green-50 border-emerald-200'
                         }`}>
-                          <div className="flex items-center justify-between">
+                          {/* Background pattern */}
+                          <div className="absolute inset-0 opacity-5">
+                            <div className="absolute inset-0" style={{ backgroundImage: 'radial-gradient(circle, currentColor 1px, transparent 1px)', backgroundSize: '20px 20px' }} />
+                          </div>
+                          
+                          {/* Stock Numbers */}
+                          <div className="flex items-stretch justify-between mb-4 relative">
                             <div className="text-center flex-1">
-                              <div className="text-xs font-semibold text-gray-500 mb-1">ON HAND</div>
-                              <div className={`text-3xl font-black ${
-                                isOutOfStock ? 'text-red-600' : isLowStock ? 'text-orange-600' : 'text-gray-900'
+                              <div className="text-[9px] font-bold text-gray-500 uppercase tracking-widest mb-1">On Hand</div>
+                              <div className={`text-4xl font-black tracking-tight ${
+                                isOutOfStock ? 'text-red-600' : isLowStock ? 'text-amber-600' : 'text-emerald-600'
                               }`}>
-                                {qtyOnHand.toLocaleString('en-GB', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                                {qtyOnHand.toLocaleString('en-GB', { maximumFractionDigits: 0 })}
                               </div>
-                              <div className="text-xs text-gray-500 font-medium">{item.uom || 'units'}</div>
+                              <div className="text-[10px] text-gray-500 font-semibold mt-0.5">{item.uom || 'units'}</div>
                             </div>
                             
-                            <div className="h-12 w-px bg-gray-200"></div>
+                            <div className="flex flex-col items-center justify-center px-3">
+                              <div className="w-px h-8 bg-gray-300"></div>
+                              <div className="text-[8px] text-gray-400 my-1">vs</div>
+                              <div className="w-px h-8 bg-gray-300"></div>
+                            </div>
                             
                             <div className="text-center flex-1">
-                              <div className="text-xs font-semibold text-gray-500 mb-1">MIN STOCK</div>
-                              <div className="text-3xl font-black text-gray-400">
-                                {(item.minStock || 0).toLocaleString('en-GB', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                              <div className="text-[9px] font-bold text-gray-500 uppercase tracking-widest mb-1">Min Stock</div>
+                              <div className="text-4xl font-black text-gray-400 tracking-tight">
+                                {minStock.toLocaleString('en-GB', { maximumFractionDigits: 0 })}
                               </div>
-                              <div className="text-xs text-gray-500 font-medium">{item.uom || 'units'}</div>
+                              <div className="text-[10px] text-gray-500 font-semibold mt-0.5">{item.uom || 'units'}</div>
+                            </div>
+                            
+                            {totalValue > 0 && (
+                              <>
+                                <div className="w-px bg-gray-200 mx-3 self-center h-12"></div>
+                                <div className="text-center flex-1">
+                                  <div className="text-[9px] font-bold text-gray-500 uppercase tracking-widest mb-1">Value</div>
+                                  <div className="text-3xl font-black text-gray-700 tracking-tight">
+                                    <span className="text-lg">£</span>{totalValue >= 1000 ? `${(totalValue/1000).toFixed(1)}k` : totalValue.toFixed(0)}
+                                  </div>
+                                  <div className="text-[10px] text-gray-500 font-semibold mt-0.5">total</div>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                          
+                          {/* Stock Level Progress Bar - Enhanced */}
+                          <div className="relative">
+                            <div className="h-3 bg-gray-200/80 rounded-full overflow-hidden shadow-inner">
+                              <div 
+                                className={`h-full rounded-full transition-all duration-700 ease-out relative ${
+                                  isOutOfStock ? 'bg-gradient-to-r from-red-400 to-red-600' : 
+                                  isLowStock ? 'bg-gradient-to-r from-amber-400 to-orange-500' : 
+                                  'bg-gradient-to-r from-emerald-400 to-green-500'
+                                }`}
+                                style={{ width: `${stockPercent}%` }}
+                              >
+                                {/* Shine effect on bar */}
+                                <div className="absolute inset-0 bg-gradient-to-b from-white/30 to-transparent" />
+                              </div>
+                            </div>
+                            {/* Min stock marker with label */}
+                            {minStock > 0 && (
+                              <div 
+                                className="absolute top-0 bottom-0 flex flex-col items-center"
+                                style={{ left: '50%', transform: 'translateX(-50%)' }}
+                              >
+                                <div className="w-0.5 h-full bg-gray-600 rounded-full" />
+                                <span className="absolute -bottom-4 text-[8px] text-gray-500 font-medium whitespace-nowrap">min</span>
+                              </div>
+                            )}
+                            
+                            {/* Stock status label */}
+                            <div className="flex justify-between mt-1.5 text-[9px] font-medium">
+                              <span className="text-gray-400">0</span>
+                              <span className={`${
+                                isOutOfStock ? 'text-red-500' : isLowStock ? 'text-amber-500' : 'text-emerald-500'
+                              }`}>
+                                {isOutOfStock ? 'Critical' : isLowStock ? 'Low' : isOverstock ? 'Overstock' : 'Healthy'}
+                              </span>
+                              <span className="text-gray-400">{(minStock * 2).toFixed(0)}</span>
                             </div>
                           </div>
                         </div>
 
                         {/* Quick Stock Adjustment Panel */}
                         {showQuickAdjust ? (
-                          <div className="mt-4 p-4 bg-blue-50 rounded-xl border-2 border-blue-200">
-                            <div className="text-sm font-bold text-blue-800 mb-3 text-center">Quick Stock Adjustment</div>
+                          <div className="mt-4 p-4 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border-2 border-blue-200">
+                            <div className="text-sm font-bold text-blue-800 mb-3 text-center flex items-center justify-center gap-2">
+                              <AdjustmentsHorizontalIcon className="h-5 w-5" />
+                              Quick Stock Adjustment
+                            </div>
                             
                             {/* Quantity Selector */}
-                            <div className="flex items-center justify-center gap-4 mb-4">
+                            <div className="flex items-center justify-center gap-3 mb-4">
                               <button
                                 onClick={() => setAdjustQty(Math.max(1, adjustQty - 1))}
-                                className="w-14 h-14 flex items-center justify-center bg-white rounded-xl border-2 border-gray-200 active:bg-gray-100"
+                                className="w-12 h-12 flex items-center justify-center bg-white rounded-xl border-2 border-gray-200 active:bg-gray-100 shadow-sm"
                               >
-                                <MinusIcon className="h-6 w-6 text-gray-600" />
+                                <MinusIcon className="h-5 w-5 text-gray-600" />
                               </button>
                               <input
                                 type="number"
                                 value={adjustQty}
                                 onChange={(e) => setAdjustQty(Math.max(1, parseInt(e.target.value) || 1))}
-                                className="w-20 h-14 text-center text-2xl font-bold border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:ring-0"
+                                className="w-20 h-12 text-center text-2xl font-bold border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:ring-0 shadow-sm"
                               />
                               <button
                                 onClick={() => setAdjustQty(adjustQty + 1)}
-                                className="w-14 h-14 flex items-center justify-center bg-white rounded-xl border-2 border-gray-200 active:bg-gray-100"
+                                className="w-12 h-12 flex items-center justify-center bg-white rounded-xl border-2 border-gray-200 active:bg-gray-100 shadow-sm"
                               >
-                                <PlusIcon className="h-6 w-6 text-gray-600" />
+                                <PlusIcon className="h-5 w-5 text-gray-600" />
                               </button>
                             </div>
 
@@ -1494,10 +1677,10 @@ export function Inventory() {
                                 <button
                                   key={n}
                                   onClick={() => setAdjustQty(n)}
-                                  className={`flex-1 py-2 rounded-lg text-sm font-bold transition-colors ${
+                                  className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${
                                     adjustQty === n 
-                                      ? 'bg-blue-600 text-white' 
-                                      : 'bg-white text-gray-700 border border-gray-200'
+                                      ? 'bg-blue-600 text-white shadow-md scale-105' 
+                                      : 'bg-white text-gray-700 border border-gray-200 hover:border-blue-300'
                                   }`}
                                 >
                                   {n}
@@ -1510,17 +1693,17 @@ export function Inventory() {
                               <button
                                 onClick={() => handleQuickAdjust(item.id, 'out', adjustQty)}
                                 disabled={isAdjusting || qtyOnHand < adjustQty}
-                                className="flex-1 flex items-center justify-center gap-2 py-4 bg-red-500 text-white rounded-xl font-bold text-base disabled:opacity-50 active:scale-98"
+                                className="flex-1 flex items-center justify-center gap-2 py-3.5 bg-gradient-to-r from-red-500 to-rose-600 text-white rounded-xl font-bold text-sm disabled:opacity-50 active:scale-98 shadow-lg shadow-red-200"
                               >
-                                <MinusCircleIcon className="h-6 w-6" />
+                                <MinusCircleIcon className="h-5 w-5" />
                                 Stock Out
                               </button>
                               <button
                                 onClick={() => handleQuickAdjust(item.id, 'in', adjustQty)}
                                 disabled={isAdjusting}
-                                className="flex-1 flex items-center justify-center gap-2 py-4 bg-green-500 text-white rounded-xl font-bold text-base disabled:opacity-50 active:scale-98"
+                                className="flex-1 flex items-center justify-center gap-2 py-3.5 bg-gradient-to-r from-green-500 to-emerald-600 text-white rounded-xl font-bold text-sm disabled:opacity-50 active:scale-98 shadow-lg shadow-green-200"
                               >
-                                <PlusCircleIcon className="h-6 w-6" />
+                                <PlusCircleIcon className="h-5 w-5" />
                                 Stock In
                               </button>
                             </div>
@@ -1531,23 +1714,23 @@ export function Inventory() {
                                 setQuickAdjustProduct(null)
                                 setAdjustQty(1)
                               }}
-                              className="w-full mt-3 py-2 text-sm font-medium text-gray-600"
+                              className="w-full mt-3 py-2 text-sm font-medium text-gray-500 hover:text-gray-700"
                             >
                               Cancel
                             </button>
                           </div>
                         ) : (
-                          /* Action Buttons - Large Touch Targets */
+                          /* Action Buttons - Modern Style */
                           <div className="mt-4 grid grid-cols-3 gap-2">
                             <button
                               onClick={(e) => {
                                 e.stopPropagation()
                                 setSelectedProduct(item)
                               }}
-                              className="flex flex-col items-center justify-center gap-1 py-3 bg-blue-50 text-blue-700 rounded-xl font-semibold active:bg-blue-100 active:scale-98 transition-all"
+                              className="flex flex-col items-center justify-center gap-1.5 py-3.5 bg-gradient-to-br from-blue-50 to-blue-100 text-blue-700 rounded-xl font-semibold active:scale-95 transition-all border border-blue-200"
                             >
-                              <EyeIcon className="h-6 w-6" />
-                              <span className="text-xs">Details</span>
+                              <EyeIcon className="h-5 w-5" />
+                              <span className="text-[11px]">Details</span>
                             </button>
                             
                             <button
@@ -1556,10 +1739,10 @@ export function Inventory() {
                                 setQuickAdjustProduct(item.id)
                                 setAdjustQty(1)
                               }}
-                              className="flex flex-col items-center justify-center gap-1 py-3 bg-green-50 text-green-700 rounded-xl font-semibold active:bg-green-100 active:scale-98 transition-all"
+                              className="flex flex-col items-center justify-center gap-1.5 py-3.5 bg-gradient-to-br from-emerald-50 to-green-100 text-green-700 rounded-xl font-semibold active:scale-95 transition-all border border-green-200"
                             >
-                              <PlusCircleIcon className="h-6 w-6" />
-                              <span className="text-xs">Adjust</span>
+                              <PlusCircleIcon className="h-5 w-5" />
+                              <span className="text-[11px]">Adjust</span>
                             </button>
 
                             <button
@@ -1569,17 +1752,21 @@ export function Inventory() {
                                 await setProductStatus(workspaceId!, item.id, next as any)
                                 qc.invalidateQueries({ queryKey: ['products', workspaceId] })
                               }}
-                              className="flex flex-col items-center justify-center gap-1 py-3 bg-gray-50 text-gray-700 rounded-xl font-semibold active:bg-gray-100 active:scale-98 transition-all"
+                              className={`flex flex-col items-center justify-center gap-1.5 py-3.5 rounded-xl font-semibold active:scale-95 transition-all border ${
+                                item.status === 'active'
+                                  ? 'bg-gradient-to-br from-gray-50 to-gray-100 text-gray-600 border-gray-200'
+                                  : 'bg-gradient-to-br from-green-50 to-emerald-100 text-green-700 border-green-200'
+                              }`}
                             >
                               {item.status === 'active' ? (
                                 <>
-                                  <XMarkIcon className="h-6 w-6" />
-                                  <span className="text-xs">Draft</span>
+                                  <ArchiveBoxIcon className="h-5 w-5" />
+                                  <span className="text-[11px]">Archive</span>
                                 </>
                               ) : (
                                 <>
-                                  <CheckCircleIcon className="h-6 w-6" />
-                                  <span className="text-xs">Activate</span>
+                                  <CheckCircleIcon className="h-5 w-5" />
+                                  <span className="text-[11px]">Activate</span>
                                 </>
                               )}
                             </button>

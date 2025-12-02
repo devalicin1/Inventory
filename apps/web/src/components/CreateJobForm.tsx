@@ -420,70 +420,115 @@ export function CreateJobForm({
   ]
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4 bg-black/50 backdrop-blur-sm">
-      <div className="bg-white sm:rounded-xl w-full h-full sm:h-[95vh] max-w-6xl overflow-hidden flex flex-col shadow-2xl">
-        {/* Header */}
-        <div className="bg-white border-b border-gray-200 px-4 sm:px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-primary-50 rounded-lg">
-                <ClipboardDocumentListIcon className="h-6 w-6 text-primary-600" />
+    <div className="fixed inset-0 z-50 flex flex-col bg-white">
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Header - Premium Gradient */}
+        <div className="relative overflow-hidden">
+          {/* Background gradient */}
+          <div className="absolute inset-0 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900" />
+          <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiNmZmYiIGZpbGwtb3BhY2l0eT0iMC4wMyI+PHBhdGggZD0iTTM2IDM0djItSDI0di0yaDEyek0zNiAyNHYySDI0di0yaDEyeiIvPjwvZz48L2c+PC9zdmc+')] opacity-50" />
+          
+          <div className="relative px-4 sm:px-6 py-5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="p-3 bg-white/10 backdrop-blur-sm rounded-xl border border-white/10">
+                  <ClipboardDocumentListIcon className="h-6 w-6 text-white" />
+                </div>
+                <div>
+                  <h1 className="text-lg sm:text-xl font-bold text-white">Create Production Job</h1>
+                  <p className="text-slate-400 text-xs sm:text-sm hidden sm:block">Set up a new manufacturing job with all necessary details</p>
+                </div>
               </div>
-              <div>
-                <h1 className="text-lg sm:text-xl font-semibold text-gray-900">Create Production Job</h1>
-                <p className="text-gray-600 text-xs sm:text-sm hidden sm:block">Set up a new manufacturing job with all necessary details</p>
-              </div>
+              <button
+                onClick={onClose}
+                className="p-2.5 text-slate-400 hover:text-white transition-colors hover:bg-white/10 rounded-xl"
+              >
+                <XMarkIcon className="h-5 w-5" />
+              </button>
             </div>
-            <button
-              onClick={onClose}
-              className="p-2 text-gray-400 hover:text-gray-600 transition-colors hover:bg-gray-100 rounded-lg"
-            >
-              <XMarkIcon className="h-5 w-5" />
-            </button>
-          </div>
 
-          {/* Progress Steps */}
-          <div className="mt-6 overflow-x-auto no-scrollbar pb-2 sm:pb-0">
-            <div className="flex items-center justify-between min-w-max sm:min-w-0 gap-4 sm:gap-0">
-              {stepConfig.map((step) => (
-                <div key={step.number} className="flex items-center flex-1 last:flex-none">
+            {/* Progress Steps - Premium Design */}
+            <div className="mt-6 overflow-x-auto no-scrollbar pb-2 sm:pb-0">
+              {/* Mobile: Compact step indicator */}
+              <div className="sm:hidden flex items-center justify-center gap-2 mb-3">
+                {stepConfig.map((step) => (
                   <button
+                    key={step.number}
                     type="button"
                     onClick={() => setCurrentStep(step.number)}
-                    className={`flex items-center gap-3 transition-all ${step.number <= currentStep ? 'text-primary-600' : 'text-gray-400'
-                      } ${step.number === currentStep ? 'scale-105' : ''}`}
-                  >
-                    <div className={`flex items-center justify-center w-8 h-8 rounded-lg border-2 transition-all ${step.number <= currentStep
-                      ? 'bg-primary-600 border-primary-600 text-white shadow-sm'
-                      : 'border-gray-300 text-gray-400'
-                      } font-medium text-sm flex-shrink-0`}>
-                      {step.number < currentStep ? (
-                        <CheckIcon className="h-4 w-4" />
-                      ) : (
-                        step.number
-                      )}
-                    </div>
-                    <div className="hidden md:block text-left">
-                      <div className="text-sm font-medium">{step.title}</div>
-                      <div className="text-xs text-gray-500">{step.description}</div>
-                    </div>
-                    {/* Mobile Title */}
-                    <div className="block md:hidden text-left">
-                      <div className="text-sm font-medium">{step.title}</div>
-                    </div>
-                  </button>
-                  {step.number < totalSteps && (
-                    <div className={`flex-1 h-0.5 mx-4 rounded-full min-w-[20px] ${step.number < currentStep ? 'bg-primary-600' : 'bg-gray-200'
-                      } transition-colors`} />
-                  )}
-                </div>
-              ))}
+                    className={`w-2.5 h-2.5 rounded-full transition-all duration-300 ${
+                      step.number === currentStep 
+                        ? 'w-8 bg-white' 
+                        : step.number < currentStep 
+                          ? 'bg-emerald-400' 
+                          : 'bg-white/30'
+                    }`}
+                  />
+                ))}
+              </div>
+              <div className="sm:hidden text-center">
+                <span className="text-white font-semibold">{stepConfig[currentStep - 1].title}</span>
+                <span className="text-slate-400 text-sm ml-2">Step {currentStep} of {totalSteps}</span>
+              </div>
+
+              {/* Desktop: Full step indicator */}
+              <div className="hidden sm:flex items-center justify-between min-w-max sm:min-w-0">
+                {stepConfig.map((step, idx) => (
+                  <div key={step.number} className="flex items-center flex-1 last:flex-none">
+                    <button
+                      type="button"
+                      onClick={() => setCurrentStep(step.number)}
+                      className={`flex items-center gap-3 transition-all duration-300 group ${
+                        step.number === currentStep ? 'scale-105' : ''
+                      }`}
+                    >
+                      <div className={`relative flex items-center justify-center w-10 h-10 rounded-xl transition-all duration-300 ${
+                        step.number < currentStep
+                          ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/30'
+                          : step.number === currentStep
+                            ? 'bg-white text-slate-900 shadow-lg shadow-white/20'
+                            : 'bg-white/10 text-white/50 border border-white/10'
+                      } font-semibold text-sm flex-shrink-0`}>
+                        {step.number < currentStep ? (
+                          <CheckIcon className="h-5 w-5" />
+                        ) : (
+                          <step.icon className="h-5 w-5" />
+                        )}
+                        {/* Active indicator ring */}
+                        {step.number === currentStep && (
+                          <div className="absolute inset-0 rounded-xl ring-4 ring-white/20 animate-pulse" />
+                        )}
+                      </div>
+                      <div className="hidden lg:block text-left">
+                        <div className={`text-sm font-semibold transition-colors ${
+                          step.number <= currentStep ? 'text-white' : 'text-white/50'
+                        }`}>{step.title}</div>
+                        <div className={`text-xs transition-colors ${
+                          step.number <= currentStep ? 'text-slate-400' : 'text-white/30'
+                        }`}>{step.description}</div>
+                      </div>
+                    </button>
+                    {idx < stepConfig.length - 1 && (
+                      <div className="flex-1 mx-4 min-w-[30px]">
+                        <div className="h-0.5 bg-white/10 rounded-full overflow-hidden">
+                          <div 
+                            className={`h-full bg-emerald-400 rounded-full transition-all duration-500 ${
+                              step.number < currentStep ? 'w-full' : 'w-0'
+                            }`}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </div>
 
         <form onSubmit={handleSubmit} className="flex-1 flex flex-col overflow-hidden">
-          <div className="flex-1 overflow-y-auto p-6 bg-gray-50">
+          {/* Step Content */}
+          <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 bg-gradient-to-b from-gray-50 to-white">
             {currentStep === 1 && (
               <JobBasicInfoStep
                 formData={formData}
@@ -533,39 +578,80 @@ export function CreateJobForm({
             )}
           </div>
 
-          {/* Footer */}
-          <div className="bg-white border-t border-gray-200 px-6 py-4 flex items-center justify-between">
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={prevStep}
-              disabled={currentStep === 1}
-            >
-              Back
-            </Button>
-            <div className="flex items-center gap-3">
-              <Button
+          {/* Footer - Premium Design */}
+          <div className="bg-white border-t border-gray-100 px-4 sm:px-6 py-4">
+            <div className="flex items-center justify-between">
+              {/* Back Button */}
+              <button
                 type="button"
-                variant="secondary"
-                onClick={onClose}
+                onClick={prevStep}
+                disabled={currentStep === 1}
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-medium text-sm transition-all ${
+                  currentStep === 1
+                    ? 'text-gray-300 cursor-not-allowed'
+                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                }`}
               >
-                Cancel
-              </Button>
-              {currentStep < totalSteps ? (
-                <Button
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                </svg>
+                <span className="hidden sm:inline">Back</span>
+              </button>
+
+              {/* Progress indicator */}
+              <div className="hidden sm:flex items-center gap-2">
+                <span className="text-sm text-gray-500">Step {currentStep} of {totalSteps}</span>
+                <div className="w-32 h-2 bg-gray-100 rounded-full overflow-hidden">
+                  <div 
+                    className="h-full bg-gradient-to-r from-blue-500 to-emerald-500 rounded-full transition-all duration-500"
+                    style={{ width: `${(currentStep / totalSteps) * 100}%` }}
+                  />
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center gap-2 sm:gap-3">
+                <button
                   type="button"
-                  onClick={nextStep}
+                  onClick={onClose}
+                  className="px-4 py-2.5 rounded-xl font-medium text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition-all"
                 >
-                  Next Step
-                </Button>
-              ) : (
-                <Button
-                  type="submit"
-                  isLoading={isLoading}
-                >
-                  Create Job
-                </Button>
-              )}
+                  Cancel
+                </button>
+                {currentStep < totalSteps ? (
+                  <button
+                    type="button"
+                    onClick={nextStep}
+                    className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm bg-slate-900 text-white hover:bg-slate-800 shadow-lg shadow-slate-900/20 transition-all active:scale-95"
+                  >
+                    <span>Next</span>
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  </button>
+                ) : (
+                  <button
+                    type="submit"
+                    disabled={isLoading}
+                    className="flex items-center gap-2 px-6 py-2.5 rounded-xl font-semibold text-sm bg-gradient-to-r from-emerald-500 to-green-600 text-white hover:from-emerald-600 hover:to-green-700 shadow-lg shadow-emerald-500/30 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {isLoading ? (
+                      <>
+                        <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                        <span>Creating...</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckIcon className="w-4 h-4" />
+                        <span>Create Job</span>
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </form>

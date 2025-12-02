@@ -71,8 +71,10 @@ export interface SkuVelocityRow {
 }
 
 export interface InventoryLedgerRow {
+  id: string
   dateTime: string
-  documentNo: string
+  sku: string
+  productName: string
   movementType: string
   locationIn: string
   locationOut: string
@@ -82,6 +84,7 @@ export interface InventoryLedgerRow {
   runningBalance: number
   user: string
   notes: string
+  reason?: string
 }
 
 export interface CycleCountRow {
@@ -774,8 +777,38 @@ export async function getInventoryLedgerReport(
       return dateA.getTime() - dateB.getTime()
     })
     
+    // Create a map to track products we couldn't find (for fetching individually)
+    const missingProductIds = new Set<string>()
+    
+    // First pass: identify missing products
+    txns.forEach(txn => {
+      if (txn.productId && !productMap.has(txn.productId)) {
+        missingProductIds.add(txn.productId)
+      }
+    })
+    
+    // Try to fetch missing products individually from Firestore
+    if (missingProductIds.size > 0) {
+      console.log('[Ledger] Fetching', missingProductIds.size, 'missing products individually')
+      const { doc, getDoc } = await import('firebase/firestore')
+      
+      for (const productId of missingProductIds) {
+        try {
+          const productDoc = await getDoc(doc(db, 'workspaces', workspaceId, 'products', productId))
+          if (productDoc.exists()) {
+            const data = productDoc.data()
+            productMap.set(productId, { id: productId, ...data } as any)
+          }
+        } catch (e) {
+          // Product doesn't exist, will show as deleted
+        }
+      }
+    }
+    
     txns.forEach(txn => {
       const txnDate = txn.timestamp?.toDate?.() || new Date(txn.timestamp)
+      
+      // Get product directly by productId
       const product = productMap.get(txn.productId)
       
       // Skip if date filter doesn't match
@@ -795,13 +828,18 @@ export async function getInventoryLedgerReport(
       const net = qty
       runningBalance += qty
       
-      // Get document number from refs
-      const refs = txn.refs || {}
-      const documentNo = refs.ref || refs.poId || refs.jobId || refs.taskId || txn.id.substring(0, 8)
+      // Get product info - if not found, show as deleted with partial ID
+      const sku = product?.sku || txn.sku || `#${txn.productId?.substring(0, 6) || 'N/A'}`
+      const productName = product?.name || txn.productName || txn.name || '(Deleted Product)'
+      
+      // Get reason/notes - combine available info
+      const reason = txn.reason || txn.note || txn.notes || ''
       
       ledgerRows.push({
+        id: txn.id,
         dateTime: txnDate.toISOString(),
-        documentNo,
+        sku,
+        productName: cleanProductName(productName),
         movementType: txn.type || 'Unknown',
         locationIn: txn.toLoc || '-',
         locationOut: txn.fromLoc || '-',
@@ -810,7 +848,8 @@ export async function getInventoryLedgerReport(
         net,
         runningBalance,
         user: txn.userId || 'Unknown',
-        notes: txn.reason || ''
+        notes: reason,
+        reason
       })
     })
     

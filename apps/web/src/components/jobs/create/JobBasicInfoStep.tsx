@@ -212,28 +212,27 @@ export const JobBasicInfoStep: React.FC<JobBasicInfoStepProps> = ({
     };
 
     return (
-        <div className="max-w-6xl mx-auto space-y-6">
-            <div className="mb-8">
-                <h2 className="text-2xl font-bold text-gray-900">Basic Information</h2>
-                <p className="text-gray-600 mt-2">Enter customer details and product information</p>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="space-y-8">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 {/* Customer Info */}
                 <div className="space-y-6">
-                    <Card>
-                        <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                            <UserIcon className="h-5 w-5 text-primary-600" />
-                            Customer Information
-                        </h3>
-                        <div className="space-y-4">
+                    <Card className="overflow-hidden">
+                        <div className="p-5 bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-blue-100">
+                            <h3 className="text-lg font-bold text-gray-900 flex items-center gap-3">
+                                <div className="p-2 bg-blue-500 rounded-xl shadow-lg shadow-blue-200">
+                                    <UserIcon className="h-5 w-5 text-white" />
+                                </div>
+                                Customer Information
+                            </h3>
+                        </div>
+                        <div className="p-6 space-y-5">
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">Customer *</label>
+                                <label className="block text-sm font-semibold text-gray-700 mb-2">Customer *</label>
                                 <div className="relative">
                                     <select
                                         value={formData.customer.id || ''}
                                         onChange={(e) => handleCustomerSelect(e.target.value)}
-                                        className="block w-full rounded-lg border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 py-2.5 px-3 border bg-white appearance-none pr-10"
+                                        className="block w-full rounded-xl border-2 border-gray-200 py-3 px-4 text-base focus:border-blue-500 focus:ring-2 focus:ring-blue-100 bg-white appearance-none pr-10 transition-all"
                                     >
                                         <option value="">Select a customer...</option>
                                         {customers.filter(c => c.active).map((customer) => (
@@ -242,13 +241,13 @@ export const JobBasicInfoStep: React.FC<JobBasicInfoStepProps> = ({
                                             </option>
                                         ))}
                                     </select>
-                                    <ChevronDownIcon className="absolute right-3 top-3 h-5 w-5 text-gray-400 pointer-events-none" />
+                                    <ChevronDownIcon className="absolute right-4 top-4 h-5 w-5 text-gray-400 pointer-events-none" />
                                 </div>
                                 {selectedCustomer && (
-                                    <div className="mt-2 p-3 bg-primary-50 rounded-lg border border-primary-200 text-sm text-primary-900 space-y-1">
-                                        <div className="font-medium">{selectedCustomer.name}</div>
-                                        {selectedCustomer.companyName && <div>Company: {selectedCustomer.companyName}</div>}
-                                        {selectedCustomer.email && <div>Email: {selectedCustomer.email}</div>}
+                                    <div className="mt-3 p-4 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border-2 border-blue-200 text-sm space-y-2">
+                                        <div className="font-bold text-gray-900">{selectedCustomer.name}</div>
+                                        {selectedCustomer.companyName && <div className="text-gray-600">Company: {selectedCustomer.companyName}</div>}
+                                        {selectedCustomer.email && <div className="text-gray-600">Email: {selectedCustomer.email}</div>}
                                     </div>
                                 )}
                             </div>
@@ -302,25 +301,25 @@ export const JobBasicInfoStep: React.FC<JobBasicInfoStepProps> = ({
                             </div>
 
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">Job Type</label>
-                                <div className="flex gap-4 mt-2">
-                                    <label className="flex items-center gap-2 cursor-pointer">
+                                <label className="block text-sm font-semibold text-gray-700 mb-3">Job Type</label>
+                                <div className="flex gap-4">
+                                    <label className={`flex-1 flex items-center justify-center gap-3 p-4 rounded-xl cursor-pointer transition-all ${!formData.isRepeat ? 'bg-blue-100 border-2 border-blue-400' : 'bg-gray-50 border-2 border-gray-200 hover:border-gray-300'}`}>
                                         <input
                                             type="radio"
                                             checked={!formData.isRepeat}
                                             onChange={() => setFormData(prev => ({ ...prev, isRepeat: false }))}
-                                            className="text-primary-600 focus:ring-primary-500"
+                                            className="w-5 h-5 text-blue-600 focus:ring-blue-500"
                                         />
-                                        <span className="text-sm">New Job</span>
+                                        <span className={`font-medium ${!formData.isRepeat ? 'text-blue-700' : 'text-gray-600'}`}>New Job</span>
                                     </label>
-                                    <label className="flex items-center gap-2 cursor-pointer">
+                                    <label className={`flex-1 flex items-center justify-center gap-3 p-4 rounded-xl cursor-pointer transition-all ${formData.isRepeat ? 'bg-blue-100 border-2 border-blue-400' : 'bg-gray-50 border-2 border-gray-200 hover:border-gray-300'}`}>
                                         <input
                                             type="radio"
                                             checked={formData.isRepeat}
                                             onChange={() => setFormData(prev => ({ ...prev, isRepeat: true }))}
-                                            className="text-primary-600 focus:ring-primary-500"
+                                            className="w-5 h-5 text-blue-600 focus:ring-blue-500"
                                         />
-                                        <span className="text-sm">Repeat Job</span>
+                                        <span className={`font-medium ${formData.isRepeat ? 'text-blue-700' : 'text-gray-600'}`}>Repeat Job</span>
                                     </label>
                                 </div>
                             </div>
@@ -337,12 +336,16 @@ export const JobBasicInfoStep: React.FC<JobBasicInfoStepProps> = ({
 
                 {/* Product Details */}
                 <div className="space-y-6">
-                    <Card>
-                        <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                            <UserIcon className="h-5 w-5 text-primary-600" /> {/* Should be CubeIcon but using UserIcon as placeholder if CubeIcon not imported, wait I imported UserIcon. I should import CubeIcon */}
-                            Product Details
-                        </h3>
-                        <div className="space-y-4">
+                    <Card className="overflow-hidden">
+                        <div className="p-5 bg-gradient-to-r from-emerald-50 to-green-50 border-b border-emerald-100">
+                            <h3 className="text-lg font-bold text-gray-900 flex items-center gap-3">
+                                <div className="p-2 bg-emerald-500 rounded-xl shadow-lg shadow-emerald-200">
+                                    <CubeIcon className="h-5 w-5 text-white" />
+                                </div>
+                                Product Details
+                            </h3>
+                        </div>
+                        <div className="p-6 space-y-5">
                             <Input
                                 label="Job Code"
                                 value={formData.jobCode}
@@ -351,12 +354,12 @@ export const JobBasicInfoStep: React.FC<JobBasicInfoStepProps> = ({
                             />
 
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">Select Product from Inventory</label>
+                                <label className="block text-sm font-semibold text-gray-700 mb-2">Select Product from Inventory</label>
                                 <div className="relative">
                                     {/* Search and Filter Bar */}
-                                    <div className="mb-2 space-y-2">
+                                    <div className="mb-3 space-y-3">
                                         <div className="relative">
-                                            <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+                                            <MagnifyingGlassIcon className="absolute left-4 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
                                             <input
                                                 type="text"
                                                 placeholder="Search by SKU or name..."
@@ -366,19 +369,19 @@ export const JobBasicInfoStep: React.FC<JobBasicInfoStepProps> = ({
                                                     setShowProductDropdown(true);
                                                 }}
                                                 onFocus={() => setShowProductDropdown(true)}
-                                                className="block w-full pl-10 pr-3 py-2 rounded-lg border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 border bg-white text-sm"
+                                                className="block w-full pl-12 pr-4 py-3 rounded-xl border-2 border-gray-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 bg-white text-base transition-all"
                                             />
                                         </div>
                                         {groups.length > 0 && (
-                                            <div className="flex items-center gap-2">
-                                                <FolderIcon className="h-4 w-4 text-gray-400" />
+                                            <div className="flex items-center gap-3">
+                                                <FolderIcon className="h-5 w-5 text-gray-400" />
                                                 <select
                                                     value={selectedGroupId}
                                                     onChange={(e) => {
                                                         setSelectedGroupId(e.target.value);
                                                         setShowProductDropdown(true);
                                                     }}
-                                                    className="flex-1 text-sm rounded-lg border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 py-1.5 px-2 border bg-white"
+                                                    className="flex-1 rounded-xl border-2 border-gray-200 py-3 px-4 text-base focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 bg-white transition-all"
                                                 >
                                                     <option value="">All Groups</option>
                                                     {groups.map(g => (
@@ -396,7 +399,7 @@ export const JobBasicInfoStep: React.FC<JobBasicInfoStepProps> = ({
                                         <button
                                             type="button"
                                             onClick={() => setShowProductDropdown(!showProductDropdown)}
-                                            className="block w-full rounded-lg border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 py-2.5 px-3 border bg-white text-left flex items-center justify-between"
+                                            className="block w-full rounded-xl border-2 border-gray-200 py-3 px-4 text-base focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 bg-white text-left flex items-center justify-between transition-all"
                                         >
                                             <span className={selectedProduct ? 'text-gray-900' : 'text-gray-500'}>
                                                 {selectedProduct 
@@ -407,18 +410,18 @@ export const JobBasicInfoStep: React.FC<JobBasicInfoStepProps> = ({
                                         </button>
                                         
                                         {showProductDropdown && (
-                                            <div className="absolute z-50 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-96 overflow-auto">
+                                            <div className="absolute z-50 w-full mt-2 bg-white border-2 border-gray-200 rounded-xl shadow-xl max-h-96 overflow-auto">
                                                 {filteredProducts.length === 0 ? (
-                                                    <div className="px-4 py-3 text-sm text-gray-500 text-center">
+                                                    <div className="px-4 py-6 text-base text-gray-500 text-center">
                                                         No products found
                                                     </div>
                                                 ) : (
-                                                    <div className="py-1">
+                                                    <div className="py-2">
                                                         {Array.from(groupedProducts.entries()).map(([groupId, groupProducts]) => (
                                                             <div key={groupId}>
                                                                 {groupId !== '__ungrouped__' && groups.length > 0 && (
-                                                                    <div className="px-3 py-2 bg-gray-50 border-b border-gray-200 text-xs font-semibold text-gray-700 flex items-center gap-1">
-                                                                        <FolderIcon className="h-3 w-3" />
+                                                                    <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 text-xs font-bold text-gray-700 flex items-center gap-2 uppercase tracking-wider">
+                                                                        <FolderIcon className="h-4 w-4" />
                                                                         {getGroupPath(groupId)}
                                                                     </div>
                                                                 )}
@@ -437,17 +440,17 @@ export const JobBasicInfoStep: React.FC<JobBasicInfoStepProps> = ({
                                                                             setProductSearchTerm('');
                                                                             setSelectedGroupId('');
                                                                         }}
-                                                                        className={`w-full px-4 py-2 text-left text-sm hover:bg-primary-50 transition-colors ${
-                                                                            selectedProduct?.id === p.id ? 'bg-primary-100' : ''
+                                                                        className={`w-full px-4 py-3 text-left hover:bg-emerald-50 transition-colors ${
+                                                                            selectedProduct?.id === p.id ? 'bg-emerald-100' : ''
                                                                         }`}
                                                                     >
-                                                                        <div className="flex items-center gap-2">
-                                                                            <CubeIcon className="h-4 w-4 text-gray-400 flex-shrink-0" />
+                                                                        <div className="flex items-center gap-3">
+                                                                            <CubeIcon className="h-5 w-5 text-gray-400 flex-shrink-0" />
                                                                             <div className="flex-1 min-w-0">
                                                                                 <div className="font-medium text-gray-900 truncate">{decodeProductName(p.name)}</div>
-                                                                                <div className="text-xs text-gray-500">SKU: {p.sku}</div>
+                                                                                <div className="text-sm text-gray-500">SKU: {p.sku}</div>
                                                                                 {(p as any).qtyOnHand !== undefined && (
-                                                                                    <div className="text-xs text-gray-400 mt-0.5">
+                                                                                    <div className="text-sm text-gray-400 mt-0.5">
                                                                                         Stock: {(p as any).qtyOnHand || 0} {p.uom || 'units'}
                                                                                     </div>
                                                                                 )}
@@ -466,9 +469,9 @@ export const JobBasicInfoStep: React.FC<JobBasicInfoStepProps> = ({
                                 
                                 {/* Selected Product Info */}
                                 {selectedProduct && (
-                                    <div className="mt-2 p-3 bg-primary-50 rounded-lg border border-primary-200 text-sm">
-                                        <div className="font-medium text-primary-900">{decodeProductName(selectedProduct.name)}</div>
-                                        <div className="text-primary-700 mt-1">
+                                    <div className="mt-3 p-4 bg-gradient-to-br from-emerald-50 to-green-50 rounded-xl border-2 border-emerald-200">
+                                        <div className="font-bold text-gray-900">{decodeProductName(selectedProduct.name)}</div>
+                                        <div className="text-gray-600 mt-1">
                                             SKU: {selectedProduct.sku} • UOM: {selectedProduct.uom || 'N/A'}
                                             {selectedProduct.groupId && ` • Group: ${getGroupPath(selectedProduct.groupId)}`}
                                         </div>
@@ -484,11 +487,11 @@ export const JobBasicInfoStep: React.FC<JobBasicInfoStepProps> = ({
                                     onChange={(e) => setFormData(prev => ({ ...prev, sku: e.target.value }))}
                                 />
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-2">Priority</label>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-2">Priority</label>
                                     <select
                                         value={formData.priority}
                                         onChange={(e) => setFormData(prev => ({ ...prev, priority: Number(e.target.value) }))}
-                                        className="block w-full rounded-lg border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 py-2.5 px-3 border bg-white"
+                                        className="block w-full rounded-xl border-2 border-gray-200 py-3 px-4 text-base focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 bg-white transition-all"
                                     >
                                         <option value={1}>Critical</option>
                                         <option value={2}>High</option>
@@ -515,11 +518,11 @@ export const JobBasicInfoStep: React.FC<JobBasicInfoStepProps> = ({
                                     onChange={(e) => setFormData(prev => ({ ...prev, quantity: Number(e.target.value) }))}
                                 />
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-2">Unit</label>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-2">Unit</label>
                                     <select
                                         value={formData.unit}
                                         onChange={(e) => setFormData(prev => ({ ...prev, unit: e.target.value }))}
-                                        className="block w-full rounded-lg border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 py-2.5 px-3 border bg-white"
+                                        className="block w-full rounded-xl border-2 border-gray-200 py-3 px-4 text-base focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 bg-white transition-all"
                                     >
                                         <option value="pcs">Pieces</option>
                                         <option value="box">Box</option>
