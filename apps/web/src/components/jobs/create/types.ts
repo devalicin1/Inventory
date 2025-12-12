@@ -1,3 +1,52 @@
+export interface StageTransitionRule {
+    fromStageId: string
+    toStageId: string
+    requireOutputToAdvance: boolean
+    minQtyToStartNextStage?: number
+    unit: string
+    allowPartial: boolean
+    allowRework?: boolean
+}
+
+export type StageProgressStatus = 'pending' | 'in_progress' | 'partial' | 'done' | 'cancelled'
+
+export interface StageProgressEntry {
+    stageId: string
+    startedAt?: string
+    finishedAt?: string
+    status?: StageProgressStatus
+    plannedQty?: number
+    producedQty?: number
+    transferredQty?: number
+    unit?: string
+}
+
+export type BatchStatus = 'available' | 'consumed' | 'partially_consumed'
+
+export interface ProductionBatch {
+    id: string
+    jobId: string
+    stageId: string
+    sourceStageId?: string
+    targetStageId?: string
+    qty: number
+    unit: string
+    createdAt: string
+    status: BatchStatus
+}
+
+export interface BatchQrPayload {
+    type: 'batch'
+    batchId: string
+    jobId: string
+    sourceStageId: string
+    targetStageId: string
+    qty: number
+    unit: string
+    workflowId?: string
+    reworkFromStageId?: string
+}
+
 export interface JobFormData {
     jobCode: string
     sku: string
@@ -34,6 +83,7 @@ export interface JobFormData {
         boxesPerPallet?: number
         plannedPallets?: number
         strapSpec?: string
+        palletLabelsOnly?: string
         actual: { batches: any[] }
     }
     isRepeat: boolean
@@ -61,7 +111,7 @@ export interface JobFormData {
         tags?: string[]
     }
     deliveryMethod: string
-    stageProgress: any[]
+    stageProgress: StageProgressEntry[]
     specialComponents: any[]
     attachments: any[]
     requireOutputToAdvance: boolean

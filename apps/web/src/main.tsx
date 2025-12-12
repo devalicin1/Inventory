@@ -1,6 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { createBrowserRouter, RouterProvider, useNavigate } from 'react-router-dom'
+import { createBrowserRouter, RouterProvider, useNavigate, useLocation } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import './index.css'
 import App from './App.tsx'
@@ -14,7 +14,10 @@ import { ProductionSettings } from './components/ProductionSettings'
 import { Work } from './routes/Work'
 import { Settings } from './routes/Settings'
 import { Reports } from './routes/Reports'
-import { ProductionScanner } from './components/ProductionScanner'
+import { PurchaseOrders } from './routes/PurchaseOrders'
+import { PurchaseOrderForm } from './routes/PurchaseOrderForm'
+import { ProductionScanner } from './components/scanner/ProductionScanner'
+import { PurchaseOrderScanner } from './components/scanner/PurchaseOrderScanner'
 import { useSessionStore } from './state/sessionStore'
 
 // Wrapper components to get workspaceId from session
@@ -50,6 +53,7 @@ const queryClient = new QueryClient({
 function ScannerPage() {
   const { workspaceId } = useSessionStore()
   const navigate = useNavigate()
+  const location = useLocation()
 
   if (!workspaceId) return null
 
@@ -60,6 +64,13 @@ function ScannerPage() {
     } else {
       navigate('/')
     }
+  }
+
+  // Check if this is a PO scanner (from query param or path)
+  const isPOScanner = location.search.includes('po=true') || location.pathname.includes('po-scanner') || location.pathname === '/scan/po'
+
+  if (isPOScanner) {
+    return <PurchaseOrderScanner workspaceId={workspaceId} onClose={handleClose} />
   }
 
   return <ProductionScanner workspaceId={workspaceId} onClose={handleClose} />
@@ -87,6 +98,11 @@ const router = createBrowserRouter([
       { path: 'reports', element: <Reports /> },
       { path: 'settings', element: <Settings /> },
       { path: 'scan', element: <ScannerPage /> },
+      { path: 'scan/po', element: <ScannerPage /> },
+      { path: 'purchase-orders', element: <PurchaseOrders /> },
+      { path: 'purchase-orders/new', element: <PurchaseOrderForm /> },
+      { path: 'purchase-orders/:id', element: <PurchaseOrderForm /> },
+      { path: 'purchase-orders/:id/edit', element: <PurchaseOrderForm /> },
     ]
   },
 ])

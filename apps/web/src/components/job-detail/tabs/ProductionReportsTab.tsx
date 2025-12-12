@@ -17,8 +17,11 @@ import {
   PresentationChartLineIcon,
   BoltIcon,
   ArrowTrendingUpIcon,
-  ArrowTrendingDownIcon
+  ArrowTrendingDownIcon,
+  CubeIcon
 } from '@heroicons/react/24/outline'
+import { StuckJobsReport } from '../../production-reports/StuckJobsReport'
+import { WIPInventoryReport } from '../../production-reports/WIPInventoryReport'
 import {
   BarChart,
   Bar,
@@ -39,17 +42,28 @@ import {
   listJobs, 
   listWorkflows, 
   listWorkcenters, 
-  listCustomers
+  listCustomers,
+  listJobProductionRuns
 } from '../../../api/production-jobs'
 import { toCSV, downloadCSV } from '../../../utils/csv'
+import {
+  calculateWIPByStage,
+  calculateStageBottlenecks,
+  detectStuckJobs,
+  calculateWIPInventoryBetweenStages,
+  type StageBottleneckData,
+  type StuckJobData,
+  type WIPInventoryData
+} from '../../../components/production-reports/utils'
 
 // --- Types & Interfaces ---
 
 interface ProductionReportsTabProps {
   workspaceId: string
+  onJobClick?: (jobId: string) => void
 }
 
-type ReportCategory = 'overview' | 'distribution' | 'trends' | 'performance' | 'analysis' | 'list'
+type ReportCategory = 'overview' | 'distribution' | 'trends' | 'performance' | 'analysis' | 'stuckJobs' | 'wipInventory' | 'list'
 type SortField = 'code' | 'sku' | 'productName' | 'customer' | 'stage' | 'status' | 'priority' | 'quantity' | 'dueDate' | 'createdAt' | 'daysInStage'
 type SortDirection = 'asc' | 'desc'
 
@@ -193,7 +207,7 @@ const EmptyChartState = ({ message }: { message: string }) => (
 
 // --- Main Component ---
 
-export function ProductionReportsTab({ workspaceId }: ProductionReportsTabProps) {
+export function ProductionReportsTab({ workspaceId, onJobClick }: ProductionReportsTabProps) {
   const [activeCategory, setActiveCategory] = useState<ReportCategory>('overview')
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<string[]>([])
@@ -234,6 +248,43 @@ export function ProductionReportsTab({ workspaceId }: ProductionReportsTabProps)
   })
 
   const allJobs = jobsData?.jobs || []
+
+  // Fetch production runs for all production jobs
+  const productionJobIds = useMemo(() => {
+    return allJobs
+      .filter(job => job.status !== 'draft' && job.status !== 'cancelled')
+      .map(job => job.id)
+      .sort()
+  }, [allJobs])
+
+  const { data: allRunsData } = useQuery({
+    queryKey: ['production-runs', workspaceId, productionJobIds.length],
+    queryFn: async () => {
+      if (productionJobIds.length === 0) return {}
+      
+      // Fetch runs for all jobs in parallel
+      const runsPromises = productionJobIds.map(async (jobId) => {
+        try {
+          const runs = await listJobProductionRuns(workspaceId, jobId)
+          return { jobId, runs }
+        } catch (error) {
+          console.error(`Error fetching runs for job ${jobId}:`, error)
+          return { jobId, runs: [] }
+        }
+      })
+      
+      const runsResults = await Promise.all(runsPromises)
+      
+      // Group by job ID
+      const grouped: { [jobId: string]: any[] } = {}
+      runsResults.forEach(({ jobId, runs }) => {
+        grouped[jobId] = runs
+      })
+      
+      return grouped
+    },
+    enabled: productionJobIds.length > 0,
+  })
 
   // --- Filtering Logic ---
   const productionJobs = useMemo(() => {
@@ -375,7 +426,7 @@ export function ProductionReportsTab({ workspaceId }: ProductionReportsTabProps)
     })
   }, [stageStats])
 
-  // Advanced: Bottlenecks
+  // Advanced: Bottlenecks (WIP Limits)
   const bottleneckData = useMemo(() => {
     return stageStats
       .filter(stat => stat.wipLimit && stat.count > stat.wipLimit)
@@ -388,6 +439,22 @@ export function ProductionReportsTab({ workspaceId }: ProductionReportsTabProps)
       }))
       .sort((a, b) => b.overage - a.overage)
   }, [stageStats])
+
+  // Stuck Jobs & WIP Inventory Analysis
+  const stuckJobsData = useMemo(() => {
+    if (!allRunsData) return []
+    return detectStuckJobs(productionJobs, allRunsData, workflows, workcenters)
+  }, [productionJobs, allRunsData, workflows, workcenters])
+
+  const wipInventoryData = useMemo(() => {
+    if (!allRunsData) return []
+    return calculateWIPInventoryBetweenStages(productionJobs, allRunsData, workflows)
+  }, [productionJobs, allRunsData, workflows])
+
+  const stageBottlenecksData = useMemo(() => {
+    if (!allRunsData) return []
+    return calculateStageBottlenecks(productionJobs, allRunsData, workflows, workcenters)
+  }, [productionJobs, allRunsData, workflows, workcenters])
 
   // Advanced: Risk Analysis
   const riskAnalysisData = useMemo(() => {
@@ -687,12 +754,14 @@ export function ProductionReportsTab({ workspaceId }: ProductionReportsTabProps)
             { id: 'trends', icon: ArrowDownTrayIcon, label: 'Trends' },
             { id: 'performance', icon: CheckCircleIcon, label: 'Performance' },
             { id: 'analysis', icon: ExclamationTriangleIcon, label: 'Analysis' },
+            { id: 'stuckJobs', icon: ExclamationTriangleIcon, label: 'Stuck Jobs', badge: stuckJobsData.length },
+            { id: 'wipInventory', icon: CubeIcon, label: 'WIP Inventory' },
             { id: 'list', icon: ListBulletIcon, label: 'Data' }
           ].map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveCategory(tab.id as ReportCategory)}
-              className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-all whitespace-nowrap ${
+              className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-all whitespace-nowrap relative ${
                 activeCategory === tab.id
                   ? 'bg-white text-blue-700 shadow-sm ring-1 ring-gray-200'
                   : 'text-slate-600 hover:bg-gray-50 hover:text-gray-900'
@@ -700,6 +769,11 @@ export function ProductionReportsTab({ workspaceId }: ProductionReportsTabProps)
             >
               <tab.icon className="h-4 w-4" />
               {tab.label}
+              {tab.badge !== undefined && tab.badge > 0 && (
+                <span className="ml-1 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                  {tab.badge}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -1118,77 +1192,149 @@ export function ProductionReportsTab({ workspaceId }: ProductionReportsTabProps)
           {/* Analysis Tab */}
           {activeCategory === 'analysis' && (
               <div className="space-y-6 animate-in fade-in duration-300">
+                  {/* Summary Cards */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+                          <div className="flex items-center justify-between">
+                              <div>
+                                  <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Stuck Jobs</p>
+                                  <p className="text-2xl font-bold text-gray-900 mt-1">{stuckJobsData.length}</p>
+                              </div>
+                              <ExclamationTriangleIcon className="h-8 w-8 text-amber-500" />
+                          </div>
+                          <p className="text-xs text-gray-500 mt-2">Jobs with output but next stage not started</p>
+                      </div>
+                      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+                          <div className="flex items-center justify-between">
+                              <div>
+                                  <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">WIP Inventory</p>
+                                  <p className="text-2xl font-bold text-gray-900 mt-1">{wipInventoryData.length}</p>
+                              </div>
+                              <CubeIcon className="h-8 w-8 text-blue-500" />
+                          </div>
+                          <p className="text-xs text-gray-500 mt-2">Stage transitions with pending stock</p>
+                      </div>
+                      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
+                          <div className="flex items-center justify-between">
+                              <div>
+                                  <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Bottlenecks</p>
+                                  <p className="text-2xl font-bold text-gray-900 mt-1">{stageBottlenecksData.length}</p>
+                              </div>
+                              <BoltIcon className="h-8 w-8 text-red-500" />
+                          </div>
+                          <p className="text-xs text-gray-500 mt-2">Stages with critical issues</p>
+                      </div>
+                  </div>
+
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                      {/* Stuck Jobs Table */}
                       <div className="bg-white rounded-xl shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)] border border-gray-200 overflow-hidden">
                           <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
-                              <h3 className="text-base font-semibold text-gray-900">Bottleneck Analysis</h3>
-                              {bottleneckData.length > 0 && (
-                                  <span className="bg-rose-100 text-rose-700 text-xs font-bold px-2.5 py-1 rounded-full border border-rose-200">
-                                      {bottleneckData.length} Stages Over Limit
+                              <h3 className="text-base font-semibold text-gray-900">Stuck Jobs (Process View)</h3>
+                              {stuckJobsData.length > 0 && (
+                                  <span className="bg-amber-100 text-amber-700 text-xs font-bold px-2.5 py-1 rounded-full border border-amber-200">
+                                      {stuckJobsData.length} Jobs
                                   </span>
                               )}
                           </div>
-                          {bottleneckData.length > 0 ? (
-                               <div className="h-80 p-6">
-                                    <ResponsiveContainer width="100%" height="100%">
-                                        <BarChart data={bottleneckData}>
-                                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                                            <XAxis dataKey="stage" angle={-15} textAnchor="end" height={40} tick={{fontSize: 11, fill: '#64748b'}} />
-                                            <YAxis axisLine={false} tickLine={false} tick={{fontSize: 11, fill: '#64748b'}} />
-                                            <Tooltip content={<CustomTooltip />} />
-                                            <Bar dataKey="overage" fill="#ef4444" name="Jobs Over Limit" radius={[4, 4, 0, 0]} />
-                                        </BarChart>
-                                    </ResponsiveContainer>
-                               </div>
-                          ) : (
-                              <div className="p-12 text-center text-gray-400 flex flex-col items-center">
-                                  <CheckCircleIcon className="h-12 w-12 text-emerald-500/50 mb-3" />
-                                  <p className="font-medium text-gray-900">No bottlenecks detected</p>
-                                  <p className="text-sm mt-1">All stages are operating within their WIP limits.</p>
-                              </div>
-                          )}
-                      </div>
-
-                      <div className="bg-white rounded-xl shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)] border border-gray-200 overflow-hidden">
-                          <div className="p-6 border-b border-gray-100 bg-gray-50/50">
-                              <h3 className="text-base font-semibold text-gray-900">High Risk Jobs</h3>
-                          </div>
-                          <div className="overflow-x-auto max-h-[400px] scrollbar-thin scrollbar-thumb-gray-200">
+                          <div className="overflow-x-auto max-h-[500px] scrollbar-thin scrollbar-thumb-gray-200">
                               <table className="min-w-full divide-y divide-gray-100">
                                   <thead className="bg-gray-50 sticky top-0 z-10 shadow-sm">
                                       <tr>
-                                          <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Job Details</th>
-                                          <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Due Date</th>
-                                          <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Risk Level</th>
+                                          <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Job</th>
+                                          <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">From → To</th>
+                                          <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Output</th>
+                                          <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Days</th>
                                       </tr>
                                   </thead>
                                   <tbody className="bg-white divide-y divide-gray-50">
-                                      {riskAnalysisData.map((item, idx) => (
-                                          <tr key={idx} className="hover:bg-gray-50 transition-colors group">
-                                              <td className="px-6 py-4 whitespace-nowrap">
-                                                  <div className="text-sm font-semibold text-gray-900 group-hover:text-blue-600 transition-colors">{item.jobCode}</div>
-                                                  <div className="text-xs text-gray-500 mt-0.5">{item.stage}</div>
+                                      {stuckJobsData.slice(0, 20).map((job) => (
+                                          <tr key={job.jobId} className="hover:bg-amber-50/30 transition-colors">
+                                              <td className="px-4 py-3 whitespace-nowrap">
+                                                  <div className="text-sm font-semibold text-gray-900">{job.jobCode}</div>
+                                                  <div className="text-xs text-gray-500">P{job.priority}</div>
                                               </td>
-                                              <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600 font-mono">
-                                                  {item.dueDate}
+                                              <td className="px-4 py-3 whitespace-nowrap">
+                                                  <div className="text-xs text-gray-600">
+                                                      <span className="font-medium">{job.previousStageName}</span>
+                                                      <span className="mx-1">→</span>
+                                                      <span className="font-medium text-amber-600">{job.currentStageName}</span>
+                                                  </div>
                                               </td>
-                                              <td className="px-6 py-4 whitespace-nowrap">
-                                                  <span className={`px-2.5 py-1 inline-flex text-xs leading-4 font-semibold rounded-full border ${
-                                                      item.riskLevel === 'critical' ? 'bg-rose-50 text-rose-700 border-rose-200' :
-                                                      item.riskLevel === 'high' ? 'bg-orange-50 text-orange-700 border-orange-200' :
-                                                      'bg-yellow-50 text-yellow-700 border-yellow-200'
+                                              <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600">
+                                                  {job.previousStageOutput.toLocaleString()} {job.previousStageOutputUOM}
+                                              </td>
+                                              <td className="px-4 py-3 whitespace-nowrap">
+                                                  <span className={`text-xs font-semibold px-2 py-1 rounded-full ${
+                                                      job.daysStuck > 3 ? 'bg-red-100 text-red-700' :
+                                                      job.daysStuck > 1 ? 'bg-amber-100 text-amber-700' :
+                                                      'bg-yellow-100 text-yellow-700'
                                                   }`}>
-                                                      {item.riskLevel.toUpperCase()}
+                                                      {job.daysStuck.toFixed(1)}d
                                                   </span>
                                               </td>
                                           </tr>
                                       ))}
-                                      {riskAnalysisData.length === 0 && (
+                                      {stuckJobsData.length === 0 && (
+                                          <tr>
+                                              <td colSpan={4} className="px-6 py-12 text-center text-gray-500 text-sm">
+                                                  <div className="flex flex-col items-center">
+                                                    <CheckCircleIcon className="h-10 w-10 text-gray-300 mb-2" />
+                                                    No stuck jobs detected. All jobs are progressing normally.
+                                                  </div>
+                                              </td>
+                                          </tr>
+                                      )}
+                                  </tbody>
+                              </table>
+                          </div>
+                      </div>
+
+                      {/* WIP Inventory Table (Stock View) */}
+                      <div className="bg-white rounded-xl shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)] border border-gray-200 overflow-hidden">
+                          <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+                              <h3 className="text-base font-semibold text-gray-900">WIP Inventory (Stock View)</h3>
+                              {wipInventoryData.length > 0 && (
+                                  <span className="bg-blue-100 text-blue-700 text-xs font-bold px-2.5 py-1 rounded-full border border-blue-200">
+                                      {wipInventoryData.reduce((sum, wip) => sum + wip.quantity, 0).toLocaleString()} units
+                                  </span>
+                              )}
+                          </div>
+                          <div className="overflow-x-auto max-h-[500px] scrollbar-thin scrollbar-thumb-gray-200">
+                              <table className="min-w-full divide-y divide-gray-100">
+                                  <thead className="bg-gray-50 sticky top-0 z-10 shadow-sm">
+                                      <tr>
+                                          <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Transition</th>
+                                          <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Quantity</th>
+                                          <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Jobs</th>
+                                      </tr>
+                                  </thead>
+                                  <tbody className="bg-white divide-y divide-gray-50">
+                                      {wipInventoryData.slice(0, 20).map((wip, idx) => (
+                                          <tr key={idx} className="hover:bg-blue-50/30 transition-colors">
+                                              <td className="px-4 py-3 whitespace-nowrap">
+                                                  <div className="text-xs text-gray-600">
+                                                      <span className="font-medium">{wip.fromStageName}</span>
+                                                      <span className="mx-1">→</span>
+                                                      <span className="font-medium text-blue-600">{wip.toStageName}</span>
+                                                  </div>
+                                              </td>
+                                              <td className="px-4 py-3 whitespace-nowrap">
+                                                  <div className="text-sm font-semibold text-gray-900">
+                                                      {wip.quantity.toLocaleString()} {wip.uom}
+                                                  </div>
+                                              </td>
+                                              <td className="px-4 py-3 whitespace-nowrap">
+                                                  <span className="text-xs text-gray-600">{wip.jobCount} jobs</span>
+                                              </td>
+                                          </tr>
+                                      ))}
+                                      {wipInventoryData.length === 0 && (
                                           <tr>
                                               <td colSpan={3} className="px-6 py-12 text-center text-gray-500 text-sm">
                                                   <div className="flex flex-col items-center">
                                                     <CheckCircleIcon className="h-10 w-10 text-gray-300 mb-2" />
-                                                    No high-risk jobs identified at this time.
+                                                    No WIP inventory between stages.
                                                   </div>
                                               </td>
                                           </tr>
@@ -1198,7 +1344,90 @@ export function ProductionReportsTab({ workspaceId }: ProductionReportsTabProps)
                           </div>
                       </div>
                   </div>
+
+                  {/* Stage Bottlenecks Summary */}
+                  {stageBottlenecksData.length > 0 && (
+                      <div className="bg-white rounded-xl shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)] border border-gray-200 overflow-hidden">
+                          <div className="p-6 border-b border-gray-100 bg-gray-50/50">
+                              <h3 className="text-base font-semibold text-gray-900">Stage Bottleneck Summary</h3>
+                          </div>
+                          <div className="p-6">
+                              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                  {stageBottlenecksData.slice(0, 6).map((bottleneck) => (
+                                      <div key={bottleneck.stageId} className="border border-gray-200 rounded-lg p-4 hover:border-red-300 transition-colors">
+                                          <div className="flex items-center justify-between mb-2">
+                                              <h4 className="text-sm font-semibold text-gray-900">{bottleneck.stageName}</h4>
+                                              <ExclamationTriangleIcon className="h-5 w-5 text-red-500" />
+                                          </div>
+                                          <div className="space-y-1 text-xs">
+                                              <div className="flex justify-between">
+                                                  <span className="text-gray-500">Stuck Jobs:</span>
+                                                  <span className="font-semibold text-gray-900">{bottleneck.jobsStuck}</span>
+                                              </div>
+                                              <div className="flex justify-between">
+                                                  <span className="text-gray-500">WIP Quantity:</span>
+                                                  <span className="font-semibold text-gray-900">{bottleneck.totalWIPQuantity.toLocaleString()} {bottleneck.uom}</span>
+                                              </div>
+                                              <div className="flex justify-between">
+                                                  <span className="text-gray-500">Avg Days Stuck:</span>
+                                                  <span className="font-semibold text-gray-900">{bottleneck.avgDaysStuck.toFixed(1)}d</span>
+                                              </div>
+                                          </div>
+                                      </div>
+                                  ))}
+                              </div>
+                          </div>
+                      </div>
+                  )}
+
+                  {/* Original WIP Limit Bottleneck Chart */}
+                  {bottleneckData.length > 0 && (
+                      <div className="bg-white rounded-xl shadow-[0_2px_10px_-3px_rgba(6,81,237,0.1)] border border-gray-200 overflow-hidden">
+                          <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+                              <h3 className="text-base font-semibold text-gray-900">WIP Limit Overages</h3>
+                              <span className="bg-rose-100 text-rose-700 text-xs font-bold px-2.5 py-1 rounded-full border border-rose-200">
+                                  {bottleneckData.length} Stages Over Limit
+                              </span>
+                          </div>
+                          <div className="h-80 p-6">
+                              <ResponsiveContainer width="100%" height="100%">
+                                  <BarChart data={bottleneckData}>
+                                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                      <XAxis dataKey="stage" angle={-15} textAnchor="end" height={40} tick={{fontSize: 11, fill: '#64748b'}} />
+                                      <YAxis axisLine={false} tickLine={false} tick={{fontSize: 11, fill: '#64748b'}} />
+                                      <Tooltip content={<CustomTooltip />} />
+                                      <Bar dataKey="overage" fill="#ef4444" name="Jobs Over Limit" radius={[4, 4, 0, 0]} />
+                                  </BarChart>
+                              </ResponsiveContainer>
+                          </div>
+                      </div>
+                  )}
               </div>
+          )}
+
+          {/* Stuck Jobs Tab */}
+          {activeCategory === 'stuckJobs' && (
+            <div className="space-y-6 animate-in fade-in duration-300">
+              <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                <StuckJobsReport 
+                  data={stuckJobsData}
+                  onJobClick={onJobClick}
+                  workspaceId={workspaceId}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* WIP Inventory Tab */}
+          {activeCategory === 'wipInventory' && (
+            <div className="space-y-6 animate-in fade-in duration-300">
+              <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                <WIPInventoryReport 
+                  data={wipInventoryData}
+                  onJobClick={onJobClick}
+                />
+              </div>
+            </div>
           )}
 
           {/* List View */}

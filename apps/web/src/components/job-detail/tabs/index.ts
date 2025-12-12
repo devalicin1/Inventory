@@ -8,4 +8,5 @@ export { HistoryTab } from './HistoryTab'
 export { FilesTab } from './FilesTab'
 export { QRCodeTab } from './QRCodeTab'
 export { ProductionReportsTab } from './ProductionReportsTab'
+export { ProductionFlowTab } from './ProductionFlowTab'
 

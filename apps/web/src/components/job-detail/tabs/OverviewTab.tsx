@@ -413,10 +413,26 @@ export const OverviewTab: FC<OverviewTabProps> = ({
                           }
                         }
 
-                        const WASTAGE_THRESHOLD_LOWER = 400
-                        const WASTAGE_THRESHOLD_UPPER = 500
-                        const completionThreshold = Math.max(0, plannedQty - WASTAGE_THRESHOLD_LOWER)
-                        const completionThresholdUpper = plannedQty + WASTAGE_THRESHOLD_UPPER
+                        // Calculate tolerance based on order quantity
+                        const calculateToleranceThresholds = (plannedQty: number): { lower: number; upper: number } => {
+                          let tolerancePercent: number
+                          if (plannedQty < 1000) {
+                            tolerancePercent = 0.10
+                          } else if (plannedQty < 5000) {
+                            tolerancePercent = 0.075
+                          } else if (plannedQty < 10000) {
+                            tolerancePercent = 0.05
+                          } else {
+                            tolerancePercent = 0.03
+                          }
+                          const calculatedTolerance = Math.round(plannedQty * tolerancePercent)
+                          const lower = Math.max(50, Math.min(calculatedTolerance, 2000))
+                          const upper = Math.max(50, Math.min(calculatedTolerance, 2000))
+                          return { lower, upper }
+                        }
+                        const tolerance = calculateToleranceThresholds(plannedQty)
+                        const completionThreshold = Math.max(0, plannedQty - tolerance.lower)
+                        const completionThresholdUpper = plannedQty + tolerance.upper
                         const totalProduced = stageRuns.reduce((sum, r) => sum + Number(r.qtyGood || 0), 0)
                         // Threshold met: alt sınır ile üst sınır arasında olmalı
                         const isMet = plannedQty > 0 && totalProduced >= completionThreshold && totalProduced <= completionThresholdUpper
@@ -445,16 +461,17 @@ export const OverviewTab: FC<OverviewTabProps> = ({
                         // A stage is done if:
                         // 1. Job is done, OR
                         // 2. Stage was visited and is not current, OR
-                        // 3. Stage comes before the current stage in the workflow (even if not explicitly visited), OR
-                        // 4. Threshold is met for this stage (even if stage hasn't been moved yet - including current stage)
+                        // 3. Stage comes before the current stage in the workflow (even if not explicitly visited)
+                        //
+                        // NOTE: We INTENTIONALLY do NOT use thresholdMet here.
+                        //      In Workflow Path chips, a stage should show "Done" ONLY
+                        //      after the job has actually moved past that stage.
                         const isDone = job.status === 'done' ||
                           (visited.has(id) && !isCurrentStage) ||
-                          (currentStageIndex >= 0 && index < currentStageIndex) ||
-                          thresholdMet
+                          (currentStageIndex >= 0 && index < currentStageIndex)
 
-                        // If threshold is met, show as "Done" even if it's current stage
-                        // (stage is completed but not yet moved to next)
-                        const isCurrent = isCurrentStage && !thresholdMet
+                        // Current stage is always shown as "Current" (never "Done")
+                        const isCurrent = isCurrentStage
 
                         const base = 'px-3 py-2 rounded-lg text-sm font-medium border'
                         const cls = isCurrent
@@ -489,9 +506,13 @@ export const OverviewTab: FC<OverviewTabProps> = ({
                       const runs = (typeof allRuns !== 'undefined' ? allRuns : []) || []
 
                       const stageChanges = history
-                        .filter(h => h.type === 'stage_change')
+                        .filter(h => h.type === 'stage_change' && h.at && (h.at.seconds || h.at))
                         .slice()
-                        .sort((a: any, b: any) => a.at.seconds - b.at.seconds)
+                        .sort((a: any, b: any) => {
+                          const aSeconds = a.at?.seconds || (a.at ? Math.floor(new Date(a.at).getTime() / 1000) : 0)
+                          const bSeconds = b.at?.seconds || (b.at ? Math.floor(new Date(b.at).getTime() / 1000) : 0)
+                          return aSeconds - bSeconds
+                        })
 
                       // We no longer use production quantity thresholds to determine times.
                       // All timing is based purely on QR-driven events (history.at) and time logs.
@@ -546,12 +567,18 @@ export const OverviewTab: FC<OverviewTabProps> = ({
                       
                       // Then, use history stage_change events as fallback or to fill gaps
                       stageChanges.forEach((h: any) => {
+                        if (!h.at) return // Skip if at is null
+                        
                         const prevId = String(h.payload?.previousStageId)
                         const newId = String(h.payload?.newStageId)
+                        
+                        // Get timestamp from h.at (handle both Firestore timestamp and Date)
+                        const atSeconds = h.at?.seconds || (h.at ? Math.floor(new Date(h.at).getTime() / 1000) : null)
+                        if (!atSeconds) return // Skip if we can't get a valid timestamp
 
                         // Set start time for new stage if not already set from timeLogs
                         if (newId && !startedAtByStage.has(newId)) {
-                          startedAtByStage.set(newId, h.at.seconds)
+                          startedAtByStage.set(newId, atSeconds)
                         }
 
                         // Set finish time for previous stage when moving to next stage
@@ -561,7 +588,7 @@ export const OverviewTab: FC<OverviewTabProps> = ({
                           // If we're moving from prevId to newId, prevId is finished
                           // Finished time = stage change time (when we moved to next stage)
                           // But prefer threshold met time if available and it's after start time
-                          let finishedTime = h.at.seconds
+                          let finishedTime = atSeconds
                           
                           // Try to use threshold met timestamp if available
                           let thresholdMetAt = h.payload?.previousStageThresholdMetAt
@@ -574,7 +601,7 @@ export const OverviewTab: FC<OverviewTabProps> = ({
                             finishedTime = thresholdMetAt
                           } else if (stageStartTime) {
                             // Ensure finished time is not before start time
-                            finishedTime = Math.max(h.at.seconds, stageStartTime)
+                            finishedTime = Math.max(atSeconds, stageStartTime)
                           }
                           
                           // Only set if not already set (keep earliest completion time)
@@ -835,6 +862,7 @@ export const OverviewTab: FC<OverviewTabProps> = ({
                         <th className="px-3 py-2 font-medium text-gray-700">Stage</th>
                         <th className="px-3 py-2 font-medium text-gray-700">Planned</th>
                         <th className="px-3 py-2 font-medium text-gray-700">Produced</th>
+                        <th className="px-3 py-2 font-medium text-gray-700">Transferred</th>
                         <th className="px-3 py-2 font-medium text-gray-700">Status</th>
                       </tr>
                     </thead>
@@ -842,8 +870,18 @@ export const OverviewTab: FC<OverviewTabProps> = ({
                       {((job as any).stageProgress as any[]).map((sp, idx) => (
                         <tr key={idx} className="border-t border-gray-200">
                           <td className="px-3 py-2 text-gray-900">{typeof sp.stageId === 'string' ? stageName(sp.stageId) : '-'}</td>
-                          <td className="px-3 py-2 text-gray-900">{typeof sp.qtyPlanned === 'number' ? sp.qtyPlanned : '-'}</td>
-                          <td className="px-3 py-2 text-gray-900">{typeof sp.qtyProduced === 'number' ? sp.qtyProduced : '-'}</td>
+                          <td className="px-3 py-2 text-gray-900">
+                            {typeof sp.plannedQty === 'number' ? sp.plannedQty : (typeof sp.qtyPlanned === 'number' ? sp.qtyPlanned : '-')}
+                            {sp.unit ? <span className="ml-1 text-xs text-gray-500">{sp.unit}</span> : null}
+                          </td>
+                          <td className="px-3 py-2 text-gray-900">
+                            {typeof sp.producedQty === 'number' ? sp.producedQty : (typeof sp.qtyProduced === 'number' ? sp.qtyProduced : '-')}
+                            {sp.unit ? <span className="ml-1 text-xs text-gray-500">{sp.unit}</span> : null}
+                          </td>
+                          <td className="px-3 py-2 text-gray-900">
+                            {typeof sp.transferredQty === 'number' ? sp.transferredQty : '-'}
+                            {sp.unit ? <span className="ml-1 text-xs text-gray-500">{sp.unit}</span> : null}
+                          </td>
                           <td className="px-3 py-2">
                             {sp.status ? (
                               <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 border border-gray-200">{String(sp.status).replace('_', ' ').toUpperCase()}</span>

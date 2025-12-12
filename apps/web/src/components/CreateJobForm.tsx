@@ -46,7 +46,7 @@ export function CreateJobForm({
   initialJob
 }: CreateJobFormProps) {
   const [currentStep, setCurrentStep] = useState(1)
-  const totalSteps = 6
+  const totalSteps = 7
 
   // Get initial values safely
   const getInitialStageId = () => {
@@ -411,12 +411,13 @@ export function CreateJobForm({
   const prevStep = () => setCurrentStep(prev => Math.max(prev - 1, 1))
 
   const stepConfig = [
-    { number: 1, title: 'Basic Info', icon: UserIcon, description: 'Customer and product details' },
-    { number: 2, title: 'Specifications', icon: CogIcon, description: 'Technical specifications' },
-    { number: 3, title: 'Materials & Outputs', icon: ShoppingCartIcon, description: 'BOM and planned outputs' },
-    { number: 4, title: 'Workflow', icon: ClipboardDocumentListIcon, description: 'Production stages and schedule' },
-    { number: 5, title: 'Logistics', icon: TruckIcon, description: 'Delivery and packaging' },
-    { number: 6, title: 'Finalize', icon: DocumentTextIcon, description: 'Attachments and review' }
+    { number: 1, title: 'Customer', icon: UserIcon, description: 'Customer and order details' },
+    { number: 2, title: 'Product', icon: UserIcon, description: 'Product and quantity details' },
+    { number: 3, title: 'Specs – Dimensions', icon: CogIcon, description: 'Sizes and sheet selection' },
+    { number: 4, title: 'Materials & Outputs', icon: ShoppingCartIcon, description: 'BOM and planned outputs' },
+    { number: 5, title: 'Workflow', icon: ClipboardDocumentListIcon, description: 'Production stages and schedule' },
+    { number: 6, title: 'Logistics', icon: TruckIcon, description: 'Delivery and packaging' },
+    { number: 7, title: 'Finalize', icon: DocumentTextIcon, description: 'Attachments and review' }
   ]
 
   return (
@@ -427,7 +428,7 @@ export function CreateJobForm({
           {/* Background gradient */}
           <div className="absolute inset-0 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900" />
           <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiNmZmYiIGZpbGwtb3BhY2l0eT0iMC4wMyI+PHBhdGggZD0iTTM2IDM0djItSDI0di0yaDEyek0zNiAyNHYySDI0di0yaDEyeiIvPjwvZz48L2c+PC9zdmc+')] opacity-50" />
-          
+
           <div className="relative px-4 sm:px-6 py-5">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
@@ -456,13 +457,12 @@ export function CreateJobForm({
                     key={step.number}
                     type="button"
                     onClick={() => setCurrentStep(step.number)}
-                    className={`w-2.5 h-2.5 rounded-full transition-all duration-300 ${
-                      step.number === currentStep 
-                        ? 'w-8 bg-white' 
-                        : step.number < currentStep 
-                          ? 'bg-emerald-400' 
-                          : 'bg-white/30'
-                    }`}
+                    className={`w-2.5 h-2.5 rounded-full transition-all duration-300 ${step.number === currentStep
+                      ? 'w-8 bg-white'
+                      : step.number < currentStep
+                        ? 'bg-emerald-400'
+                        : 'bg-white/30'
+                      }`}
                   />
                 ))}
               </div>
@@ -478,17 +478,15 @@ export function CreateJobForm({
                     <button
                       type="button"
                       onClick={() => setCurrentStep(step.number)}
-                      className={`flex items-center gap-3 transition-all duration-300 group ${
-                        step.number === currentStep ? 'scale-105' : ''
-                      }`}
+                      className={`flex items-center gap-3 transition-all duration-300 group ${step.number === currentStep ? 'scale-105' : ''
+                        }`}
                     >
-                      <div className={`relative flex items-center justify-center w-10 h-10 rounded-xl transition-all duration-300 ${
-                        step.number < currentStep
-                          ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/30'
-                          : step.number === currentStep
-                            ? 'bg-white text-slate-900 shadow-lg shadow-white/20'
-                            : 'bg-white/10 text-white/50 border border-white/10'
-                      } font-semibold text-sm flex-shrink-0`}>
+                      <div className={`relative flex items-center justify-center w-10 h-10 rounded-xl transition-all duration-300 ${step.number < currentStep
+                        ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/30'
+                        : step.number === currentStep
+                          ? 'bg-white text-slate-900 shadow-lg shadow-white/20'
+                          : 'bg-white/10 text-white/50 border border-white/10'
+                        } font-semibold text-sm flex-shrink-0`}>
                         {step.number < currentStep ? (
                           <CheckIcon className="h-5 w-5" />
                         ) : (
@@ -500,21 +498,18 @@ export function CreateJobForm({
                         )}
                       </div>
                       <div className="hidden lg:block text-left">
-                        <div className={`text-sm font-semibold transition-colors ${
-                          step.number <= currentStep ? 'text-white' : 'text-white/50'
-                        }`}>{step.title}</div>
-                        <div className={`text-xs transition-colors ${
-                          step.number <= currentStep ? 'text-slate-400' : 'text-white/30'
-                        }`}>{step.description}</div>
+                        <div className={`text-sm font-semibold transition-colors ${step.number <= currentStep ? 'text-white' : 'text-white/50'
+                          }`}>{step.title}</div>
+                        <div className={`text-xs transition-colors ${step.number <= currentStep ? 'text-slate-400' : 'text-white/30'
+                          }`}>{step.description}</div>
                       </div>
                     </button>
                     {idx < stepConfig.length - 1 && (
                       <div className="flex-1 mx-4 min-w-[30px]">
                         <div className="h-0.5 bg-white/10 rounded-full overflow-hidden">
-                          <div 
-                            className={`h-full bg-emerald-400 rounded-full transition-all duration-500 ${
-                              step.number < currentStep ? 'w-full' : 'w-0'
-                            }`}
+                          <div
+                            className={`h-full bg-emerald-400 rounded-full transition-all duration-500 ${step.number < currentStep ? 'w-full' : 'w-0'
+                              }`}
                           />
                         </div>
                       </div>
@@ -537,9 +532,21 @@ export function CreateJobForm({
                 products={products}
                 groups={groups}
                 generateUniqueJobCode={generateUniqueJobCode}
+                mode="customer"
               />
             )}
             {currentStep === 2 && (
+              <JobBasicInfoStep
+                formData={formData}
+                setFormData={setFormData}
+                customers={customers}
+                products={products}
+                groups={groups}
+                generateUniqueJobCode={generateUniqueJobCode}
+                mode="product"
+              />
+            )}
+            {currentStep === 3 && (
               <JobSpecsStep
                 formData={formData}
                 setFormData={setFormData}
@@ -547,14 +554,14 @@ export function CreateJobForm({
                 groups={groups}
               />
             )}
-            {currentStep === 3 && (
+            {currentStep === 4 && (
               <JobMaterialsStep
                 formData={formData}
                 setFormData={setFormData}
                 products={products}
               />
             )}
-            {currentStep === 4 && (
+            {currentStep === 5 && (
               <JobWorkflowStep
                 formData={formData}
                 setFormData={setFormData}
@@ -563,14 +570,14 @@ export function CreateJobForm({
                 resources={resources}
               />
             )}
-            {currentStep === 5 && (
+            {currentStep === 6 && (
               <JobPackagingStep
                 formData={formData}
                 setFormData={setFormData}
                 planned={planned}
               />
             )}
-            {currentStep === 6 && (
+            {currentStep === 7 && (
               <JobFinalizeStep
                 formData={formData}
                 setFormData={setFormData}
@@ -586,11 +593,10 @@ export function CreateJobForm({
                 type="button"
                 onClick={prevStep}
                 disabled={currentStep === 1}
-                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-medium text-sm transition-all ${
-                  currentStep === 1
-                    ? 'text-gray-300 cursor-not-allowed'
-                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-                }`}
+                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-medium text-sm transition-all ${currentStep === 1
+                  ? 'text-gray-300 cursor-not-allowed'
+                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                  }`}
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -602,7 +608,7 @@ export function CreateJobForm({
               <div className="hidden sm:flex items-center gap-2">
                 <span className="text-sm text-gray-500">Step {currentStep} of {totalSteps}</span>
                 <div className="w-32 h-2 bg-gray-100 rounded-full overflow-hidden">
-                  <div 
+                  <div
                     className="h-full bg-gradient-to-r from-blue-500 to-emerald-500 rounded-full transition-all duration-500"
                     style={{ width: `${(currentStep / totalSteps) * 100}%` }}
                   />

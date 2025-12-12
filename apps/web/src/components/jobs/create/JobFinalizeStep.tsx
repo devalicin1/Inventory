@@ -56,10 +56,10 @@ export const JobFinalizeStep: React.FC<JobFinalizeStepProps> = ({
     };
 
     return (
-        <div className="space-y-8">
+        <div className="space-y-4">
             {/* Attachments Section */}
             <Card className="overflow-hidden">
-                <div className="flex items-center justify-between p-5 bg-gradient-to-r from-violet-50 to-purple-50 border-b border-violet-100">
+                <div className="flex items-center justify-between p-4 bg-gradient-to-r from-violet-50 to-purple-50 border-b border-violet-100">
                     <h3 className="text-lg font-bold text-gray-900 flex items-center gap-3">
                         <div className="p-2 bg-violet-500 rounded-xl shadow-lg shadow-violet-200">
                             <PhotoIcon className="h-5 w-5 text-white" />
@@ -82,7 +82,7 @@ export const JobFinalizeStep: React.FC<JobFinalizeStepProps> = ({
                     </Button>
                 </div>
 
-                <div className="p-5">
+                <div className="p-4">
                     {formData.attachments.length === 0 ? (
                         <div className="text-center py-12 bg-gray-50 rounded-xl border-2 border-dashed border-gray-200">
                             <DocumentIcon className="h-12 w-12 mx-auto text-gray-300 mb-3" />

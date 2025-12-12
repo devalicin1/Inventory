@@ -4,7 +4,7 @@ import {
   type Ticket,
   type Consumption,
   type ProductionRun,
-  type HistoryEntry,
+  type HistoryEvent,
   type TimeLog,
   getJob,
   listJobTickets,
@@ -39,7 +39,8 @@ import {
   ArchiveBoxIcon,
   ExclamationTriangleIcon,
   CheckCircleIcon,
-  QrCodeIcon
+  QrCodeIcon,
+  PresentationChartLineIcon
 } from '@heroicons/react/24/outline'
 import { JobDetailHeader, JobDetailTabs } from './job-detail'
 import {
@@ -51,7 +52,8 @@ import {
   PackagingTab,
   HistoryTab,
   FilesTab,
-  QRCodeTab
+  QRCodeTab,
+  ProductionFlowTab
 } from './job-detail/tabs'
 
 interface JobDetailProps {
@@ -63,7 +65,7 @@ interface JobDetailProps {
   resources?: Array<{ id: string; name: string }>
 }
 
-type TabType = 'overview' | 'tickets' | 'materials' | 'consumptions' | 'output' | 'packaging' | 'qrcode' | 'history' | 'files'
+type TabType = 'overview' | 'tickets' | 'materials' | 'consumptions' | 'output' | 'packaging' | 'qrcode' | 'history' | 'files' | 'productionFlow'
 
 export function JobDetail({ job: initialJob, workspaceId, onClose, onDelete, workcenters = [], resources = [] }: JobDetailProps) {
   const [activeTab, setActiveTab] = useState<TabType>('overview')
@@ -110,7 +112,7 @@ export function JobDetail({ job: initialJob, workspaceId, onClose, onDelete, wor
   // Real-time states for sub-collections
   const [tickets, setTickets] = useState<Ticket[]>([])
   const [consumptions, setConsumptions] = useState<Consumption[]>([])
-  const [history, setHistory] = useState<HistoryEntry[]>([])
+  const [history, setHistory] = useState<HistoryEvent[]>([])
   const [allRuns, setAllRuns] = useState<ProductionRun[]>([])
   const [timeLogs, setTimeLogs] = useState<TimeLog[]>([])
 
@@ -232,6 +234,7 @@ export function JobDetail({ job: initialJob, workspaceId, onClose, onDelete, wor
     { id: 'consumptions', name: 'Consumptions', icon: ChartBarIcon, count: consumptions.length },
     { id: 'output', name: 'Output', icon: TruckIcon, count: job.output?.length || 0 },
     { id: 'packaging', name: 'Packaging', icon: CubeIcon, count: job.packaging ? 1 : 0 },
+    { id: 'productionFlow', name: 'Production Flow', icon: PresentationChartLineIcon, count: null },
     { id: 'qrcode', name: 'QR Code', icon: QrCodeIcon, count: job.qrUrl ? 1 : 0 },
     { id: 'history', name: 'History', icon: CalendarIcon, count: history.length },
     { id: 'files', name: 'Files', icon: DocumentTextIcon, count: 0 },
@@ -340,6 +343,18 @@ export function JobDetail({ job: initialJob, workspaceId, onClose, onDelete, wor
       )
     }
 
+    if (activeTab === 'productionFlow') {
+      return (
+        <ProductionFlowTab
+          job={effectiveJob}
+          allRuns={allRuns}
+          workflows={workflows}
+          workcenters={workcenters}
+          workspaceId={workspaceId}
+        />
+      )
+    }
+
     if (activeTab === 'history') {
       return (
         <HistoryTab
@@ -367,8 +382,8 @@ export function JobDetail({ job: initialJob, workspaceId, onClose, onDelete, wor
 
   return (
     <>
-      <div className="fixed inset-0 z-50 backdrop-blur-sm flex items-center justify-center p-0 sm:p-4">
-        <div className="bg-white sm:rounded-xl w-full h-full sm:h-[90vh] max-w-7xl flex flex-col shadow-2xl border border-gray-200">
+      <div className="fixed inset-0 z-50 backdrop-blur-sm flex items-center justify-center p-0">
+        <div className="bg-white rounded-none w-full h-full flex flex-col shadow-2xl border-0">
         <JobDetailHeader
           job={job}
           effectiveJob={effectiveJob}

@@ -79,7 +79,7 @@ export function Inventory() {
   const qc = useQueryClient()
   const { workspaceId, userId } = useSessionStore()
 
-  const { data: products = [], isLoading: productsLoading } = useQuery({
+  const { data: products = [], isLoading: productsLoading, refetch: refetchProducts } = useQuery({
     queryKey: ['products', workspaceId],
     queryFn: () => listProducts(workspaceId!),
     enabled: !!workspaceId,
@@ -104,6 +104,25 @@ export function Inventory() {
     return () => {
       unsubscribe()
     }
+  }, [workspaceId, qc])
+
+  // Force a fresh calculation of products when Inventory screen is opened
+  useEffect(() => {
+    if (!workspaceId) return
+    refetchProducts()
+  }, [workspaceId, refetchProducts])
+
+  // Listen for global stock update events to refresh product quantities
+  useEffect(() => {
+    if (!workspaceId) return
+
+    const handleStockUpdate = () => {
+      // Invalidate products so React Query refetches latest qtyOnHand from history
+      qc.invalidateQueries({ queryKey: ['products', workspaceId] })
+    }
+
+    window.addEventListener('stockTransactionCreated', handleStockUpdate as EventListener)
+    return () => window.removeEventListener('stockTransactionCreated', handleStockUpdate as EventListener)
   }, [workspaceId, qc])
 
   const { data: groups = [], isLoading: groupsLoading } = useQuery<Group[]>({

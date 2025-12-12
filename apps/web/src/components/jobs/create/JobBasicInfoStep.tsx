@@ -4,7 +4,6 @@ import type { JobFormData } from './types';
 import { Card } from '../../ui/Card';
 import { Input } from '../../ui/Input';
 import type { Group } from '../../../api/products';
-import { useJobCalculations } from './useJobCalculations';
 
 interface JobBasicInfoStepProps {
     formData: JobFormData;
@@ -13,6 +12,7 @@ interface JobBasicInfoStepProps {
     products: any[];
     groups?: Group[];
     generateUniqueJobCode: (customerName?: string) => string;
+    mode?: 'customer' | 'product' | 'both';
 }
 
 export const JobBasicInfoStep: React.FC<JobBasicInfoStepProps> = ({
@@ -22,6 +22,7 @@ export const JobBasicInfoStep: React.FC<JobBasicInfoStepProps> = ({
     products,
     groups = [],
     generateUniqueJobCode,
+    mode = 'both',
 }) => {
     const selectedCustomer = formData.customer.id ? customers.find(c => c.id === formData.customer.id) : null;
     
@@ -129,9 +130,6 @@ export const JobBasicInfoStep: React.FC<JobBasicInfoStepProps> = ({
     
     const selectedProduct = products.find(p => p.sku === formData.sku && p.name === formData.productName);
     
-    // Get calculations for quantity conversions
-    const { planned } = useJobCalculations(formData);
-    
     // Calculate quantity conversions for display
     const quantityConversions = useMemo(() => {
         const qty = formData.quantity || 0;
@@ -211,410 +209,488 @@ export const JobBasicInfoStep: React.FC<JobBasicInfoStepProps> = ({
         });
     };
 
+    const [activePanel, setActivePanel] = useState<'customer' | 'product'>('customer');
+    const effectivePanel: 'customer' | 'product' = mode === 'both' ? activePanel : (mode === 'product' ? 'product' : 'customer');
+
     return (
-        <div className="space-y-8">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                {/* Customer Info */}
-                <div className="space-y-6">
-                    <Card className="overflow-hidden">
-                        <div className="p-5 bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-blue-100">
-                            <h3 className="text-lg font-bold text-gray-900 flex items-center gap-3">
-                                <div className="p-2 bg-blue-500 rounded-xl shadow-lg shadow-blue-200">
-                                    <UserIcon className="h-5 w-5 text-white" />
+        <div className="space-y-3">
+            {/* Small toggle between customer and product sections (only when both panels are used in same step) */}
+            {mode === 'both' && (
+                <div className="flex justify-center mb-1">
+                    <div className="inline-flex rounded-full bg-gray-100 p-1 text-xs">
+                        <button
+                            type="button"
+                            onClick={() => setActivePanel('customer')}
+                            className={`px-3 py-1.5 rounded-full font-medium transition-all ${
+                                effectivePanel === 'customer'
+                                    ? 'bg-white text-gray-900 shadow-sm'
+                                    : 'text-gray-500 hover:text-gray-800'
+                            }`}
+                        >
+                            Customer
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setActivePanel('product')}
+                            className={`px-3 py-1.5 rounded-full font-medium transition-all ${
+                                effectivePanel === 'product'
+                                    ? 'bg-white text-gray-900 shadow-sm'
+                                    : 'text-gray-500 hover:text-gray-800'
+                            }`}
+                        >
+                            Product
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* Customer Info - split screen: left = required, right = summary/optional */}
+            {effectivePanel === 'customer' && (
+                <div className="space-y-3">
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                        {/* Left: core required fields */}
+                        <Card className="overflow-hidden">
+                            <div className="px-3 py-2.5 bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-blue-100">
+                                <h3 className="text-base font-semibold text-gray-900 flex items-center gap-2.5">
+                                    <div className="p-1.5 bg-blue-500 rounded-lg shadow-md shadow-blue-200">
+                                        <UserIcon className="h-5 w-5 text-white" />
+                                    </div>
+                                    Customer – Required
+                                </h3>
+                            </div>
+                            <div className="p-3 space-y-3">
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-2">Customer *</label>
+                                    <div className="relative">
+                                        <select
+                                            value={formData.customer.id || ''}
+                                            onChange={(e) => handleCustomerSelect(e.target.value)}
+                                            className="block w-full rounded-xl border-2 border-gray-200 py-3 px-4 text-base focus:border-blue-500 focus:ring-2 focus:ring-blue-100 bg-white appearance-none pr-10 transition-all"
+                                        >
+                                            <option value="">Select a customer...</option>
+                                            {customers.filter(c => c.active).map((customer) => (
+                                                <option key={customer.id} value={customer.id}>
+                                                    {customer.name} {customer.companyName && `- ${customer.companyName}`}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        <ChevronDownIcon className="absolute right-4 top-4 h-5 w-5 text-gray-400 pointer-events-none" />
+                                    </div>
                                 </div>
-                                Customer Information
-                            </h3>
-                        </div>
-                        <div className="p-6 space-y-5">
-                            <div>
-                                <label className="block text-sm font-semibold text-gray-700 mb-2">Customer *</label>
-                                <div className="relative">
-                                    <select
-                                        value={formData.customer.id || ''}
-                                        onChange={(e) => handleCustomerSelect(e.target.value)}
-                                        className="block w-full rounded-xl border-2 border-gray-200 py-3 px-4 text-base focus:border-blue-500 focus:ring-2 focus:ring-blue-100 bg-white appearance-none pr-10 transition-all"
-                                    >
-                                        <option value="">Select a customer...</option>
-                                        {customers.filter(c => c.active).map((customer) => (
-                                            <option key={customer.id} value={customer.id}>
-                                                {customer.name} {customer.companyName && `- ${customer.companyName}`}
-                                            </option>
-                                        ))}
-                                    </select>
-                                    <ChevronDownIcon className="absolute right-4 top-4 h-5 w-5 text-gray-400 pointer-events-none" />
+
+                                {!formData.customer.id && (
+                                    <Input
+                                        label="Or Enter Customer Name Manually *"
+                                        placeholder="Enter customer name"
+                                        value={formData.customer.name}
+                                        onChange={(e) => {
+                                            const name = e.target.value;
+                                            const newJobCode = generateUniqueJobCode(name);
+                                            setFormData(prev => ({
+                                                ...prev,
+                                                customer: { ...prev.customer, name },
+                                                jobCode: newJobCode,
+                                                internalRef: newJobCode
+                                            }));
+                                        }}
+                                    />
+                                )}
+
+                                <div>
+                                    <label className="block text-sm font-semibold text-gray-700 mb-3">Job Type</label>
+                                    <div className="flex gap-3">
+                                        <label className={`flex-1 flex items-center justify-center gap-3 p-3 rounded-xl cursor-pointer text-sm transition-all ${!formData.isRepeat ? 'bg-blue-100 border-2 border-blue-400' : 'bg-gray-50 border-2 border-gray-200 hover:border-gray-300'}`}>
+                                            <input
+                                                type="radio"
+                                                checked={!formData.isRepeat}
+                                                onChange={() => setFormData(prev => ({ ...prev, isRepeat: false }))}
+                                                className="w-4 h-4 text-blue-600 focus:ring-blue-500"
+                                            />
+                                            <span className={`font-medium ${!formData.isRepeat ? 'text-blue-700' : 'text-gray-600'}`}>New Job</span>
+                                        </label>
+                                        <label className={`flex-1 flex items-center justify-center gap-3 p-3 rounded-xl cursor-pointer text-sm transition-all ${formData.isRepeat ? 'bg-blue-100 border-2 border-blue-400' : 'bg-gray-50 border-2 border-gray-200 hover:border-gray-300'}`}>
+                                            <input
+                                                type="radio"
+                                                checked={formData.isRepeat}
+                                                onChange={() => setFormData(prev => ({ ...prev, isRepeat: true }))}
+                                                className="w-4 h-4 text-blue-600 focus:ring-blue-500"
+                                            />
+                                            <span className={`font-medium ${formData.isRepeat ? 'text-blue-700' : 'text-gray-600'}`}>Repeat Job</span>
+                                        </label>
+                                    </div>
                                 </div>
+
+                                <div className="grid grid-cols-2 gap-3">
+                                    <Input
+                                        type="date"
+                                        label="Date *"
+                                        value={typeof formData.customer.date === 'string' ? formData.customer.date : ''}
+                                        onChange={(e) => setFormData(prev => ({ ...prev, customer: { ...prev.customer, date: e.target.value } }))}
+                                    />
+                                    <Input
+                                        label="Delivery Method"
+                                        placeholder="e.g., Our Van"
+                                        value={formData.deliveryMethod}
+                                        onChange={(e) => setFormData(prev => ({ ...prev, deliveryMethod: e.target.value }))}
+                                    />
+                                </div>
+                            </div>
+                        </Card>
+
+                        {/* Right: optional / summary fields */}
+                        <Card className="overflow-hidden">
+                            <div className="px-3 py-2.5 bg-gradient-to-r from-slate-50 to-gray-50 border-b border-slate-100">
+                                <h3 className="text-base font-semibold text-gray-900 flex items-center gap-2.5">
+                                    <div className="p-1.5 bg-slate-500 rounded-lg shadow-md shadow-slate-200">
+                                        <UserIcon className="h-5 w-5 text-white" />
+                                    </div>
+                                    Order & References
+                                </h3>
+                            </div>
+                            <div className="p-3 space-y-3">
                                 {selectedCustomer && (
-                                    <div className="mt-3 p-4 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border-2 border-blue-200 text-sm space-y-2">
-                                        <div className="font-bold text-gray-900">{selectedCustomer.name}</div>
+                                    <div className="p-3 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-lg border border-blue-200 text-xs space-y-1.5">
+                                        <div className="font-semibold text-gray-900">{selectedCustomer.name}</div>
                                         {selectedCustomer.companyName && <div className="text-gray-600">Company: {selectedCustomer.companyName}</div>}
                                         {selectedCustomer.email && <div className="text-gray-600">Email: {selectedCustomer.email}</div>}
                                     </div>
                                 )}
+
+                                <div className="grid grid-cols-2 gap-3">
+                                    <Input
+                                        label="Internal Reference"
+                                        value={formData.internalRef}
+                                        readOnly
+                                        className="bg-gray-50 cursor-not-allowed"
+                                    />
+                                    <Input
+                                        label="Customer PO"
+                                        placeholder="PO number"
+                                        value={formData.customerPo}
+                                        onChange={(e) => setFormData(prev => ({ ...prev, customerPo: e.target.value }))}
+                                    />
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-3">
+                                    <Input
+                                        label="Estimate Number"
+                                        placeholder="Estimate #"
+                                        value={formData.customer.estNo}
+                                        onChange={(e) => setFormData(prev => ({ ...prev, customer: { ...prev.customer, estNo: e.target.value } }))}
+                                    />
+                                    <Input
+                                        label="Cutter No"
+                                        placeholder="Cutter number"
+                                        value={formData.cutterNo}
+                                        onChange={(e) => setFormData(prev => ({ ...prev, cutterNo: e.target.value }))}
+                                    />
+                                </div>
                             </div>
+                        </Card>
+                    </div>
+                </div>
+            )}
 
-                            {!formData.customer.id && (
+            {/* Product Details */}
+            {effectivePanel === 'product' && (
+                <div className="space-y-3">
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                        {/* Left: required product fields */}
+                        <Card className="overflow-hidden">
+                            <div className="px-3 py-2.5 bg-gradient-to-r from-emerald-50 to-green-50 border-b border-emerald-100">
+                                <h3 className="text-base font-semibold text-gray-900 flex items-center gap-2.5">
+                                    <div className="p-1.5 bg-emerald-500 rounded-lg shadow-md shadow-emerald-200">
+                                        <CubeIcon className="h-5 w-5 text-white" />
+                                    </div>
+                                    Product – Required
+                                </h3>
+                            </div>
+                            <div className="p-3 space-y-3">
                                 <Input
-                                    label="Or Enter Customer Name Manually *"
-                                    placeholder="Enter customer name"
-                                    value={formData.customer.name}
-                                    onChange={(e) => {
-                                        const name = e.target.value;
-                                        const newJobCode = generateUniqueJobCode(name);
-                                        setFormData(prev => ({
-                                            ...prev,
-                                            customer: { ...prev.customer, name },
-                                            jobCode: newJobCode,
-                                            internalRef: newJobCode
-                                        }));
-                                    }}
-                                />
-                            )}
-
-                            <div className="grid grid-cols-2 gap-4">
-                                <Input
-                                    label="Internal Reference"
-                                    value={formData.internalRef}
+                                    label="Job Code"
+                                    value={formData.jobCode}
                                     readOnly
                                     className="bg-gray-50 cursor-not-allowed"
                                 />
+
                                 <Input
-                                    label="Customer PO"
-                                    placeholder="PO number"
-                                    value={formData.customerPo}
-                                    onChange={(e) => setFormData(prev => ({ ...prev, customerPo: e.target.value }))}
+                                    label="Product Name *"
+                                    placeholder="Enter full product name"
+                                    value={formData.productName}
+                                    onChange={(e) => setFormData(prev => ({ ...prev, productName: e.target.value }))}
                                 />
-                            </div>
 
-                            <div className="grid grid-cols-2 gap-4">
-                                <Input
-                                    label="Estimate Number"
-                                    placeholder="Estimate #"
-                                    value={formData.customer.estNo}
-                                    onChange={(e) => setFormData(prev => ({ ...prev, customer: { ...prev.customer, estNo: e.target.value } }))}
-                                />
-                                <Input
-                                    label="Cutter No"
-                                    placeholder="Cutter number"
-                                    value={formData.cutterNo}
-                                    onChange={(e) => setFormData(prev => ({ ...prev, cutterNo: e.target.value }))}
-                                />
-                            </div>
-
-                            <div>
-                                <label className="block text-sm font-semibold text-gray-700 mb-3">Job Type</label>
-                                <div className="flex gap-4">
-                                    <label className={`flex-1 flex items-center justify-center gap-3 p-4 rounded-xl cursor-pointer transition-all ${!formData.isRepeat ? 'bg-blue-100 border-2 border-blue-400' : 'bg-gray-50 border-2 border-gray-200 hover:border-gray-300'}`}>
-                                        <input
-                                            type="radio"
-                                            checked={!formData.isRepeat}
-                                            onChange={() => setFormData(prev => ({ ...prev, isRepeat: false }))}
-                                            className="w-5 h-5 text-blue-600 focus:ring-blue-500"
-                                        />
-                                        <span className={`font-medium ${!formData.isRepeat ? 'text-blue-700' : 'text-gray-600'}`}>New Job</span>
-                                    </label>
-                                    <label className={`flex-1 flex items-center justify-center gap-3 p-4 rounded-xl cursor-pointer transition-all ${formData.isRepeat ? 'bg-blue-100 border-2 border-blue-400' : 'bg-gray-50 border-2 border-gray-200 hover:border-gray-300'}`}>
-                                        <input
-                                            type="radio"
-                                            checked={formData.isRepeat}
-                                            onChange={() => setFormData(prev => ({ ...prev, isRepeat: true }))}
-                                            className="w-5 h-5 text-blue-600 focus:ring-blue-500"
-                                        />
-                                        <span className={`font-medium ${formData.isRepeat ? 'text-blue-700' : 'text-gray-600'}`}>Repeat Job</span>
-                                    </label>
-                                </div>
-                            </div>
-
-                            <Input
-                                type="date"
-                                label="Date *"
-                                value={typeof formData.customer.date === 'string' ? formData.customer.date : ''}
-                                onChange={(e) => setFormData(prev => ({ ...prev, customer: { ...prev.customer, date: e.target.value } }))}
-                            />
-                        </div>
-                    </Card>
-                </div>
-
-                {/* Product Details */}
-                <div className="space-y-6">
-                    <Card className="overflow-hidden">
-                        <div className="p-5 bg-gradient-to-r from-emerald-50 to-green-50 border-b border-emerald-100">
-                            <h3 className="text-lg font-bold text-gray-900 flex items-center gap-3">
-                                <div className="p-2 bg-emerald-500 rounded-xl shadow-lg shadow-emerald-200">
-                                    <CubeIcon className="h-5 w-5 text-white" />
-                                </div>
-                                Product Details
-                            </h3>
-                        </div>
-                        <div className="p-6 space-y-5">
-                            <Input
-                                label="Job Code"
-                                value={formData.jobCode}
-                                readOnly
-                                className="bg-gray-50 cursor-not-allowed"
-                            />
-
-                            <div>
-                                <label className="block text-sm font-semibold text-gray-700 mb-2">Select Product from Inventory</label>
-                                <div className="relative">
-                                    {/* Search and Filter Bar */}
-                                    <div className="mb-3 space-y-3">
-                                        <div className="relative">
-                                            <MagnifyingGlassIcon className="absolute left-4 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
-                                            <input
-                                                type="text"
-                                                placeholder="Search by SKU or name..."
-                                                value={productSearchTerm}
-                                                onChange={(e) => {
-                                                    setProductSearchTerm(e.target.value);
-                                                    setShowProductDropdown(true);
-                                                }}
-                                                onFocus={() => setShowProductDropdown(true)}
-                                                className="block w-full pl-12 pr-4 py-3 rounded-xl border-2 border-gray-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 bg-white text-base transition-all"
-                                            />
-                                        </div>
-                                        {groups.length > 0 && (
-                                            <div className="flex items-center gap-3">
-                                                <FolderIcon className="h-5 w-5 text-gray-400" />
-                                                <select
-                                                    value={selectedGroupId}
-                                                    onChange={(e) => {
-                                                        setSelectedGroupId(e.target.value);
-                                                        setShowProductDropdown(true);
-                                                    }}
-                                                    className="flex-1 rounded-xl border-2 border-gray-200 py-3 px-4 text-base focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 bg-white transition-all"
-                                                >
-                                                    <option value="">All Groups</option>
-                                                    {groups.map(g => (
-                                                        <option key={g.id} value={g.id}>
-                                                            {getGroupPath(g.id)}
-                                                        </option>
-                                                    ))}
-                                                </select>
-                                            </div>
-                                        )}
-                                    </div>
-                                    
-                                    {/* Product Selection Dropdown */}
-                                    <div className="relative" ref={dropdownRef}>
-                                        <button
-                                            type="button"
-                                            onClick={() => setShowProductDropdown(!showProductDropdown)}
-                                            className="block w-full rounded-xl border-2 border-gray-200 py-3 px-4 text-base focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 bg-white text-left flex items-center justify-between transition-all"
+                                <div className="grid grid-cols-2 gap-3">
+                                    <Input
+                                        type="number"
+                                        label="Quantity *"
+                                        min="1"
+                                        value={formData.quantity}
+                                        onChange={(e) => setFormData(prev => ({ ...prev, quantity: Number(e.target.value) }))}
+                                    />
+                                    <div>
+                                        <label className="block text-sm font-semibold text-gray-700 mb-2">Unit</label>
+                                        <select
+                                            value={formData.unit}
+                                            onChange={(e) => setFormData(prev => ({ ...prev, unit: e.target.value }))}
+                                            className="block w-full rounded-xl border-2 border-gray-200 py-3 px-4 text-base focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 bg-white transition-all"
                                         >
-                                            <span className={selectedProduct ? 'text-gray-900' : 'text-gray-500'}>
-                                                {selectedProduct 
-                                                    ? `${selectedProduct.sku} — ${decodeProductName(selectedProduct.name)}${selectedProduct.groupId ? ` (${getGroupPath(selectedProduct.groupId)})` : ''}`
-                                                    : '— Select existing product —'}
-                                            </span>
-                                            <ChevronDownIcon className={`h-5 w-5 text-gray-400 transition-transform ${showProductDropdown ? 'transform rotate-180' : ''}`} />
-                                        </button>
-                                        
-                                        {showProductDropdown && (
-                                            <div className="absolute z-50 w-full mt-2 bg-white border-2 border-gray-200 rounded-xl shadow-xl max-h-96 overflow-auto">
-                                                {filteredProducts.length === 0 ? (
-                                                    <div className="px-4 py-6 text-base text-gray-500 text-center">
-                                                        No products found
-                                                    </div>
-                                                ) : (
-                                                    <div className="py-2">
-                                                        {Array.from(groupedProducts.entries()).map(([groupId, groupProducts]) => (
-                                                            <div key={groupId}>
-                                                                {groupId !== '__ungrouped__' && groups.length > 0 && (
-                                                                    <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 text-xs font-bold text-gray-700 flex items-center gap-2 uppercase tracking-wider">
-                                                                        <FolderIcon className="h-4 w-4" />
-                                                                        {getGroupPath(groupId)}
-                                                                    </div>
-                                                                )}
-                                                                {groupProducts.map(p => (
-                                                                    <button
-                                                                        key={p.id}
-                                                                        type="button"
-                                                                        onClick={() => {
-                                                                            setFormData(prev => ({
-                                                                                ...prev,
-                                                                                sku: p.sku,
-                                                                                productName: p.name,
-                                                                                unit: p.uom || prev.unit
-                                                                            }));
-                                                                            setShowProductDropdown(false);
-                                                                            setProductSearchTerm('');
-                                                                            setSelectedGroupId('');
-                                                                        }}
-                                                                        className={`w-full px-4 py-3 text-left hover:bg-emerald-50 transition-colors ${
-                                                                            selectedProduct?.id === p.id ? 'bg-emerald-100' : ''
-                                                                        }`}
-                                                                    >
-                                                                        <div className="flex items-center gap-3">
-                                                                            <CubeIcon className="h-5 w-5 text-gray-400 flex-shrink-0" />
-                                                                            <div className="flex-1 min-w-0">
-                                                                                <div className="font-medium text-gray-900 truncate">{decodeProductName(p.name)}</div>
-                                                                                <div className="text-sm text-gray-500">SKU: {p.sku}</div>
-                                                                                {(p as any).qtyOnHand !== undefined && (
-                                                                                    <div className="text-sm text-gray-400 mt-0.5">
-                                                                                        Stock: {(p as any).qtyOnHand || 0} {p.uom || 'units'}
-                                                                                    </div>
-                                                                                )}
-                                                                            </div>
-                                                                        </div>
-                                                                    </button>
-                                                                ))}
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        )}
+                                            <option value="pcs">Pieces</option>
+                                            <option value="box">Box</option>
+                                            <option value="kg">Kilograms</option>
+                                            <option value="m">Meters</option>
+                                            <option value="L">Liters</option>
+                                            <option value="units">Units</option>
+                                            <option value="pallets">Pallets</option>
+                                        </select>
                                     </div>
                                 </div>
-                                
-                                {/* Selected Product Info */}
-                                {selectedProduct && (
-                                    <div className="mt-3 p-4 bg-gradient-to-br from-emerald-50 to-green-50 rounded-xl border-2 border-emerald-200">
-                                        <div className="font-bold text-gray-900">{decodeProductName(selectedProduct.name)}</div>
-                                        <div className="text-gray-600 mt-1">
-                                            SKU: {selectedProduct.sku} • UOM: {selectedProduct.uom || 'N/A'}
-                                            {selectedProduct.groupId && ` • Group: ${getGroupPath(selectedProduct.groupId)}`}
+
+                                {/* Packaging core info for required units */}
+                                {(formData.unit === 'pcs' || formData.unit === 'box' || formData.unit === 'units' || formData.unit === 'pallets') && (
+                                    <div className="space-y-3">
+                                        <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
+                                            <div className="flex items-center gap-2 mb-2">
+                                                <CubeIcon className="h-4 w-4 text-blue-600" />
+                                                <h4 className="text-sm font-semibold text-gray-900">Packaging Information</h4>
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-3">
+                                                <div>
+                                                    <label className="block text-xs font-medium text-gray-700 mb-1.5">
+                                                        Pieces per Box (PCS/Box) *
+                                                    </label>
+                                                    <input
+                                                        type="number"
+                                                        min="1"
+                                                        value={formData.packaging?.pcsPerBox || ''}
+                                                        onChange={(e) => setFormData(prev => ({
+                                                            ...prev,
+                                                            packaging: {
+                                                                ...prev.packaging,
+                                                                pcsPerBox: e.target.value ? Number(e.target.value) : undefined
+                                                            }
+                                                        }))}
+                                                        placeholder="e.g., 100"
+                                                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 py-2 px-2.5 border bg-white text-xs"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="block text-xs font-medium text-gray-700 mb-1.5">
+                                                        Boxes per Pallet *
+                                                    </label>
+                                                    <input
+                                                        type="number"
+                                                        min="1"
+                                                        value={formData.packaging?.boxesPerPallet || ''}
+                                                        onChange={(e) => setFormData(prev => ({
+                                                            ...prev,
+                                                            packaging: {
+                                                                ...prev.packaging,
+                                                                boxesPerPallet: e.target.value ? Number(e.target.value) : undefined
+                                                            }
+                                                        }))}
+                                                        placeholder="e.g., 50"
+                                                        className="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 py-2 px-2.5 border bg-white text-xs"
+                                                    />
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
                                 )}
                             </div>
+                        </Card>
 
-                            <div className="grid grid-cols-2 gap-4">
-                                <Input
-                                    label="SKU"
-                                    placeholder="Product SKU"
-                                    value={formData.sku}
-                                    onChange={(e) => setFormData(prev => ({ ...prev, sku: e.target.value }))}
-                                />
-                                <div>
-                                    <label className="block text-sm font-semibold text-gray-700 mb-2">Priority</label>
-                                    <select
-                                        value={formData.priority}
-                                        onChange={(e) => setFormData(prev => ({ ...prev, priority: Number(e.target.value) }))}
-                                        className="block w-full rounded-xl border-2 border-gray-200 py-3 px-4 text-base focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 bg-white transition-all"
-                                    >
-                                        <option value={1}>Critical</option>
-                                        <option value={2}>High</option>
-                                        <option value={3}>Medium</option>
-                                        <option value={4}>Low</option>
-                                        <option value={5}>Very Low</option>
-                                    </select>
-                                </div>
+                        {/* Right: inventory selection, SKU, priority and calculated quantities */}
+                        <Card className="overflow-hidden">
+                            <div className="px-3 py-2.5 bg-gradient-to-r from-emerald-50 to-green-50 border-b border-emerald-100">
+                                <h3 className="text-base font-semibold text-gray-900 flex items-center gap-2.5">
+                                    <div className="p-1.5 bg-emerald-600 rounded-lg shadow-md shadow-emerald-200">
+                                        <CubeIcon className="h-5 w-5 text-white" />
+                                    </div>
+                                    Inventory & Summary
+                                </h3>
                             </div>
-
-                            <Input
-                                label="Product Name *"
-                                placeholder="Enter full product name"
-                                value={formData.productName}
-                                onChange={(e) => setFormData(prev => ({ ...prev, productName: e.target.value }))}
-                            />
-
-                            <div className="grid grid-cols-2 gap-4">
-                                <Input
-                                    type="number"
-                                    label="Quantity *"
-                                    min="1"
-                                    value={formData.quantity}
-                                    onChange={(e) => setFormData(prev => ({ ...prev, quantity: Number(e.target.value) }))}
-                                />
-                                <div>
-                                    <label className="block text-sm font-semibold text-gray-700 mb-2">Unit</label>
-                                    <select
-                                        value={formData.unit}
-                                        onChange={(e) => setFormData(prev => ({ ...prev, unit: e.target.value }))}
-                                        className="block w-full rounded-xl border-2 border-gray-200 py-3 px-4 text-base focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 bg-white transition-all"
-                                    >
-                                        <option value="pcs">Pieces</option>
-                                        <option value="box">Box</option>
-                                        <option value="kg">Kilograms</option>
-                                        <option value="m">Meters</option>
-                                        <option value="L">Liters</option>
-                                        <option value="units">Units</option>
-                                        <option value="pallets">Pallets</option>
-                                    </select>
-                                </div>
-                            </div>
-                            
-                            {/* Packaging Information Input */}
-                            {(formData.unit === 'pcs' || formData.unit === 'box' || formData.unit === 'units' || formData.unit === 'pallets') && (
-                                <div className="mt-4 space-y-4">
-                                    <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
-                                        <div className="flex items-center gap-2 mb-3">
-                                            <CubeIcon className="h-4 w-4 text-blue-600" />
-                                            <h4 className="text-sm font-semibold text-gray-900">Packaging Information</h4>
+                            <div className="p-3 space-y-3">
+                                <div className="space-y-2">
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1.5">Select Product from Inventory</label>
+                                    <div className="relative">
+                                        {/* Search and Filter Bar */}
+                                        <div className="mb-2 space-y-2">
+                                            <div className="relative">
+                                                <MagnifyingGlassIcon className="absolute left-4 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+                                                <input
+                                                    type="text"
+                                                    placeholder="Search by SKU or name..."
+                                                    value={productSearchTerm}
+                                                    onChange={(e) => {
+                                                        setProductSearchTerm(e.target.value);
+                                                        setShowProductDropdown(true);
+                                                    }}
+                                                    onFocus={() => setShowProductDropdown(true)}
+                                                    className="block w-full pl-10 pr-3 py-2.5 rounded-lg border border-gray-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 bg-white text-sm transition-all"
+                                                />
+                                            </div>
+                                            {groups.length > 0 && (
+                                                <div className="flex items-center gap-3">
+                                                    <FolderIcon className="h-5 w-5 text-gray-400" />
+                                                    <select
+                                                        value={selectedGroupId}
+                                                        onChange={(e) => {
+                                                            setSelectedGroupId(e.target.value);
+                                                            setShowProductDropdown(true);
+                                                        }}
+                                                        className="flex-1 rounded-lg border border-gray-200 py-2.5 px-3 text-sm focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 bg-white transition-all"
+                                                    >
+                                                        <option value="">All Groups</option>
+                                                        {groups.map(g => (
+                                                            <option key={g.id} value={g.id}>
+                                                                {getGroupPath(g.id)}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                </div>
+                                            )}
                                         </div>
-                                        <div className="grid grid-cols-2 gap-4">
-                                            <div>
-                                                <label className="block text-xs font-medium text-gray-700 mb-1.5">
-                                                    Pieces per Box (PCS/Box) *
-                                                </label>
-                                                <input
-                                                    type="number"
-                                                    min="1"
-                                                    value={formData.packaging?.pcsPerBox || ''}
-                                                    onChange={(e) => setFormData(prev => ({
-                                                        ...prev,
-                                                        packaging: {
-                                                            ...prev.packaging,
-                                                            pcsPerBox: e.target.value ? Number(e.target.value) : undefined
-                                                        }
-                                                    }))}
-                                                    placeholder="e.g., 100"
-                                                    className="block w-full rounded-lg border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 py-2 px-3 border bg-white text-sm"
-                                                />
-                                            </div>
-                                            <div>
-                                                <label className="block text-xs font-medium text-gray-700 mb-1.5">
-                                                    Boxes per Pallet *
-                                                </label>
-                                                <input
-                                                    type="number"
-                                                    min="1"
-                                                    value={formData.packaging?.boxesPerPallet || ''}
-                                                    onChange={(e) => setFormData(prev => ({
-                                                        ...prev,
-                                                        packaging: {
-                                                            ...prev.packaging,
-                                                            boxesPerPallet: e.target.value ? Number(e.target.value) : undefined
-                                                        }
-                                                    }))}
-                                                    placeholder="e.g., 50"
-                                                    className="block w-full rounded-lg border-gray-300 shadow-sm focus:border-primary-500 focus:ring-primary-500 py-2 px-3 border bg-white text-sm"
-                                                />
-                                            </div>
+                                        
+                                        {/* Product Selection Dropdown */}
+                                        <div className="relative" ref={dropdownRef}>
+                                            <button
+                                                type="button"
+                                                onClick={() => setShowProductDropdown(!showProductDropdown)}
+                                                className="block w-full rounded-xl border-2 border-gray-200 py-3 px-4 text-base focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 bg-white text-left flex items-center justify-between transition-all"
+                                            >
+                                                <span className={selectedProduct ? 'text-gray-900' : 'text-gray-500'}>
+                                                    {selectedProduct 
+                                                        ? `${selectedProduct.sku} — ${decodeProductName(selectedProduct.name)}${selectedProduct.groupId ? ` (${getGroupPath(selectedProduct.groupId)})` : ''}`
+                                                        : '— Select existing product —'}
+                                                </span>
+                                                <ChevronDownIcon className={`h-5 w-5 text-gray-400 transition-transform ${showProductDropdown ? 'transform rotate-180' : ''}`} />
+                                            </button>
+                                            
+                                            {showProductDropdown && (
+                                                <div className="absolute z-50 w-full mt-2 bg-white border-2 border-gray-200 rounded-xl shadow-xl max-h-96 overflow-auto">
+                                                    {filteredProducts.length === 0 ? (
+                                                        <div className="px-4 py-6 text-base text-gray-500 text-center">
+                                                            No products found
+                                                        </div>
+                                                    ) : (
+                                                        <div className="py-2">
+                                                            {Array.from(groupedProducts.entries()).map(([groupId, groupProducts]) => (
+                                                                <div key={groupId}>
+                                                                    {groupId !== '__ungrouped__' && groups.length > 0 && (
+                                                                        <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 text-xs font-bold text-gray-700 flex items-center gap-2 uppercase tracking-wider">
+                                                                            <FolderIcon className="h-4 w-4" />
+                                                                            {getGroupPath(groupId)}
+                                                                        </div>
+                                                                    )}
+                                                                    {groupProducts.map(p => (
+                                                                        <button
+                                                                            key={p.id}
+                                                                            type="button"
+                                                                            onClick={() => {
+                                                                                setFormData(prev => ({
+                                                                                    ...prev,
+                                                                                    sku: p.sku,
+                                                                                    productName: p.name,
+                                                                                    unit: p.uom || prev.unit
+                                                                                }));
+                                                                                setShowProductDropdown(false);
+                                                                                setProductSearchTerm('');
+                                                                                setSelectedGroupId('');
+                                                                            }}
+                                                                            className={`w-full px-4 py-3 text-left hover:bg-emerald-50 transition-colors ${
+                                                                                selectedProduct?.id === p.id ? 'bg-emerald-100' : ''
+                                                                            }`}
+                                                                        >
+                                                                            <div className="flex items-center gap-2.5">
+                                                                                <CubeIcon className="h-5 w-5 text-gray-400 flex-shrink-0" />
+                                                                                <div className="flex-1 min-w-0">
+                                                                                    <div className="font-medium text-gray-900 truncate">{decodeProductName(p.name)}</div>
+                                                                                    <div className="text-sm text-gray-500">SKU: {p.sku}</div>
+                                                                                    {(p as any).qtyOnHand !== undefined && (
+                                                                                        <div className="text-sm text-gray-400 mt-0.5">
+                                                                                            Stock: {(p as any).qtyOnHand || 0} {p.uom || 'units'}
+                                                                                        </div>
+                                                                                    )}
+                                                                                </div>
+                                                                            </div>
+                                                                        </button>
+                                                                    ))}
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
                                     
-                                    {/* Quantity Conversions Display */}
-                                    <div className="p-4 bg-gradient-to-br from-gray-50 to-gray-100 rounded-lg border-2 border-gray-300 shadow-sm">
-                                        <div className="flex items-center gap-2 mb-4">
+                                    {/* Selected Product Info */}
+                                    {selectedProduct && (
+                                        <div className="mt-2 p-3 bg-gradient-to-br from-emerald-50 to-green-50 rounded-lg border border-emerald-200 text-sm">
+                                            <div className="font-bold text-gray-900">{decodeProductName(selectedProduct.name)}</div>
+                                            <div className="text-gray-600 mt-1">
+                                                SKU: {selectedProduct.sku} • UOM: {selectedProduct.uom || 'N/A'}
+                                                {selectedProduct.groupId && ` • Group: ${getGroupPath(selectedProduct.groupId)}`}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-3">
+                                    <Input
+                                        label="SKU"
+                                        placeholder="Product SKU"
+                                        value={formData.sku}
+                                        onChange={(e) => setFormData(prev => ({ ...prev, sku: e.target.value }))}
+                                    />
+                                    <div>
+                                        <label className="block text-sm font-semibold text-gray-700 mb-2">Priority</label>
+                                        <select
+                                            value={formData.priority}
+                                            onChange={(e) => setFormData(prev => ({ ...prev, priority: Number(e.target.value) }))}
+                                            className="block w-full rounded-xl border-2 border-gray-200 py-3 px-4 text-base focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 bg-white transition-all"
+                                        >
+                                            <option value={1}>Critical</option>
+                                            <option value={2}>High</option>
+                                            <option value={3}>Medium</option>
+                                            <option value={4}>Low</option>
+                                            <option value={5}>Very Low</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                {/* Quantity Conversions Display */}
+                                {(formData.unit === 'pcs' || formData.unit === 'box' || formData.unit === 'units' || formData.unit === 'pallets') && (
+                                    <div className="p-3 bg-gradient-to-br from-gray-50 to-gray-100 rounded-lg border border-gray-300 shadow-sm">
+                                        <div className="flex items-center gap-2 mb-3">
                                             <CalculatorIcon className="h-5 w-5 text-primary-600" />
                                             <h4 className="text-sm font-bold text-gray-900 uppercase tracking-wide">Calculated Quantities</h4>
                                         </div>
-                                        <div className="grid grid-cols-3 gap-4 mb-4">
-                                            <div className="bg-white rounded-lg p-3 border-2 border-blue-200 shadow-sm">
+                                        <div className="grid grid-cols-3 gap-3 mb-3 text-xs">
+                                            <div className="bg-white rounded-md p-2 border border-blue-200 shadow-sm">
                                                 <div className="text-xs font-medium text-blue-600 mb-1.5 uppercase tracking-wide">Pieces (PCS)</div>
-                                                <div className="text-2xl font-bold text-blue-700">{quantityConversions.pcs.toLocaleString()}</div>
+                                                <div className="text-lg font-bold text-blue-700">{quantityConversions.pcs.toLocaleString()}</div>
                                                 {formData.unit !== 'pcs' && (
                                                     <div className="text-[10px] text-gray-400 mt-1">
                                                         {formData.quantity} {formData.unit} × {formData.packaging?.pcsPerBox || 1}
                                                     </div>
                                                 )}
                                             </div>
-                                            <div className="bg-white rounded-lg p-3 border-2 border-emerald-200 shadow-sm">
+                                            <div className="bg-white rounded-md p-2 border border-emerald-200 shadow-sm">
                                                 <div className="text-xs font-medium text-emerald-600 mb-1.5 uppercase tracking-wide">Boxes</div>
-                                                <div className="text-2xl font-bold text-emerald-700">{quantityConversions.boxes.toLocaleString()}</div>
+                                                <div className="text-lg font-bold text-emerald-700">{quantityConversions.boxes.toLocaleString()}</div>
                                                 {formData.unit !== 'box' && formData.unit !== 'units' && (
                                                     <div className="text-[10px] text-gray-400 mt-1">
                                                         {quantityConversions.pcs.toLocaleString()} ÷ {formData.packaging?.pcsPerBox || 1}
                                                     </div>
                                                 )}
                                             </div>
-                                            <div className="bg-white rounded-lg p-3 border-2 border-purple-200 shadow-sm">
+                                            <div className="bg-white rounded-md p-2 border border-purple-200 shadow-sm">
                                                 <div className="text-xs font-medium text-purple-600 mb-1.5 uppercase tracking-wide">Pallets</div>
                                                 <div className="space-y-1">
-                                                    <div className="flex items-baseline justify-center gap-2">
-                                                        <span className="text-2xl font-bold text-purple-700">{quantityConversions.palletsRounded.toLocaleString()}</span>
+                                                    <div className="flex items-baseline justify-center gap-1.5">
+                                                        <span className="text-lg font-bold text-purple-700">{quantityConversions.palletsRounded.toLocaleString()}</span>
                                                         {quantityConversions.palletsExact !== quantityConversions.palletsRounded && (
                                                             <span className="text-xs text-gray-500 font-normal">
                                                                 (net: {quantityConversions.palletsExact.toFixed(3)})
@@ -629,30 +705,30 @@ export const JobBasicInfoStep: React.FC<JobBasicInfoStepProps> = ({
                                                 </div>
                                             </div>
                                         </div>
-                                        <div className="bg-white rounded-lg p-3 border border-gray-200">
+                                        <div className="bg-white rounded-md p-2 border border-gray-200 text-[11px]">
                                             <div className="flex items-center justify-center gap-4 text-xs">
                                                 <div className="flex items-center gap-1.5">
                                                     <span className="font-semibold text-gray-700">PCS/Box:</span>
-                                                    <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded font-mono font-bold">
+                                                    <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded font-mono font-bold">
                                                         {formData.packaging?.pcsPerBox || 1}
                                                     </span>
                                                 </div>
                                                 <span className="text-gray-300">•</span>
                                                 <div className="flex items-center gap-1.5">
                                                     <span className="font-semibold text-gray-700">Boxes/Pallet:</span>
-                                                    <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded font-mono font-bold">
+                                                    <span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded font-mono font-bold">
                                                         {formData.packaging?.boxesPerPallet || 1}
                                                     </span>
                                                 </div>
                                             </div>
                                         </div>
                                     </div>
-                                </div>
-                            )}
-                        </div>
-                    </Card>
+                                )}
+                            </div>
+                        </Card>
+                    </div>
                 </div>
-            </div>
+            )}
         </div>
     );
 };

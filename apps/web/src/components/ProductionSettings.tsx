@@ -771,6 +771,26 @@ const CreateEditModal: FC<{
     setEditingStage(null)
   }
 
+  const handleToggleDefaultTransitions = () => {
+    if (!formData.stages || formData.stages.length < 2) return
+    const stages = formData.stages as any[]
+    const transitions = stages.slice(0, -1).map((stage, index) => {
+      const next = stages[index + 1]
+      return {
+        fromStageId: stage.id,
+        toStageId: next.id,
+        requireOutputToAdvance: true,
+        minQtyToStartNextStage: undefined,
+        unit: 'sheet',
+        allowPartial: true,
+      }
+    })
+    setFormData({
+      ...formData,
+      allowedTransitions: transitions,
+    })
+  }
+
   if (!type) return null
 
   return (
@@ -781,19 +801,28 @@ const CreateEditModal: FC<{
             {item ? 'Edit' : 'Create'} {type}
           </h3>
           
-          {/* Stage management UI for workflows */}
+          {/* Stage & transition management UI for workflows */}
           {type === 'workflow' && !showStageForm && (
             <div className="mb-6 border border-gray-200 rounded-lg p-4 bg-gray-50">
               <div className="flex items-center justify-between mb-4">
                 <h4 className="text-sm font-medium text-gray-900">Workflow Stages</h4>
-                <button
-                  type="button"
-                  onClick={handleAddStage}
-                  className="inline-flex items-center px-2 py-1 text-xs font-medium text-white bg-blue-600 rounded hover:bg-blue-700"
-                >
-                  <PlusIcon className="h-3 w-3 mr-1" />
-                  Add Stage
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleToggleDefaultTransitions}
+                    className="inline-flex items-center px-2 py-1 text-xs font-medium text-blue-700 bg-white border border-blue-200 rounded hover:bg-blue-50"
+                  >
+                    Auto-generate transitions
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleAddStage}
+                    className="inline-flex items-center px-2 py-1 text-xs font-medium text-white bg-blue-600 rounded hover:bg-blue-700"
+                  >
+                    <PlusIcon className="h-3 w-3 mr-1" />
+                    Add Stage
+                  </button>
+                </div>
               </div>
               {formData.stages && formData.stages.length > 0 ? (
                 <div className="space-y-2">
@@ -832,6 +861,170 @@ const CreateEditModal: FC<{
                 </div>
               ) : (
                 <p className="text-sm text-gray-500 text-center py-4">No stages yet. Click "Add Stage" to create one.</p>
+              )}
+            </div>
+          )}
+
+          {type === 'workflow' && !showStageForm && (
+            <div className="mb-6 border border-gray-200 rounded-lg p-4 bg-white">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <h4 className="text-sm font-medium text-gray-900">Stage Transition Rules</h4>
+                  <p className="text-xs text-gray-500">
+                    Configure how jobs can move between stages and when the next stage is allowed to start.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={!formData.stages || formData.stages.length < 2}
+                  onClick={() => {
+                    if (!formData.stages || formData.stages.length < 2) return
+                    const stages = formData.stages as any[]
+                    const defaultFrom = stages[0]?.id
+                    const defaultTo = stages[1]?.id
+                    if (!defaultFrom || !defaultTo) return
+                    const next = [...(formData.allowedTransitions as any[] || [])]
+                    next.push({
+                      fromStageId: defaultFrom,
+                      toStageId: defaultTo,
+                      requireOutputToAdvance: true,
+                      minQtyToStartNextStage: undefined,
+                      unit: 'sheet',
+                      allowPartial: true,
+                    })
+                    setFormData({ ...formData, allowedTransitions: next })
+                  }}
+                  className="inline-flex items-center px-2 py-1 text-xs font-medium rounded-md border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                >
+                  <PlusIcon className="h-3 w-3 mr-1" />
+                  Add transition
+                </button>
+              </div>
+
+              {(!formData.allowedTransitions || formData.allowedTransitions.length === 0) && (
+                <p className="text-sm text-gray-500 mb-2">
+                  No transitions defined. Use &quot;Auto-generate transitions&quot; above for a linear path or &quot;Add transition&quot;
+                  to define custom routes (e.g. stage 3 → stage 7).
+                </p>
+              )}
+
+              {formData.allowedTransitions && formData.allowedTransitions.length > 0 && (
+                <div className="space-y-2">
+                  <div className="hidden md:flex text-xs font-semibold text-gray-500 uppercase tracking-wider px-1">
+                    <span className="flex-1">From / To</span>
+                    <span className="flex-[2] text-center">Rules</span>
+                  </div>
+                  <div className="divide-y divide-gray-100 border border-gray-200 rounded-md bg-white">
+                    {(formData.allowedTransitions as any[]).map((t, idx: number) => {
+                      const stages = (formData.stages || []) as any[]
+
+                      const updateTransition = (patch: any) => {
+                        const next = [...(formData.allowedTransitions as any[] || [])]
+                        next[idx] = { ...t, ...patch }
+                        setFormData({ ...formData, allowedTransitions: next })
+                      }
+
+                      const removeTransition = () => {
+                        const next = (formData.allowedTransitions as any[] || []).filter((_: any, i: number) => i !== idx)
+                        setFormData({ ...formData, allowedTransitions: next })
+                      }
+
+                      return (
+                        <div
+                          key={`${t.fromStageId}-${t.toStageId}-${idx}`}
+                          className="px-3 py-3 space-y-2 text-sm"
+                        >
+                          {/* From / To row */}
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                            <div className="flex flex-col">
+                              <span className="text-xs text-gray-500 mb-1 md:hidden">From</span>
+                              <select
+                                className="w-full rounded-md border-2 border-gray-200 px-2 py-1 text-sm focus:border-blue-500 focus:ring-blue-100"
+                                value={t.fromStageId || ''}
+                                onChange={(e) => updateTransition({ fromStageId: e.target.value })}
+                              >
+                                <option value="">Select...</option>
+                                {stages.map((s: any) => (
+                                  <option key={s.id} value={s.id}>{s.name}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div className="flex flex-col">
+                              <span className="text-xs text-gray-500 mb-1 md:hidden">To</span>
+                              <select
+                                className="w-full rounded-md border-2 border-gray-200 px-2 py-1 text-sm focus:border-blue-500 focus:ring-blue-100"
+                                value={t.toStageId || ''}
+                                onChange={(e) => updateTransition({ toStageId: e.target.value })}
+                              >
+                                <option value="">Select...</option>
+                                {stages.map((s: any) => (
+                                  <option key={s.id} value={s.id}>{s.name}</option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+
+                          {/* Rule row */}
+                          <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                            <label className="flex items-center gap-2 text-xs text-gray-700">
+                              <input
+                                type="checkbox"
+                                checked={!!t.requireOutputToAdvance}
+                                onChange={(e) => updateTransition({ requireOutputToAdvance: e.target.checked })}
+                                className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                              />
+                              <span>Require output</span>
+                            </label>
+                            <div className="flex flex-col">
+                              <span className="text-xs text-gray-500 mb-1">Min qty to start</span>
+                              <input
+                                type="number"
+                                min={0}
+                                value={t.minQtyToStartNextStage ?? ''}
+                                onChange={(e) => {
+                                  const raw = e.target.value
+                                  updateTransition({
+                                    minQtyToStartNextStage: raw === '' ? undefined : Number(raw),
+                                  })
+                                }}
+                                className="w-full rounded-md border-2 border-gray-200 px-2 py-1 text-sm focus:border-blue-500 focus:ring-blue-100"
+                                placeholder="Auto from plan"
+                              />
+                            </div>
+                            <div className="flex flex-col">
+                              <span className="text-xs text-gray-500 mb-1">Unit</span>
+                              <input
+                                type="text"
+                                value={t.unit || 'sheet'}
+                                onChange={(e) => updateTransition({ unit: e.target.value || 'sheet' })}
+                                className="w-full rounded-md border-2 border-gray-200 px-2 py-1 text-sm focus:border-blue-500 focus:ring-blue-100"
+                              />
+                            </div>
+                            <div className="flex items-center justify-between md:justify-start gap-2">
+                              <label className="flex items-center gap-2 text-xs text-gray-700">
+                                <input
+                                  type="checkbox"
+                                  checked={t.allowPartial !== false}
+                                  onChange={(e) => updateTransition({ allowPartial: e.target.checked })}
+                                  className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                />
+                                <span>Allow partial</span>
+                              </label>
+                              <button
+                                type="button"
+                                onClick={removeTransition}
+                                className="p-1 text-gray-400 hover:text-red-600"
+                                title="Remove transition"
+                              >
+                                <TrashIcon className="h-4 w-4" />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
               )}
             </div>
           )}

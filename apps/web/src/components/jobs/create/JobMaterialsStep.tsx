@@ -58,10 +58,10 @@ export const JobMaterialsStep: React.FC<JobMaterialsStepProps> = ({
     };
 
     return (
-        <div className="space-y-8">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {/* Materials Section */}
             <Card className="overflow-hidden">
-                <div className="flex items-center justify-between p-5 bg-gradient-to-r from-amber-50 to-orange-50 border-b border-amber-100">
+                <div className="flex items-center justify-between p-4 bg-gradient-to-r from-amber-50 to-orange-50 border-b border-amber-100">
                     <h3 className="text-lg font-bold text-gray-900 flex items-center gap-3">
                         <div className="p-2 bg-amber-500 rounded-xl shadow-lg shadow-amber-200">
                             <CubeIcon className="h-5 w-5 text-white" />
@@ -73,10 +73,10 @@ export const JobMaterialsStep: React.FC<JobMaterialsStepProps> = ({
                             </span>
                         )}
                     </h3>
-                    <Button 
-                        size="sm" 
-                        variant="secondary" 
-                        onClick={addMaterial} 
+                    <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={addMaterial}
                         leftIcon={<PlusIcon className="h-4 w-4" />}
                         className="shadow-sm"
                     >
@@ -84,7 +84,7 @@ export const JobMaterialsStep: React.FC<JobMaterialsStepProps> = ({
                     </Button>
                 </div>
 
-                <div className="p-5">
+                <div className="p-4">
                     {formData.bom.length === 0 ? (
                         <div className="text-center py-12 bg-gray-50 rounded-xl border-2 border-dashed border-gray-200">
                             <CubeIcon className="h-12 w-12 mx-auto text-gray-300 mb-3" />
@@ -101,10 +101,10 @@ export const JobMaterialsStep: React.FC<JobMaterialsStepProps> = ({
                                 <div className="col-span-1">Unit</div>
                                 <div className="col-span-1"></div>
                             </div>
-                            
+
                             {formData.bom.map((item, index) => (
-                                <div 
-                                    key={index} 
+                                <div
+                                    key={index}
                                     className="group bg-white rounded-xl border-2 border-gray-100 hover:border-amber-200 hover:shadow-md transition-all duration-200"
                                 >
                                     {/* Desktop View */}
@@ -152,7 +152,7 @@ export const JobMaterialsStep: React.FC<JobMaterialsStepProps> = ({
                                             </button>
                                         </div>
                                     </div>
-                                    
+
                                     {/* Mobile View */}
                                     <div className="md:hidden p-4 space-y-3">
                                         <div className="flex items-center justify-between">
@@ -220,10 +220,10 @@ export const JobMaterialsStep: React.FC<JobMaterialsStepProps> = ({
                             </span>
                         )}
                     </h3>
-                    <Button 
-                        size="sm" 
-                        variant="secondary" 
-                        onClick={addOutput} 
+                    <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={addOutput}
                         leftIcon={<PlusIcon className="h-4 w-4" />}
                         className="shadow-sm"
                     >
@@ -248,10 +248,10 @@ export const JobMaterialsStep: React.FC<JobMaterialsStepProps> = ({
                                 <div className="col-span-1">Unit</div>
                                 <div className="col-span-1"></div>
                             </div>
-                            
+
                             {formData.output.map((item, index) => (
-                                <div 
-                                    key={index} 
+                                <div
+                                    key={index}
                                     className="group bg-white rounded-xl border-2 border-gray-100 hover:border-emerald-200 hover:shadow-md transition-all duration-200"
                                 >
                                     {/* Desktop View */}
@@ -299,7 +299,7 @@ export const JobMaterialsStep: React.FC<JobMaterialsStepProps> = ({
                                             </button>
                                         </div>
                                     </div>
-                                    
+
                                     {/* Mobile View */}
                                     <div className="md:hidden p-4 space-y-3">
                                         <div className="flex items-center justify-between">

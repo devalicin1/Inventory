@@ -10,14 +10,16 @@ import {
     ChartBarIcon,
     Bars3Icon,
     XMarkIcon,
-    WrenchScrewdriverIcon
+    WrenchScrewdriverIcon,
+    ShoppingCartIcon
 } from '@heroicons/react/24/outline';
 import {
     HomeIcon as HomeIconSolid,
     CubeIcon as CubeIconSolid,
     CogIcon as CogIconSolid,
     QrCodeIcon as QrCodeIconSolid,
-    Bars3Icon as Bars3IconSolid
+    Bars3Icon as Bars3IconSolid,
+    ShoppingCartIcon as ShoppingCartIconSolid
 } from '@heroicons/react/24/solid';
 
 export const MobileNav: React.FC = () => {
@@ -30,11 +32,12 @@ export const MobileNav: React.FC = () => {
         { name: 'Home', shortName: 'Home', to: '/', icon: HomeIcon, iconSolid: HomeIconSolid },
         { name: 'Inventory', shortName: 'Inventory', to: '/inventory', icon: CubeIcon, iconSolid: CubeIconSolid },
         { name: 'Production', shortName: 'Prod', to: '/production', icon: WrenchScrewdriverIcon, iconSolid: CogIconSolid },
-        { name: 'Scan', shortName: 'Scan', to: '/scan', icon: QrCodeIcon, iconSolid: QrCodeIconSolid },
+        { name: 'Purchase Orders', shortName: 'PO', to: '/purchase-orders', icon: ShoppingCartIcon, iconSolid: ShoppingCartIconSolid },
     ];
     
     // Secondary navigation items (shown in "More" menu)
     const moreNavigation = [
+        { name: 'Scan', to: '/scan', icon: QrCodeIcon },
         { name: 'Work Orders', to: '/work', icon: ClipboardDocumentListIcon },
         { name: 'My Work', to: '/my', icon: UserIcon },
         { name: 'Reports', to: '/reports', icon: ChartBarIcon },

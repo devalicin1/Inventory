@@ -36,7 +36,9 @@ import {
   QualityReport,
   WorkcenterPerformanceReport,
   JobStatusReport,
-  StageTimeReport
+  StageTimeReport,
+  StuckJobsReport,
+  WIPInventoryReport
 } from './production-reports'
 import {
   calculateWIPByStage,
@@ -52,7 +54,9 @@ import {
   calculateQualityMetrics,
   calculateWorkcenterPerformance,
   calculateJobStatusSummary,
-  calculateStageTimeAnalysis
+  calculateStageTimeAnalysis,
+  detectStuckJobs,
+  calculateWIPInventoryBetweenStages
 } from './production-reports/utils'
 
 interface ProductionReportsProps {
@@ -60,7 +64,7 @@ interface ProductionReportsProps {
   jobs?: Job[]
 }
 
-type ReportType = 'wip' | 'throughput' | 'onTime' | 'cycleTime' | 'bottleneck' | 'utilization' | 'materialUsage' | 'output' | 'deadlines' | 'stageOutput' | 'efficiency' | 'quality' | 'workcenterPerformance' | 'jobStatus' | 'stageTime'
+type ReportType = 'wip' | 'throughput' | 'onTime' | 'cycleTime' | 'bottleneck' | 'utilization' | 'materialUsage' | 'output' | 'deadlines' | 'stageOutput' | 'efficiency' | 'quality' | 'workcenterPerformance' | 'jobStatus' | 'stageTime' | 'stuckJobs' | 'wipInventory'
 
 export function ProductionReports({ workspaceId, jobs: externalJobs }: ProductionReportsProps) {
   const [selectedReport, setSelectedReport] = useState<ReportType>('wip')
@@ -113,6 +117,8 @@ export function ProductionReports({ workspaceId, jobs: externalJobs }: Productio
     { id: 'workcenterPerformance', name: 'Workcenter Performance', icon: UserGroupIcon, description: 'Performance metrics by workcenter' },
     { id: 'jobStatus', name: 'Job Status Summary', icon: ChartBarIcon, description: 'Summary of jobs by status' },
     { id: 'stageTime', name: 'Stage Time Analysis', icon: ClockIcon, description: 'Time spent in each production stage' },
+    { id: 'stuckJobs', name: 'Stuck Jobs', icon: ExclamationTriangleIcon, description: 'Jobs stuck between stages (process view)' },
+    { id: 'wipInventory', name: 'WIP Inventory', icon: CubeIcon, description: 'Stock quantities between stages (stock view)' },
   ]
 
   // Fetch production runs for all filtered jobs
@@ -133,7 +139,7 @@ export function ProductionReports({ workspaceId, jobs: externalJobs }: Productio
       )
       return runsMap
     },
-    enabled: filteredJobs.length > 0 && (selectedReport === 'stageOutput' || selectedReport === 'quality' || selectedReport === 'workcenterPerformance'),
+    enabled: filteredJobs.length > 0 && (selectedReport === 'stageOutput' || selectedReport === 'quality' || selectedReport === 'workcenterPerformance' || selectedReport === 'stuckJobs' || selectedReport === 'wipInventory'),
   })
 
   // Calculate report data
@@ -151,6 +157,8 @@ export function ProductionReports({ workspaceId, jobs: externalJobs }: Productio
   const workcenterData = calculateWorkcenterPerformance(filteredJobs, allRunsData, workcenters)
   const jobStatusData = calculateJobStatusSummary(jobs)
   const stageTimeData = calculateStageTimeAnalysis(filteredJobs, workflows)
+  const stuckJobsData = detectStuckJobs(filteredJobs, allRunsData, workflows, workcenters)
+  const wipInventoryData = calculateWIPInventoryBetweenStages(filteredJobs, allRunsData, workflows)
 
   const renderReport = () => {
     switch (selectedReport) {
@@ -184,6 +192,10 @@ export function ProductionReports({ workspaceId, jobs: externalJobs }: Productio
         return <JobStatusReport data={jobStatusData} />
       case 'stageTime':
         return <StageTimeReport data={stageTimeData} />
+      case 'stuckJobs':
+        return <StuckJobsReport data={stuckJobsData} />
+      case 'wipInventory':
+        return <WIPInventoryReport data={wipInventoryData} />
       default:
         return null
     }
@@ -237,6 +249,14 @@ export function ProductionReports({ workspaceId, jobs: externalJobs }: Productio
       case 'stageTime':
         exportData = stageTimeData
         filename = 'stage_time_analysis.csv'
+        break
+      case 'stuckJobs':
+        exportData = stuckJobsData
+        filename = 'stuck_jobs.csv'
+        break
+      case 'wipInventory':
+        exportData = wipInventoryData
+        filename = 'wip_inventory.csv'
         break
       default:
         return

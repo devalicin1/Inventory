@@ -11,6 +11,7 @@ import {
   doc,
   updateDoc,
   getDoc,
+  increment,
 } from 'firebase/firestore'
 
 export type UiTxnType = 'in' | 'out' | 'transfer' | 'adjustment'
@@ -60,6 +61,19 @@ export async function createStockTransaction(params: {
     userId: userId || 'anonymous',
     reason: reason || '',
   } as any)
+
+  // Keep the product's aggregated qtyOnHand field in sync with transactions so
+  // inventory lists and real-time subscriptions always see the latest stock.
+  try {
+    const productRef = doc(db, 'workspaces', workspaceId, 'products', productId)
+    await updateDoc(productRef, {
+      qtyOnHand: increment(signedQty),
+    } as any)
+  } catch (e) {
+    // If this fails we still keep the transaction history; callers can
+    // recalculate using recalculateProductStock to repair any inconsistencies.
+    console.warn('[createStockTransaction] Failed to increment qtyOnHand:', e)
+  }
 }
 
 export interface StockTxn {

@@ -43,7 +43,9 @@ import {
   CalendarIcon,
   ClockIcon,
   ExclamationTriangleIcon,
-  ArrowRightIcon
+  ArrowRightIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon
 } from '@heroicons/react/24/outline'
 import { Card } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
@@ -502,6 +504,8 @@ export function Production() {
   })
   const [searchQuery, setSearchQuery] = useState('')
   const [showFilters, setShowFilters] = useState(false)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [itemsPerPage, setItemsPerPage] = useState(10)
   const queryClient = useQueryClient()
 
   // Mock workspace ID - in real app, get from context
@@ -593,6 +597,19 @@ export function Production() {
     }
     return true
   })
+
+  // Pagination calculations
+  const totalPages = Math.ceil(filteredJobs.length / itemsPerPage)
+  const startIndex = (currentPage - 1) * itemsPerPage
+  const endIndex = startIndex + itemsPerPage
+  const paginatedJobs = useMemo(() => {
+    return filteredJobs.slice(startIndex, endIndex)
+  }, [filteredJobs, startIndex, endIndex])
+
+  // Reset to page 1 when filters or search change
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [searchQuery, filters])
 
   // Open job if ?jobId= is present or create form if ?action=new
   useEffect(() => {
@@ -1371,7 +1388,13 @@ export function Production() {
           )}
         </div>
       ) : view === 'reports' ? (
-        <ProductionReportsTab workspaceId={workspaceId} />
+        <ProductionReportsTab 
+          workspaceId={workspaceId}
+          onJobClick={(jobId) => {
+            const job = jobs.find(j => j.id === jobId)
+            if (job) setSelectedJob(job)
+          }}
+        />
       ) : (
         <>
           {/* Mobile Search Bar - Sticky for easy access */}
@@ -1406,7 +1429,7 @@ export function Production() {
                   <p className="text-sm text-gray-400 mt-1">Try adjusting your filters</p>
                 </div>
               ) : (
-                filteredJobs.map((job) => {
+                paginatedJobs.map((job) => {
                   const isReadyToMove = jobsReadyToMove.some(r => r.job.id === job.id)
                   const isReadyToComplete = jobsReadyToComplete.some(j => j.id === job.id)
                   const stageName = job.status === 'draft' ? '-' : (job.status === 'done' ? 'DONE' : getStageName(job.currentStageId))
@@ -1580,12 +1603,21 @@ export function Production() {
                           )}
                         </div>
 
-                        <button
-                          onClick={(e) => { e.stopPropagation(); setSelectedJob(job) }}
-                          className="text-slate-600 hover:text-slate-800 font-medium text-xs px-3 py-2 rounded-lg hover:bg-slate-100 transition-colors"
-                        >
-                          Details →
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setInitialJobForCreate(job); setShowCreateForm(true) }}
+                            className="text-gray-500 hover:text-gray-700 p-2 rounded-lg hover:bg-gray-100 transition-colors"
+                            title="Duplicate job"
+                          >
+                            <Squares2X2Icon className="h-4 w-4" />
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setSelectedJob(job) }}
+                            className="text-slate-600 hover:text-slate-800 font-medium text-xs px-3 py-2 rounded-lg hover:bg-slate-100 transition-colors"
+                          >
+                            Details →
+                          </button>
+                        </div>
                       </div>
                     </div>
                   )
@@ -1593,10 +1625,91 @@ export function Production() {
               )}
             </div>
 
+            {/* Mobile Pagination */}
+            {filteredJobs.length > 0 && view === 'list' && (
+              <div className="md:hidden mt-4 px-4 pb-4">
+                <Card>
+                  <div className="flex flex-col gap-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-4">
+                      <div className="text-xs sm:text-sm text-gray-700">
+                        Showing <span className="font-medium">{startIndex + 1}</span> to{' '}
+                        <span className="font-medium">{Math.min(endIndex, filteredJobs.length)}</span> of{' '}
+                        <span className="font-medium">{filteredJobs.length}</span> jobs
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs sm:text-sm text-gray-700">Per page:</label>
+                        <select
+                          value={itemsPerPage}
+                          onChange={(e) => {
+                            setItemsPerPage(Number(e.target.value))
+                            setCurrentPage(1)
+                          }}
+                          className="rounded-md border-gray-300 text-xs sm:text-sm focus:border-blue-500 focus:ring-blue-500"
+                        >
+                          <option value={10}>10</option>
+                          <option value={25}>25</option>
+                          <option value={50}>50</option>
+                          <option value={100}>100</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2">
+                      <button
+                        onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                        disabled={currentPage === 1}
+                        className="px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                      >
+                        <ChevronLeftIcon className="w-3 h-3 sm:w-4 sm:h-4" />
+                        <span className="hidden sm:inline">Previous</span>
+                      </button>
+
+                      <div className="flex items-center gap-1">
+                        {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                          let pageNum: number
+                          if (totalPages <= 5) {
+                            pageNum = i + 1
+                          } else if (currentPage <= 3) {
+                            pageNum = i + 1
+                          } else if (currentPage >= totalPages - 2) {
+                            pageNum = totalPages - 4 + i
+                          } else {
+                            pageNum = currentPage - 2 + i
+                          }
+
+                          return (
+                            <button
+                              key={pageNum}
+                              onClick={() => setCurrentPage(pageNum)}
+                              className={`px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm font-medium rounded-md ${currentPage === pageNum
+                                ? 'bg-blue-600 text-white'
+                                : 'text-gray-700 bg-white border border-gray-300 hover:bg-gray-50'
+                                }`}
+                            >
+                              {pageNum}
+                            </button>
+                          )
+                        })}
+                      </div>
+
+                      <button
+                        onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                        disabled={currentPage === totalPages}
+                        className="px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                      >
+                        <span className="hidden sm:inline">Next</span>
+                        <ChevronRightIcon className="w-3 h-3 sm:w-4 sm:h-4" />
+                      </button>
+                    </div>
+                  </div>
+                </Card>
+              </div>
+            )}
+
             {/* Desktop Table View */}
             <div className="hidden md:block overflow-hidden">
               <DataTable
-                data={filteredJobs.map(job => {
+                data={paginatedJobs.map(job => {
                   const isReadyToMove = jobsReadyToMove.some(r => r.job.id === job.id)
                   return { ...job, _isReadyToMove: isReadyToMove }
                 })}
@@ -1730,6 +1843,87 @@ export function Production() {
                 }}
               />
             </div>
+
+            {/* Desktop Pagination */}
+            {filteredJobs.length > 0 && view === 'list' && (
+              <div className="hidden md:block mt-6">
+                <Card>
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+                      <div className="text-xs sm:text-sm text-gray-700">
+                        Showing <span className="font-medium">{startIndex + 1}</span> to{' '}
+                        <span className="font-medium">{Math.min(endIndex, filteredJobs.length)}</span> of{' '}
+                        <span className="font-medium">{filteredJobs.length}</span> jobs
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs sm:text-sm text-gray-700">Per page:</label>
+                        <select
+                          value={itemsPerPage}
+                          onChange={(e) => {
+                            setItemsPerPage(Number(e.target.value))
+                            setCurrentPage(1)
+                          }}
+                          className="rounded-md border-gray-300 text-xs sm:text-sm focus:border-blue-500 focus:ring-blue-500"
+                        >
+                          <option value={10}>10</option>
+                          <option value={25}>25</option>
+                          <option value={50}>50</option>
+                          <option value={100}>100</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between sm:justify-end gap-2">
+                      <button
+                        onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                        disabled={currentPage === 1}
+                        className="px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                      >
+                        <ChevronLeftIcon className="w-3 h-3 sm:w-4 sm:h-4" />
+                        <span className="hidden sm:inline">Previous</span>
+                      </button>
+
+                      <div className="flex items-center gap-1">
+                        {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                          let pageNum: number
+                          if (totalPages <= 5) {
+                            pageNum = i + 1
+                          } else if (currentPage <= 3) {
+                            pageNum = i + 1
+                          } else if (currentPage >= totalPages - 2) {
+                            pageNum = totalPages - 4 + i
+                          } else {
+                            pageNum = currentPage - 2 + i
+                          }
+
+                          return (
+                            <button
+                              key={pageNum}
+                              onClick={() => setCurrentPage(pageNum)}
+                              className={`px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm font-medium rounded-md ${currentPage === pageNum
+                                ? 'bg-blue-600 text-white'
+                                : 'text-gray-700 bg-white border border-gray-300 hover:bg-gray-50'
+                                }`}
+                            >
+                              {pageNum}
+                            </button>
+                          )
+                        })}
+                      </div>
+
+                      <button
+                        onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                        disabled={currentPage === totalPages}
+                        className="px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                      >
+                        <span className="hidden sm:inline">Next</span>
+                        <ChevronRightIcon className="w-3 h-3 sm:w-4 sm:h-4" />
+                      </button>
+                    </div>
+                  </div>
+                </Card>
+              </div>
+            )}
           </div>
         </>
       )}

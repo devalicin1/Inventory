@@ -645,3 +645,542 @@ export function calculateStageTimeAnalysis(
   })).sort((a, b) => b.avgTime - a.avgTime)
 }
 
+// ===== BOTTLENECK & STUCK JOBS DETECTION =====
+
+export interface StuckJobData {
+  jobId: string
+  jobCode: string
+  jobName?: string
+  boardSheetName?: string
+  customerName?: string
+  currentStageId: string
+  currentStageName: string
+  previousStageId: string
+  previousStageName: string
+  previousStageOutput: number
+  previousStageOutputUOM: string
+  daysStuck: number
+  priority: number
+  dueDate: Date
+  workcenterId?: string
+  workcenterName?: string
+}
+
+export interface WIPInventoryData {
+  fromStageId: string
+  fromStageName: string
+  toStageId: string
+  toStageName: string
+  quantity: number
+  uom: string
+  jobCount: number
+  jobs: Array<{
+    jobId: string
+    jobCode: string
+    quantity: number
+    daysInTransition: number
+  }>
+}
+
+export interface StageBottleneckData {
+  stageId: string
+  stageName: string
+  jobsStuck: number
+  totalWIPQuantity: number
+  uom: string
+  avgDaysStuck: number
+  stuckJobs: StuckJobData[]
+  wipInventoryOut: WIPInventoryData[]
+}
+
+/**
+ * Check if stage threshold is met (helper function)
+ */
+function checkStageThreshold(
+  job: any,
+  stageId: string,
+  workflows: any[],
+  allRunsData: { [jobId: string]: ProductionRun[] }
+): { totalProduced: number; plannedQty: number; completionThreshold: number; completionThresholdUpper: number; isThresholdMet: boolean } {
+  const WASTAGE_THRESHOLD_LOWER = 400 // Alt sınır: planned - 400
+  const WASTAGE_THRESHOLD_UPPER = 500 // Üst sınır: planned + 500
+  const runs = allRunsData[job.id] || []
+  const stageRuns = runs.filter((r: any) => {
+    if (r.stageId !== stageId) return false
+    // Exclude transfer runs
+    return !(r.transferSourceRunIds && Array.isArray(r.transferSourceRunIds) && r.transferSourceRunIds.length > 0)
+  })
+
+  // Get stage info for UOM
+  const workflow = workflows.find((w: any) => w.id === job.workflowId)
+  const stageInfo = workflow?.stages?.find((s: any) => s.id === stageId)
+  const stageOutputUOM = stageInfo?.outputUOM || ''
+
+  // Total produced in stage
+  const totalProduced = stageRuns.reduce((sum: number, r: any) => sum + (r.qtyGood || 0), 0)
+
+  // Find box item from BOM if output UOM is cartoon
+  const boxItem = stageOutputUOM === 'cartoon' && Array.isArray(job.bom)
+    ? job.bom.find((item: any) => {
+        const uom = String(item.uom || '').toLowerCase()
+        return uom === 'box' || uom === 'boxes'
+      })
+    : null
+
+  // Find sheet item from BOM
+  const sheetItem = Array.isArray(job.bom) ? job.bom.find((item: any) => {
+    const uom = String(item.uom || '').toLowerCase()
+    return uom === 'sht' || uom === 'sheet' || uom === 'sheets'
+  }) : null
+
+  // Calculate planned quantity based on stage output UOM
+  let plannedQty: number
+  if (stageOutputUOM === 'cartoon') {
+    // If output is cartoon, calculate: plannedBoxes * pcsPerBox = planned cartoon
+    const boxQty = job.packaging?.plannedBoxes
+      || (boxItem ? Number(boxItem.qtyRequired || 0) : 0)
+      || (job.unit === 'box' ? Number(job.quantity || 0) : 0)
+    const pcsPerBox = job.packaging?.pcsPerBox || 1
+    plannedQty = boxQty * pcsPerBox
+  } else {
+    // Find sheet item from BOM
+    plannedQty = sheetItem ? Number(sheetItem.qtyRequired || 0) : ((job.output?.[0]?.qtyPlanned as number) || Number(job.quantity || 0))
+  }
+
+  const completionThresholdLower = Math.max(0, plannedQty - WASTAGE_THRESHOLD_LOWER)
+  const completionThresholdUpper = plannedQty + WASTAGE_THRESHOLD_UPPER
+  // Threshold met: alt sınır ile üst sınır arasında olmalı
+  const isThresholdMet = plannedQty > 0 && totalProduced >= completionThresholdLower && totalProduced <= completionThresholdUpper
+  return { totalProduced, plannedQty, completionThreshold: completionThresholdLower, completionThresholdUpper, isThresholdMet }
+}
+
+/**
+ * Detect jobs that are stuck between stages
+ * A job is considered "stuck" if:
+ * - Previous stage has output (production runs exist)
+ * - Current stage hasn't started (no production runs for current stage)
+ * - OR: Current stage threshold is met (ready to move) but hasn't moved to next stage yet
+ * - Job is not completed
+ */
+export function detectStuckJobs(
+  jobs: any[],
+  allRunsData: { [jobId: string]: ProductionRun[] } | undefined,
+  workflows: any[],
+  workcenters: Array<{ id: string; name: string }> = []
+): StuckJobData[] {
+  if (!allRunsData) return []
+  
+  const stuckJobs: StuckJobData[] = []
+  const now = new Date()
+  
+  const getStageName = (stageId: string, workflows: any[]): string => {
+    for (const wf of workflows) {
+      const stage = wf.stages?.find((s: any) => s.id === stageId)
+      if (stage) return stage.name
+    }
+    return stageId
+  }
+  
+  const getStageInfo = (stageId: string, workflows: any[]): any => {
+    for (const wf of workflows) {
+      const stage = wf.stages?.find((s: any) => s.id === stageId)
+      if (stage) return stage
+    }
+    return null
+  }
+  
+  jobs.forEach(job => {
+    // Skip completed or cancelled jobs
+    if (job.status === 'done' || job.status === 'cancelled') return
+    
+    const currentStageId = job.currentStageId
+    if (!currentStageId) return
+    
+    const runs = allRunsData[job.id] || []
+    
+    // Find workflow and stage order
+    const workflow = workflows.find(w => w.id === job.workflowId)
+    if (!workflow) return
+    
+    const plannedStageIds: string[] = Array.isArray(job.plannedStageIds) 
+      ? job.plannedStageIds 
+      : []
+    
+    const stageOrder = (workflow.stages || [])
+      .filter((s: any) => plannedStageIds.length === 0 || plannedStageIds.includes(s.id))
+      .sort((a: any, b: any) => a.order - b.order)
+    
+    const currentStageIndex = stageOrder.findIndex((s: any) => s.id === currentStageId)
+    if (currentStageIndex < 0) return // Stage not found
+    
+    // Check if current stage has started (has production runs)
+    const currentStageRuns = runs.filter((r: any) => {
+      if (r.stageId !== currentStageId) return false
+      return !(r.transferSourceRunIds && Array.isArray(r.transferSourceRunIds) && r.transferSourceRunIds.length > 0)
+    })
+    
+    // Get next stage
+    const nextStage = currentStageIndex >= 0 && currentStageIndex + 1 < stageOrder.length
+      ? stageOrder[currentStageIndex + 1]
+      : null
+    
+    // Check if next stage has started (if there is a next stage)
+    let nextStageRuns: any[] = []
+    if (nextStage) {
+      nextStageRuns = runs.filter((r: any) => {
+        if (r.stageId !== nextStage.id) return false
+        return !(r.transferSourceRunIds && Array.isArray(r.transferSourceRunIds) && r.transferSourceRunIds.length > 0)
+      })
+    }
+    
+    // Case 1: Previous stage has output but current stage hasn't started
+    let isStuckCase1 = false
+    let stuckFromStage1: any = null
+    let stuckOutput1 = 0
+    let stuckOutputUOM1 = 'sheets'
+    let lastOutputTime1: Date | null = null
+    
+    if (currentStageIndex > 0 && currentStageRuns.length === 0) {
+      // Get previous stage
+      const previousStage = stageOrder[currentStageIndex - 1]
+      if (previousStage) {
+        // Check if previous stage has output
+        const previousStageRuns = runs.filter((r: any) => {
+          if (r.stageId !== previousStage.id) return false
+          return !(r.transferSourceRunIds && Array.isArray(r.transferSourceRunIds) && r.transferSourceRunIds.length > 0)
+        })
+        
+        if (previousStageRuns.length > 0) {
+          const previousStageTotalOutput = previousStageRuns.reduce((sum: number, r: any) => {
+            return sum + (r.qtyGood || 0)
+          }, 0)
+          
+          if (previousStageTotalOutput > 0) {
+            isStuckCase1 = true
+            stuckFromStage1 = previousStage
+            stuckOutput1 = previousStageTotalOutput
+            const previousStageInfo = getStageInfo(previousStage.id, workflows)
+            stuckOutputUOM1 = previousStageInfo?.outputUOM || previousStageInfo?.inputUOM || 'sheets'
+            
+            // Find when previous stage output was completed
+            const lastPreviousRun = previousStageRuns.sort((a: any, b: any) => {
+              const aTime = a.at?.seconds ? a.at.seconds * 1000 : new Date(a.at).getTime()
+              const bTime = b.at?.seconds ? b.at.seconds * 1000 : new Date(b.at).getTime()
+              return bTime - aTime
+            })[0]
+            
+            lastOutputTime1 = lastPreviousRun?.at?.seconds 
+              ? new Date(lastPreviousRun.at.seconds * 1000)
+              : new Date(lastPreviousRun?.at || now)
+          }
+        }
+      }
+    }
+    
+    // Case 2: Current stage threshold is met (ready to move) but next stage hasn't started yet
+    let isStuckCase2 = false
+    let stuckOutput2 = 0
+    let stuckOutputUOM2 = 'sheets'
+    let lastOutputTime2: Date | null = null
+    
+    if (currentStageRuns.length > 0 && nextStage && nextStageRuns.length === 0) {
+      // Check if current stage threshold is met (ready to move to next stage)
+      const thresholdCheck = checkStageThreshold(job, currentStageId, workflows, allRunsData)
+      const isReadyToMove = thresholdCheck.isThresholdMet
+      
+      if (isReadyToMove) {
+        isStuckCase2 = true
+        stuckOutput2 = thresholdCheck.totalProduced
+        const currentStageInfo = getStageInfo(currentStageId, workflows)
+        stuckOutputUOM2 = currentStageInfo?.outputUOM || currentStageInfo?.inputUOM || 'sheets'
+        
+        // Find when current stage output was completed (last run)
+        const lastCurrentRun = currentStageRuns.sort((a: any, b: any) => {
+          const aTime = a.at?.seconds ? a.at.seconds * 1000 : new Date(a.at).getTime()
+          const bTime = b.at?.seconds ? b.at.seconds * 1000 : new Date(b.at).getTime()
+          return bTime - aTime
+        })[0]
+        
+        lastOutputTime2 = lastCurrentRun?.at?.seconds 
+          ? new Date(lastCurrentRun.at.seconds * 1000)
+          : new Date(lastCurrentRun?.at || now)
+      }
+    }
+    
+    // If either case is true, job is stuck
+    if (isStuckCase1 || isStuckCase2) {
+      // Determine which case to use (prioritize case 1 if both are true)
+      const useCase1 = isStuckCase1
+      const stuckFromStage = useCase1 ? stuckFromStage1 : { id: currentStageId, name: getStageName(currentStageId, workflows) }
+      const stuckToStage = useCase1 
+        ? { id: currentStageId, name: getStageName(currentStageId, workflows) }
+        : (nextStage ? { id: nextStage.id, name: getStageName(nextStage.id, workflows) } : null)
+      
+      if (!stuckToStage) return // No next stage
+      
+      const stuckOutput = useCase1 ? stuckOutput1 : stuckOutput2
+      const stuckOutputUOM = useCase1 ? stuckOutputUOM1 : stuckOutputUOM2
+      const lastOutputTime = useCase1 ? lastOutputTime1! : lastOutputTime2!
+      
+      const daysStuck = (now.getTime() - lastOutputTime.getTime()) / (1000 * 60 * 60 * 24)
+      
+      // Get board/sheet name from BOM or productionSpecs
+      let boardSheetName: string | undefined
+      if (job.bom && Array.isArray(job.bom)) {
+        // Find sheet item in BOM
+        const sheetItem = job.bom.find((item: any) => {
+          const uom = (item.uom || '').toLowerCase()
+          return ['sht', 'sheet', 'sheets'].includes(uom)
+        })
+        if (sheetItem?.name) {
+          boardSheetName = sheetItem.name
+        }
+      }
+      // Fallback to productionSpecs.board if no BOM item found
+      if (!boardSheetName && (job as any).productionSpecs?.board) {
+        const specs = (job as any).productionSpecs
+        const boardParts = [specs.board]
+        if (specs.microns) boardParts.push(`${specs.microns} MICRON`)
+        if (specs.gsm) boardParts.push(specs.gsm)
+        boardSheetName = boardParts.filter(Boolean).join(' ')
+      }
+      
+      // Get customer name, default to "Regular production" if not available
+      const customerName = job.customer?.name || 'Regular production'
+      
+      // Get workcenter name from workcenters list
+      const workcenter = job.workcenterId 
+        ? workcenters.find(wc => wc.id === job.workcenterId)
+        : null
+      const workcenterName = workcenter?.name || undefined
+      
+      stuckJobs.push({
+        jobId: job.id,
+        jobCode: job.code,
+        jobName: job.productName,
+        boardSheetName,
+        customerName,
+        currentStageId: stuckToStage.id,
+        currentStageName: stuckToStage.name,
+        previousStageId: stuckFromStage.id,
+        previousStageName: stuckFromStage.name,
+        previousStageOutput: stuckOutput,
+        previousStageOutputUOM: stuckOutputUOM,
+        daysStuck: Math.max(0, daysStuck),
+        priority: job.priority || 0,
+        dueDate: new Date(job.dueDate),
+        workcenterId: job.workcenterId,
+        workcenterName
+      })
+    }
+  })
+  
+  return stuckJobs.sort((a, b) => {
+    // Sort by priority first, then by days stuck
+    if (a.priority !== b.priority) return b.priority - a.priority
+    return b.daysStuck - a.daysStuck
+  })
+}
+
+/**
+ * Calculate WIP inventory between stages (stock perspective)
+ * This tracks physical quantities that have been produced in one stage
+ * but haven't been processed in the next stage yet
+ */
+export function calculateWIPInventoryBetweenStages(
+  jobs: any[],
+  allRunsData: { [jobId: string]: ProductionRun[] } | undefined,
+  workflows: any[]
+): WIPInventoryData[] {
+  if (!allRunsData) return []
+  
+  const wipData: { [key: string]: WIPInventoryData } = {}
+  const now = new Date()
+  
+  const getStageName = (stageId: string, workflows: any[]): string => {
+    for (const wf of workflows) {
+      const stage = wf.stages?.find((s: any) => s.id === stageId)
+      if (stage) return stage.name
+    }
+    return stageId
+  }
+  
+  const getStageInfo = (stageId: string, workflows: any[]): any => {
+    for (const wf of workflows) {
+      const stage = wf.stages?.find((s: any) => s.id === stageId)
+      if (stage) return stage
+    }
+    return null
+  }
+  
+  jobs.forEach(job => {
+    if (job.status === 'done' || job.status === 'cancelled') return
+    
+    const currentStageId = job.currentStageId
+    if (!currentStageId) return
+    
+    const runs = allRunsData[job.id] || []
+    const workflow = workflows.find(w => w.id === job.workflowId)
+    if (!workflow) return
+    
+    const plannedStageIds: string[] = Array.isArray(job.plannedStageIds) 
+      ? job.plannedStageIds 
+      : []
+    
+    const stageOrder = (workflow.stages || [])
+      .filter((s: any) => plannedStageIds.length === 0 || plannedStageIds.includes(s.id))
+      .sort((a: any, b: any) => a.order - b.order)
+    
+    const currentStageIndex = stageOrder.findIndex((s: any) => s.id === currentStageId)
+    if (currentStageIndex <= 0) return
+    
+    const previousStage = stageOrder[currentStageIndex - 1]
+    if (!previousStage) return
+    
+    // Get previous stage output
+    const previousStageRuns = runs.filter((r: any) => {
+      if (r.stageId !== previousStage.id) return false
+      return !(r.transferSourceRunIds && Array.isArray(r.transferSourceRunIds) && r.transferSourceRunIds.length > 0)
+    })
+    
+    if (previousStageRuns.length === 0) return
+    
+    const previousStageTotalOutput = previousStageRuns.reduce((sum: number, r: any) => {
+      return sum + (r.qtyGood || 0)
+    }, 0)
+    
+    if (previousStageTotalOutput === 0) return
+    
+    // Get current stage input (runs that have started)
+    const currentStageRuns = runs.filter((r: any) => {
+      if (r.stageId !== currentStageId) return false
+      return !(r.transferSourceRunIds && Array.isArray(r.transferSourceRunIds) && r.transferSourceRunIds.length > 0)
+    })
+    
+    const currentStageTotalInput = currentStageRuns.reduce((sum: number, r: any) => {
+      return sum + (r.qtyGood || 0)
+    }, 0)
+    
+    // Calculate WIP quantity (output from previous - input to current)
+    const wipQuantity = previousStageTotalOutput - currentStageTotalInput
+    
+    if (wipQuantity <= 0) return // No WIP
+    
+    const key = `${previousStage.id}->${currentStageId}`
+    
+    if (!wipData[key]) {
+      const previousStageInfo = getStageInfo(previousStage.id, workflows)
+      const uom = previousStageInfo?.outputUOM || previousStageInfo?.inputUOM || 'sheets'
+      
+      wipData[key] = {
+        fromStageId: previousStage.id,
+        fromStageName: getStageName(previousStage.id, workflows),
+        toStageId: currentStageId,
+        toStageName: getStageName(currentStageId, workflows),
+        quantity: 0,
+        uom,
+        jobCount: 0,
+        jobs: []
+      }
+    }
+    
+    // Find when previous stage output was completed
+    const lastPreviousRun = previousStageRuns.sort((a: any, b: any) => {
+      const aTime = a.at?.seconds ? a.at.seconds * 1000 : new Date(a.at).getTime()
+      const bTime = b.at?.seconds ? b.at.seconds * 1000 : new Date(b.at).getTime()
+      return bTime - aTime
+    })[0]
+    
+    const lastOutputTime = lastPreviousRun?.at?.seconds 
+      ? new Date(lastPreviousRun.at.seconds * 1000)
+      : new Date(lastPreviousRun?.at || now)
+    
+    const daysInTransition = (now.getTime() - lastOutputTime.getTime()) / (1000 * 60 * 60 * 24)
+    
+    wipData[key].quantity += wipQuantity
+    wipData[key].jobCount += 1
+    wipData[key].jobs.push({
+      jobId: job.id,
+      jobCode: job.code,
+      quantity: wipQuantity,
+      daysInTransition: Math.max(0, daysInTransition)
+    })
+  })
+  
+  return Object.values(wipData).sort((a, b) => b.quantity - a.quantity)
+}
+
+/**
+ * Calculate comprehensive bottleneck analysis by stage
+ */
+export function calculateStageBottlenecks(
+  jobs: any[],
+  allRunsData: { [jobId: string]: ProductionRun[] } | undefined,
+  workflows: any[],
+  workcenters: Array<{ id: string; name: string }> = []
+): StageBottleneckData[] {
+  const stuckJobs = detectStuckJobs(jobs, allRunsData, workflows, workcenters)
+  const wipInventory = calculateWIPInventoryBetweenStages(jobs, allRunsData, workflows)
+  
+  const bottlenecks: { [stageId: string]: StageBottleneckData } = {}
+  
+  const getStageName = (stageId: string, workflows: any[]): string => {
+    for (const wf of workflows) {
+      const stage = wf.stages?.find((s: any) => s.id === stageId)
+      if (stage) return stage.name
+    }
+    return stageId
+  }
+  
+  // Group stuck jobs by current stage (where they're stuck)
+  stuckJobs.forEach(stuck => {
+    if (!bottlenecks[stuck.currentStageId]) {
+      bottlenecks[stuck.currentStageId] = {
+        stageId: stuck.currentStageId,
+        stageName: stuck.currentStageName,
+        jobsStuck: 0,
+        totalWIPQuantity: 0,
+        uom: stuck.previousStageOutputUOM,
+        avgDaysStuck: 0,
+        stuckJobs: [],
+        wipInventoryOut: []
+      }
+    }
+    
+    bottlenecks[stuck.currentStageId].jobsStuck += 1
+    bottlenecks[stuck.currentStageId].totalWIPQuantity += stuck.previousStageOutput
+    bottlenecks[stuck.currentStageId].stuckJobs.push(stuck)
+  })
+  
+  // Add WIP inventory data
+  wipInventory.forEach(wip => {
+    if (!bottlenecks[wip.toStageId]) {
+      bottlenecks[wip.toStageId] = {
+        stageId: wip.toStageId,
+        stageName: wip.toStageName,
+        jobsStuck: 0,
+        totalWIPQuantity: 0,
+        uom: wip.uom,
+        avgDaysStuck: 0,
+        stuckJobs: [],
+        wipInventoryOut: []
+      }
+    }
+    
+    bottlenecks[wip.toStageId].wipInventoryOut.push(wip)
+    bottlenecks[wip.toStageId].totalWIPQuantity += wip.quantity
+  })
+  
+  // Calculate averages
+  Object.values(bottlenecks).forEach(bottleneck => {
+    if (bottleneck.stuckJobs.length > 0) {
+      bottleneck.avgDaysStuck = bottleneck.stuckJobs.reduce((sum, job) => sum + job.daysStuck, 0) / bottleneck.stuckJobs.length
+    }
+  })
+  
+  return Object.values(bottlenecks).sort((a, b) => {
+    // Sort by total WIP quantity (most critical first)
+    return b.totalWIPQuantity - a.totalWIPQuantity
+  })
+}
+

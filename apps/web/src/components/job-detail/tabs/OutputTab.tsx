@@ -1,7 +1,7 @@
 import { useState, type FC, type ReactNode } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import type { Job, ProductionRun, Workflow } from '../../../api/production-jobs'
-import { listJobProductionRuns, createProductionRun } from '../../../api/production-jobs'
+import { listJobProductionRuns, createProductionRun, deleteProductionRun } from '../../../api/production-jobs'
 
 interface OutputTabProps {
   job: Job
@@ -17,8 +17,44 @@ export const OutputTab: FC<OutputTabProps> = ({ job, workspaceId, workcenters, w
     enabled: !!workspaceId && !!job?.id,
   })
   const queryClient = useQueryClient()
+
+  // Filter out transfer-only runs (those created just to move lots between stages)
+  // Transfer runs have transferSourceRunIds set - we don't want to treat them as actual output here
+  const displayRuns = runs.filter(r => {
+    const anyRun = r as any
+    return !anyRun.transferSourceRunIds || !Array.isArray(anyRun.transferSourceRunIds) || anyRun.transferSourceRunIds.length === 0
+  })
+
+  // Determine which runs have already been transferred to next stage
+  // Simple check: if a run's lot number exists in a later stage, it's already transferred
+  const isRunAlreadyTransferred = (run: ProductionRun) => {
+    if (!run.lot) return false
+    
+    // Check if this lot number exists in any later stage
+    const runStageIndex = stageOptions.findIndex(s => s.id === run.stageId)
+    if (runStageIndex === -1) return false
+    
+    // Check all stages after this one
+    for (let i = runStageIndex + 1; i < stageOptions.length; i++) {
+      const laterStageId = stageOptions[i].id
+      const laterStageRuns = runs.filter(r => r.stageId === laterStageId)
+      if (laterStageRuns.some(r => r.lot === run.lot)) {
+        return true
+      }
+    }
+    
+    return false
+  }
   const createRunMutation = useMutation({
     mutationFn: (payload: Omit<ProductionRun, 'id' | 'at'>) => createProductionRun(workspaceId, job.id, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['jobRuns', workspaceId, job.id] })
+      queryClient.invalidateQueries({ queryKey: ['job', workspaceId, job.id] })
+    }
+  })
+
+  const deleteRunMutation = useMutation({
+    mutationFn: (runId: string) => deleteProductionRun(workspaceId, job.id, runId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['jobRuns', workspaceId, job.id] })
       queryClient.invalidateQueries({ queryKey: ['job', workspaceId, job.id] })
@@ -129,7 +165,9 @@ export const OutputTab: FC<OutputTabProps> = ({ job, workspaceId, workcenters, w
         </div>
 
         {(() => {
-          const groupedByStage = runs.reduce((acc: Record<string, typeof runs>, r) => {
+          // Use displayRuns (excludes transfer runs) for accurate "By Stage" summary
+          // Transfer runs are WIP transfers, not actual production output
+          const groupedByStage = displayRuns.reduce((acc: Record<string, typeof displayRuns>, r) => {
             const stageId = r.stageId
             if (!acc[stageId]) acc[stageId] = []
             acc[stageId].push(r)
@@ -156,6 +194,7 @@ export const OutputTab: FC<OutputTabProps> = ({ job, workspaceId, workcenters, w
                   const stageRuns = groupedByStage[stageId]
                   const stageName = getStageName(stageId)
                   const stageOutputUOM = getStageOutputUOM(stageId)
+                  // Only sum actual production runs (transfer runs already excluded in displayRuns)
                   const stageTotalGood = stageRuns.reduce((sum, r) => sum + (r.qtyGood || 0), 0)
                   const stageTotalScrap = stageRuns.reduce((sum, r) => sum + (r.qtyScrap || 0), 0)
 
@@ -177,14 +216,14 @@ export const OutputTab: FC<OutputTabProps> = ({ job, workspaceId, workcenters, w
       <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-3 md:hidden">
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-sm font-semibold text-gray-900">Production Runs</h3>
-          <span className="text-xs text-gray-500">{runs.length} records</span>
+          <span className="text-xs text-gray-500">{displayRuns.length} records</span>
         </div>
-        {runs.length === 0 && (
+        {displayRuns.length === 0 && (
           <p className="text-sm text-gray-500 text-center py-4">
             No production runs recorded yet.
           </p>
         )}
-        {runs
+          {displayRuns
           .slice()
           .sort((a, b) => {
             const dateA = a.at?.seconds ? a.at.seconds * 1000 : new Date(a.at).getTime()
@@ -194,18 +233,26 @@ export const OutputTab: FC<OutputTabProps> = ({ job, workspaceId, workcenters, w
           .map((r) => {
             const stageName = getStageName(r.stageId)
             const unit = getStageOutputUOM(r.stageId)
+            const alreadyTransferred = isRunAlreadyTransferred(r)
             return (
               <div
                 key={r.id}
-                className="border border-gray-100 rounded-lg px-3 py-2.5 shadow-sm bg-gray-50"
+                className={`border border-gray-100 rounded-lg px-3 py-2.5 shadow-sm ${alreadyTransferred ? 'bg-gray-100 opacity-60' : 'bg-gray-50'}`}
               >
                 <div className="flex items-center justify-between mb-1.5">
                   <p className="text-xs font-medium text-gray-500">
                     {new Date(r.at?.seconds ? r.at.seconds * 1000 : r.at).toLocaleString()}
                   </p>
-                  <p className="text-xs font-semibold text-gray-700">
-                    {stageName}
-                  </p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-xs font-semibold text-gray-700">
+                      {stageName}
+                    </p>
+                    {alreadyTransferred && (
+                      <span className="px-1.5 py-0.5 text-[10px] font-medium bg-orange-100 text-orange-700 rounded">
+                        Transferred
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <div className="flex items-center justify-between text-sm">
                   <div>
@@ -246,7 +293,7 @@ export const OutputTab: FC<OutputTabProps> = ({ job, workspaceId, workcenters, w
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {(() => {
-                const groupedByStage = runs.reduce((acc: Record<string, typeof runs>, r) => {
+                const groupedByStage = displayRuns.reduce((acc: Record<string, ProductionRun[]>, r) => {
                   const stageId = r.stageId
                   if (!acc[stageId]) acc[stageId] = []
                   acc[stageId].push(r)
@@ -272,7 +319,7 @@ export const OutputTab: FC<OutputTabProps> = ({ job, workspaceId, workcenters, w
                   const stageTotalGood = stageRuns.reduce((sum, r) => sum + (r.qtyGood || 0), 0)
                   const stageTotalScrap = stageRuns.reduce((sum, r) => sum + (r.qtyScrap || 0), 0)
 
-                  const sortedRuns = stageRuns.sort((a, b) => {
+                  const sortedRuns = stageRuns.slice().sort((a, b) => {
                     const dateA = a.at?.seconds ? a.at.seconds * 1000 : new Date(a.at).getTime()
                     const dateB = b.at?.seconds ? b.at.seconds * 1000 : new Date(b.at).getTime()
                     return dateB - dateA
@@ -301,12 +348,19 @@ export const OutputTab: FC<OutputTabProps> = ({ job, workspaceId, workcenters, w
 
                   sortedRuns.forEach((r) => {
                     const runStageOutputUOM = getStageOutputUOM(r.stageId)
+                    const alreadyTransferred = isRunAlreadyTransferred(r)
                     rows.push(
-                      <tr key={r.id} className="hover:bg-gray-50">
+                      <tr key={r.id} className={`hover:bg-gray-50 ${alreadyTransferred ? 'opacity-60 bg-gray-50' : ''}`}>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                           {new Date(r.at?.seconds ? r.at.seconds * 1000 : r.at).toLocaleString()}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 pl-8"></td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 pl-8">
+                          {alreadyTransferred && (
+                            <span className="px-2 py-0.5 text-xs font-medium bg-orange-100 text-orange-700 rounded-full">
+                              Already transferred
+                            </span>
+                          )}
+                        </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                           {getWorkcenterName(r.workcenterId)}
                         </td>
@@ -325,7 +379,19 @@ export const OutputTab: FC<OutputTabProps> = ({ job, workspaceId, workcenters, w
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                           {r.operatorId}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm"></td>
+                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
+                          <button
+                            className="text-red-600 hover:text-red-800 font-medium text-xs"
+                            disabled={deleteRunMutation.isPending}
+                            onClick={async () => {
+                              const confirmed = window.confirm('Are you sure you want to delete this production run? This action cannot be undone.')
+                              if (!confirmed) return
+                              await deleteRunMutation.mutateAsync(r.id)
+                            }}
+                          >
+                            Delete
+                          </button>
+                        </td>
                       </tr>
                     )
                   })

@@ -26,9 +26,10 @@ import { listStockReasons, type StockReason } from '../api/settings'
 
 import { useSessionStore } from '../state/sessionStore'
 import { createStockTransaction, listProductStockTxns, type UiTxnType, getProductOnHand, recalculateProductStock } from '../api/inventory'
-import { listGroups, type Group, updateProduct, saveProductQr, deleteProductQr, listProductTickets, createProductTicket, updateProductTicket, deleteProductTicket, type Ticket } from '../api/products'
+import { listGroups, type Group, updateProduct, saveProductQr, deleteProductQr, saveProductBarcode, deleteProductBarcode, listProductTickets, createProductTicket, updateProductTicket, deleteProductTicket, type Ticket } from '../api/products'
 import { listUOMs, listCategories, listSubcategories, listCustomFields } from '../api/settings'
 import { generateQRCodeDataURL, downloadQRCode, type QRCodeResult } from '../utils/qrcode'
+import { generateBarcodeDataURL, downloadBarcode, type BarcodeResult, type BarcodeOptions, LABEL_SIZES, PAPER_SIZES, type LabelSize, type PaperSize } from '../utils/barcode'
 import { toCSV, downloadCSV } from '../utils/csv'
 
 // Types remain unchanged
@@ -393,7 +394,7 @@ function StockTrendChart({ history }: { history: StockAdjustment[] }) {
 }
 
 export function ProductDetails({ product, onClose, onSaved }: Props) {
-  const [activeTab, setActiveTab] = useState<'overview' | 'history' | 'tickets' | 'settings' | 'qr'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'history' | 'tickets' | 'settings' | 'qr' | 'barcode'>('overview')
   // Consolidate adjustment state
   const [adjState, setAdjState] = useState({
     type: 'in' as UiTxnType | 'adjustment',
@@ -517,22 +518,117 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
     error: string | null;
   }>({
     localUrl: null,
-    remoteUrl: (product as any).qrUrl || (product as any).barcodeUrl || null,
+    remoteUrl: (product as any).qrUrl || null,
     info: null,
     busy: false,
     error: null
   })
 
+  // Barcode State
+  const [barcodeData, setBarcodeData] = useState<{
+    localUrl: string | null;
+    remoteUrl: string | null;
+    info: BarcodeResult | null;
+    busy: boolean;
+    error: string | null;
+  }>({
+    localUrl: null,
+    remoteUrl: (product as any).barcodeUrl || null,
+    info: null,
+    busy: false,
+    error: null
+  })
+
+  // Barcode Options State
+  const [barcodeOptions, setBarcodeOptions] = useState<BarcodeOptions>({
+    format: 'CODE128',
+    labelSize: '100x50',
+    paperSize: 'A4',
+    showText: true,
+    content: {
+      includeSKU: true,
+      includeProductName: true,
+      includePrice: false,
+      includeCategory: false,
+    },
+  })
+
   // Update QR data when product changes
   useEffect(() => {
-    const qrUrl = (product as any).qrUrl || (product as any).barcodeUrl || null
+    const qrUrl = (product as any).qrUrl || null
     setQrData(prev => ({
       ...prev,
       remoteUrl: qrUrl,
       // Keep localUrl if exists, otherwise clear if remoteUrl is removed
       localUrl: qrUrl ? null : prev.localUrl
     }))
-  }, [(product as any).qrUrl, (product as any).barcodeUrl])
+  }, [(product as any).qrUrl])
+
+  // Update Barcode data when product changes
+  useEffect(() => {
+    const barcodeUrl = (product as any).barcodeUrl || null
+    setBarcodeData(prev => ({
+      ...prev,
+      remoteUrl: barcodeUrl,
+      // Keep localUrl if exists, otherwise clear if remoteUrl is removed
+      localUrl: barcodeUrl ? null : prev.localUrl
+    }))
+  }, [(product as any).barcodeUrl])
+
+  // Auto-generate barcode preview when options change (only in barcode tab) - TEMPORARILY DISABLED
+  useEffect(() => {
+    // Temporarily disabled
+    return
+    // if (activeTab !== 'barcode' || !workspaceId) return
+    // if (!product.sku && !product.id) return
+
+    // let cancelled = false
+    // const timeoutId = setTimeout(async () => {
+    //   try {
+    //     setBarcodeData(prev => ({ ...prev, busy: true, error: null }))
+    //     const sku = product.sku || product.id
+    //     const groupName = product.groupId ? groups.find(g => g.id === product.groupId)?.name : undefined
+    //     const options: BarcodeOptions = {
+    //       ...barcodeOptions,
+    //       productData: {
+    //         sku: product.sku || product.id,
+    //         name: product.name,
+    //         price: product.pricePerBox,
+    //         category: product.category,
+    //         subcategory: product.subcategory,
+    //         uom: product.uom,
+    //         quantityBox: product.quantityBox,
+    //         pcsPerBox: product.pcsPerBox,
+    //         materialSeries: product.materialSeries,
+    //         boardType: product.boardType,
+    //         gsm: product.gsm,
+    //         dimensionsWxLmm: product.dimensionsWxLmm,
+    //         cal: product.cal,
+    //         minStock: product.minStock,
+    //         reorderPoint: product.reorderPoint,
+    //         minLevelBox: product.minLevelBox,
+    //         status: product.status,
+    //         groupName: groupName,
+    //         tags: product.tags,
+    //         notes: product.notes,
+    //       },
+    //     }
+    //     const res = await generateBarcodeDataURL(sku, options)
+    //     if (!cancelled) {
+    //       setBarcodeData(prev => ({ ...prev, localUrl: res.dataUrl, info: res, busy: false }))
+    //     }
+    //   } catch (e: any) {
+    //     if (!cancelled) {
+    //       setBarcodeData(prev => ({ ...prev, error: e?.message || 'Failed to generate preview', busy: false }))
+    //     }
+    //   }
+    // }, 500) // Debounce 500ms
+
+    // return () => {
+    //   cancelled = true
+    //   clearTimeout(timeoutId)
+    // }
+  }, [activeTab, barcodeOptions, product, groups, workspaceId])
 
   // Image State
   const [selectedImage, setSelectedImage] = useState<string | null>((product as any).imageUrl || null)
@@ -662,7 +758,7 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
           throw new Error('No QR code generated. Please generate a QR code first.')
         }
         const url = await saveProductQr(workspaceId, product.id, localUrl)
-        await updateProduct(workspaceId, product.id, { qrUrl: url, barcodeUrl: url } as any)
+        await updateProduct(workspaceId, product.id, { qrUrl: url } as any)
         setQrData(prev => ({ ...prev, remoteUrl: url, localUrl: null }))
         onSaved?.()
       } else if (action === 'delete') {
@@ -670,7 +766,7 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
           throw new Error('No QR code saved to delete')
         }
         await deleteProductQr(workspaceId, product.id)
-        await updateProduct(workspaceId, product.id, { qrUrl: null, barcodeUrl: null } as any)
+        await updateProduct(workspaceId, product.id, { qrUrl: null } as any)
         setQrData(prev => ({ ...prev, remoteUrl: null, localUrl: null, info: null }))
         onSaved?.()
       } else if (action === 'download') {
@@ -710,6 +806,104 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
       setQrData(prev => ({ ...prev, error: e?.message || 'An error occurred' }))
     } finally {
       setQrData(prev => ({ ...prev, busy: false }))
+    }
+  }
+
+  const handleBarcode = async (action: 'generate' | 'save' | 'delete' | 'download') => {
+    if (!workspaceId) {
+      setBarcodeData(prev => ({ ...prev, error: 'Workspace ID is required' }))
+      return
+    }
+
+    setBarcodeData(prev => ({ ...prev, busy: true, error: null }))
+    try {
+      if (action === 'generate') {
+        const sku = product.sku || product.id
+        if (!sku) {
+          throw new Error('Product SKU or ID is required to generate barcode')
+        }
+        const groupName = product.groupId ? groups.find(g => g.id === product.groupId)?.name : undefined
+        const options: BarcodeOptions = {
+          ...barcodeOptions,
+          productData: {
+            sku: product.sku || product.id,
+            name: product.name,
+            price: product.pricePerBox,
+            category: product.category,
+            subcategory: product.subcategory,
+            uom: product.uom,
+            quantityBox: product.quantityBox,
+            pcsPerBox: product.pcsPerBox,
+            materialSeries: product.materialSeries,
+            boardType: product.boardType,
+            gsm: product.gsm,
+            dimensionsWxLmm: product.dimensionsWxLmm,
+            cal: product.cal,
+            minStock: product.minStock,
+            reorderPoint: product.reorderPoint,
+            minLevelBox: product.minLevelBox,
+            status: product.status,
+            groupName: groupName,
+            tags: product.tags,
+            notes: product.notes,
+          },
+        }
+        const res = await generateBarcodeDataURL(sku, options)
+        setBarcodeData(prev => ({ ...prev, localUrl: res.dataUrl, info: res }))
+      } else if (action === 'save') {
+        const localUrl = barcodeData.localUrl
+        if (!localUrl) {
+          throw new Error('No barcode generated. Please generate a barcode first.')
+        }
+        const url = await saveProductBarcode(workspaceId, product.id, localUrl)
+        await updateProduct(workspaceId, product.id, { barcodeUrl: url } as any)
+        setBarcodeData(prev => ({ ...prev, remoteUrl: url, localUrl: null }))
+        onSaved?.()
+      } else if (action === 'delete') {
+        if (!barcodeData.remoteUrl) {
+          throw new Error('No barcode saved to delete')
+        }
+        await deleteProductBarcode(workspaceId, product.id)
+        await updateProduct(workspaceId, product.id, { barcodeUrl: null } as any)
+        setBarcodeData(prev => ({ ...prev, remoteUrl: null, localUrl: null, info: null }))
+        onSaved?.()
+      } else if (action === 'download') {
+        const barcodeUrl = barcodeData.localUrl || barcodeData.remoteUrl
+        if (!barcodeUrl) {
+          throw new Error('No barcode available to download')
+        }
+        const cleanSku = (product.sku || product.id).replace(/[^a-zA-Z0-9-_]/g, '_')
+
+        // If remoteUrl (HTTP URL), fetch and convert to data URL for download
+        if (barcodeData.remoteUrl && !barcodeData.localUrl) {
+          try {
+            const response = await fetch(barcodeData.remoteUrl)
+            const blob = await response.blob()
+            const reader = new FileReader()
+            reader.onloadend = () => {
+              downloadBarcode(reader.result as string, `${cleanSku}_Barcode.png`)
+            }
+            reader.readAsDataURL(blob)
+          } catch (fetchError) {
+            // Fallback: try direct download
+            const link = document.createElement('a')
+            link.href = barcodeData.remoteUrl
+            link.download = `${cleanSku}_Barcode.png`
+            link.target = '_blank'
+            document.body.appendChild(link)
+            link.click()
+            document.body.removeChild(link)
+          }
+        } else {
+          // Use localUrl (data URL) directly
+          downloadBarcode(barcodeUrl, `${cleanSku}_Barcode.png`)
+        }
+      }
+    } catch (e: any) {
+      console.error('Barcode action error:', e)
+      setBarcodeData(prev => ({ ...prev, error: e?.message || 'An error occurred' }))
+    } finally {
+      setBarcodeData(prev => ({ ...prev, busy: false }))
     }
   }
 
@@ -994,6 +1188,16 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
                   <QrCodeIcon className="w-6 h-6" />
                   <span className="text-xs font-semibold">QR Code</span>
                 </button>
+                {/* Barcode button temporarily hidden */}
+                {false && (
+                <button
+                  onClick={() => setActiveTab('barcode')}
+                  className="flex flex-col items-center justify-center gap-2 p-4 rounded-xl border-2 border-gray-200 bg-white text-gray-700 hover:bg-teal-50 hover:border-teal-300 hover:text-teal-600 transition-all shadow-sm hover:shadow-md active:scale-95"
+                >
+                  <DocumentTextIcon className="w-6 h-6" />
+                  <span className="text-xs font-semibold">Barcode</span>
+                </button>
+                )}
                 <button
                   onClick={() => setActiveTab('history')}
                   className="flex flex-col items-center justify-center gap-2 p-4 rounded-xl border-2 border-gray-200 bg-white text-gray-700 hover:bg-purple-50 hover:border-purple-300 hover:text-purple-600 transition-all shadow-sm hover:shadow-md active:scale-95"
@@ -2201,6 +2405,532 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
                             <CheckCircleIcon className="w-5 h-5 text-emerald-600" />
                             <p className="text-sm text-emerald-700">
                               QR code is saved and linked to this product
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* --- BARCODE TAB --- TEMPORARILY HIDDEN */}
+            {false && activeTab === 'barcode' && (
+              <div className="max-w-4xl mx-auto py-8">
+                <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+                  <div className="p-8 flex flex-col items-center justify-center border-b border-gray-100 bg-gray-50/50">
+                    {barcodeData.localUrl || barcodeData.remoteUrl ? (
+                      <img src={barcodeData.localUrl || barcodeData.remoteUrl || ''} className="max-w-full max-h-96 object-contain bg-white p-4 rounded-xl shadow-sm border border-gray-100" />
+                    ) : (
+                      <div className="w-full max-w-md h-64 bg-gray-100 rounded-xl flex items-center justify-center text-gray-400 border border-dashed border-gray-300">
+                        No Barcode
+                      </div>
+                    )}
+                  </div>
+                  <div className="p-6 bg-white">
+                    <div className="space-y-6">
+                      {/* Barcode Configuration */}
+                      <div className="border-b border-gray-200 pb-6">
+                        <h3 className="text-lg font-semibold text-gray-900 mb-4">Barcode Settings</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {/* Format */}
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Format</label>
+                            <select
+                              value={barcodeOptions.format || 'CODE128'}
+                              onChange={(e) => setBarcodeOptions(prev => ({ ...prev, format: e.target.value as any }))}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
+                            >
+                              <option value="CODE128">CODE128</option>
+                              <option value="CODE39">CODE39</option>
+                              <option value="EAN13">EAN13</option>
+                              <option value="EAN8">EAN8</option>
+                              <option value="UPC">UPC</option>
+                              <option value="ITF14">ITF14</option>
+                            </select>
+                          </div>
+
+                          {/* Label Size */}
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Label Size</label>
+                            <select
+                              value={barcodeOptions.labelSize || '100x50'}
+                              onChange={(e) => setBarcodeOptions(prev => ({ ...prev, labelSize: e.target.value as LabelSize }))}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
+                            >
+                              {Object.entries(LABEL_SIZES).map(([key, size]) => (
+                                <option key={key} value={key}>{size.name}</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          {/* Show Text */}
+                          <div className="flex items-center pt-6">
+                            <input
+                              type="checkbox"
+                              checked={barcodeOptions.showText !== false}
+                              onChange={(e) => setBarcodeOptions(prev => ({ ...prev, showText: e.target.checked }))}
+                              className="h-4 w-4 text-teal-600 focus:ring-teal-500 border-gray-300 rounded"
+                              id="show-barcode-text"
+                            />
+                            <label htmlFor="show-barcode-text" className="ml-2 text-sm text-gray-700">
+                              Show barcode value
+                            </label>
+                          </div>
+                        </div>
+
+                        {/* Content Options */}
+                        <div className="mt-4 pt-4 border-t border-gray-200">
+                          <label className="block text-sm font-medium text-gray-700 mb-3">Label Content</label>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-96 overflow-y-auto pr-2">
+                            {/* Basic Info */}
+                            <div className="space-y-2">
+                              <h4 className="text-xs font-semibold text-gray-500 uppercase mb-2">Basic Information</h4>
+                              <div className="flex items-center">
+                                <input
+                                  type="checkbox"
+                                  checked={barcodeOptions.content?.includeProductName !== false}
+                                  onChange={(e) => setBarcodeOptions(prev => ({
+                                    ...prev,
+                                    content: { ...prev.content, includeProductName: e.target.checked }
+                                  }))}
+                                  className="h-4 w-4 text-teal-600 focus:ring-teal-500 border-gray-300 rounded"
+                                  id="barcode-include-name"
+                                />
+                                <label htmlFor="barcode-include-name" className="ml-2 text-sm text-gray-700">
+                                  Product Name
+                                </label>
+                              </div>
+                              <div className="flex items-center">
+                                <input
+                                  type="checkbox"
+                                  checked={barcodeOptions.content?.includeSKU !== false}
+                                  onChange={(e) => setBarcodeOptions(prev => ({
+                                    ...prev,
+                                    content: { ...prev.content, includeSKU: e.target.checked }
+                                  }))}
+                                  className="h-4 w-4 text-teal-600 focus:ring-teal-500 border-gray-300 rounded"
+                                  id="barcode-include-sku"
+                                />
+                                <label htmlFor="barcode-include-sku" className="ml-2 text-sm text-gray-700">
+                                  SKU
+                                </label>
+                              </div>
+                              <div className="flex items-center">
+                                <input
+                                  type="checkbox"
+                                  checked={barcodeOptions.content?.includePrice || false}
+                                  onChange={(e) => setBarcodeOptions(prev => ({
+                                    ...prev,
+                                    content: { ...prev.content, includePrice: e.target.checked }
+                                  }))}
+                                  className="h-4 w-4 text-teal-600 focus:ring-teal-500 border-gray-300 rounded"
+                                  id="barcode-include-price"
+                                />
+                                <label htmlFor="barcode-include-price" className="ml-2 text-sm text-gray-700">
+                                  Price
+                                </label>
+                              </div>
+                              <div className="flex items-center">
+                                <input
+                                  type="checkbox"
+                                  checked={barcodeOptions.content?.includeStatus || false}
+                                  onChange={(e) => setBarcodeOptions(prev => ({
+                                    ...prev,
+                                    content: { ...prev.content, includeStatus: e.target.checked }
+                                  }))}
+                                  className="h-4 w-4 text-teal-600 focus:ring-teal-500 border-gray-300 rounded"
+                                  id="barcode-include-status"
+                                />
+                                <label htmlFor="barcode-include-status" className="ml-2 text-sm text-gray-700">
+                                  Status
+                                </label>
+                              </div>
+                              <div className="flex items-center">
+                                <input
+                                  type="checkbox"
+                                  checked={barcodeOptions.content?.includeGroup || false}
+                                  onChange={(e) => setBarcodeOptions(prev => ({
+                                    ...prev,
+                                    content: { ...prev.content, includeGroup: e.target.checked }
+                                  }))}
+                                  className="h-4 w-4 text-teal-600 focus:ring-teal-500 border-gray-300 rounded"
+                                  id="barcode-include-group"
+                                />
+                                <label htmlFor="barcode-include-group" className="ml-2 text-sm text-gray-700">
+                                  Group
+                                </label>
+                              </div>
+                            </div>
+
+                            {/* Classification */}
+                            <div className="space-y-2">
+                              <h4 className="text-xs font-semibold text-gray-500 uppercase mb-2">Classification</h4>
+                              <div className="flex items-center">
+                                <input
+                                  type="checkbox"
+                                  checked={barcodeOptions.content?.includeCategory || false}
+                                  onChange={(e) => setBarcodeOptions(prev => ({
+                                    ...prev,
+                                    content: { ...prev.content, includeCategory: e.target.checked }
+                                  }))}
+                                  className="h-4 w-4 text-teal-600 focus:ring-teal-500 border-gray-300 rounded"
+                                  id="barcode-include-category"
+                                />
+                                <label htmlFor="barcode-include-category" className="ml-2 text-sm text-gray-700">
+                                  Category
+                                </label>
+                              </div>
+                              <div className="flex items-center">
+                                <input
+                                  type="checkbox"
+                                  checked={barcodeOptions.content?.includeSubcategory || false}
+                                  onChange={(e) => setBarcodeOptions(prev => ({
+                                    ...prev,
+                                    content: { ...prev.content, includeSubcategory: e.target.checked }
+                                  }))}
+                                  className="h-4 w-4 text-teal-600 focus:ring-teal-500 border-gray-300 rounded"
+                                  id="barcode-include-subcategory"
+                                />
+                                <label htmlFor="barcode-include-subcategory" className="ml-2 text-sm text-gray-700">
+                                  Subcategory
+                                </label>
+                              </div>
+                              <div className="flex items-center">
+                                <input
+                                  type="checkbox"
+                                  checked={barcodeOptions.content?.includeTags || false}
+                                  onChange={(e) => setBarcodeOptions(prev => ({
+                                    ...prev,
+                                    content: { ...prev.content, includeTags: e.target.checked }
+                                  }))}
+                                  className="h-4 w-4 text-teal-600 focus:ring-teal-500 border-gray-300 rounded"
+                                  id="barcode-include-tags"
+                                />
+                                <label htmlFor="barcode-include-tags" className="ml-2 text-sm text-gray-700">
+                                  Tags
+                                </label>
+                              </div>
+                            </div>
+
+                            {/* Inventory */}
+                            <div className="space-y-2">
+                              <h4 className="text-xs font-semibold text-gray-500 uppercase mb-2">Inventory</h4>
+                              <div className="flex items-center">
+                                <input
+                                  type="checkbox"
+                                  checked={barcodeOptions.content?.includeUOM || false}
+                                  onChange={(e) => setBarcodeOptions(prev => ({
+                                    ...prev,
+                                    content: { ...prev.content, includeUOM: e.target.checked }
+                                  }))}
+                                  className="h-4 w-4 text-teal-600 focus:ring-teal-500 border-gray-300 rounded"
+                                  id="barcode-include-uom"
+                                />
+                                <label htmlFor="barcode-include-uom" className="ml-2 text-sm text-gray-700">
+                                  Unit of Measure
+                                </label>
+                              </div>
+                              <div className="flex items-center">
+                                <input
+                                  type="checkbox"
+                                  checked={barcodeOptions.content?.includeQuantityBox || false}
+                                  onChange={(e) => setBarcodeOptions(prev => ({
+                                    ...prev,
+                                    content: { ...prev.content, includeQuantityBox: e.target.checked }
+                                  }))}
+                                  className="h-4 w-4 text-teal-600 focus:ring-teal-500 border-gray-300 rounded"
+                                  id="barcode-include-quantity-box"
+                                />
+                                <label htmlFor="barcode-include-quantity-box" className="ml-2 text-sm text-gray-700">
+                                  Quantity Box
+                                </label>
+                              </div>
+                              <div className="flex items-center">
+                                <input
+                                  type="checkbox"
+                                  checked={barcodeOptions.content?.includePcsPerBox || false}
+                                  onChange={(e) => setBarcodeOptions(prev => ({
+                                    ...prev,
+                                    content: { ...prev.content, includePcsPerBox: e.target.checked }
+                                  }))}
+                                  className="h-4 w-4 text-teal-600 focus:ring-teal-500 border-gray-300 rounded"
+                                  id="barcode-include-pcs-per-box"
+                                />
+                                <label htmlFor="barcode-include-pcs-per-box" className="ml-2 text-sm text-gray-700">
+                                  Pieces Per Box
+                                </label>
+                              </div>
+                              <div className="flex items-center">
+                                <input
+                                  type="checkbox"
+                                  checked={barcodeOptions.content?.includeMinStock || false}
+                                  onChange={(e) => setBarcodeOptions(prev => ({
+                                    ...prev,
+                                    content: { ...prev.content, includeMinStock: e.target.checked }
+                                  }))}
+                                  className="h-4 w-4 text-teal-600 focus:ring-teal-500 border-gray-300 rounded"
+                                  id="barcode-include-min-stock"
+                                />
+                                <label htmlFor="barcode-include-min-stock" className="ml-2 text-sm text-gray-700">
+                                  Min Stock
+                                </label>
+                              </div>
+                              <div className="flex items-center">
+                                <input
+                                  type="checkbox"
+                                  checked={barcodeOptions.content?.includeReorderPoint || false}
+                                  onChange={(e) => setBarcodeOptions(prev => ({
+                                    ...prev,
+                                    content: { ...prev.content, includeReorderPoint: e.target.checked }
+                                  }))}
+                                  className="h-4 w-4 text-teal-600 focus:ring-teal-500 border-gray-300 rounded"
+                                  id="barcode-include-reorder-point"
+                                />
+                                <label htmlFor="barcode-include-reorder-point" className="ml-2 text-sm text-gray-700">
+                                  Reorder Point
+                                </label>
+                              </div>
+                              <div className="flex items-center">
+                                <input
+                                  type="checkbox"
+                                  checked={barcodeOptions.content?.includeMinLevelBox || false}
+                                  onChange={(e) => setBarcodeOptions(prev => ({
+                                    ...prev,
+                                    content: { ...prev.content, includeMinLevelBox: e.target.checked }
+                                  }))}
+                                  className="h-4 w-4 text-teal-600 focus:ring-teal-500 border-gray-300 rounded"
+                                  id="barcode-include-min-level-box"
+                                />
+                                <label htmlFor="barcode-include-min-level-box" className="ml-2 text-sm text-gray-700">
+                                  Min Level Box
+                                </label>
+                              </div>
+                            </div>
+
+                            {/* Technical Specs */}
+                            <div className="space-y-2">
+                              <h4 className="text-xs font-semibold text-gray-500 uppercase mb-2">Technical Specs</h4>
+                              <div className="flex items-center">
+                                <input
+                                  type="checkbox"
+                                  checked={barcodeOptions.content?.includeMaterialSeries || false}
+                                  onChange={(e) => setBarcodeOptions(prev => ({
+                                    ...prev,
+                                    content: { ...prev.content, includeMaterialSeries: e.target.checked }
+                                  }))}
+                                  className="h-4 w-4 text-teal-600 focus:ring-teal-500 border-gray-300 rounded"
+                                  id="barcode-include-material-series"
+                                />
+                                <label htmlFor="barcode-include-material-series" className="ml-2 text-sm text-gray-700">
+                                  Material/Series
+                                </label>
+                              </div>
+                              <div className="flex items-center">
+                                <input
+                                  type="checkbox"
+                                  checked={barcodeOptions.content?.includeBoardType || false}
+                                  onChange={(e) => setBarcodeOptions(prev => ({
+                                    ...prev,
+                                    content: { ...prev.content, includeBoardType: e.target.checked }
+                                  }))}
+                                  className="h-4 w-4 text-teal-600 focus:ring-teal-500 border-gray-300 rounded"
+                                  id="barcode-include-board-type"
+                                />
+                                <label htmlFor="barcode-include-board-type" className="ml-2 text-sm text-gray-700">
+                                  Board Type
+                                </label>
+                              </div>
+                              <div className="flex items-center">
+                                <input
+                                  type="checkbox"
+                                  checked={barcodeOptions.content?.includeGSM || false}
+                                  onChange={(e) => setBarcodeOptions(prev => ({
+                                    ...prev,
+                                    content: { ...prev.content, includeGSM: e.target.checked }
+                                  }))}
+                                  className="h-4 w-4 text-teal-600 focus:ring-teal-500 border-gray-300 rounded"
+                                  id="barcode-include-gsm"
+                                />
+                                <label htmlFor="barcode-include-gsm" className="ml-2 text-sm text-gray-700">
+                                  GSM
+                                </label>
+                              </div>
+                              <div className="flex items-center">
+                                <input
+                                  type="checkbox"
+                                  checked={barcodeOptions.content?.includeDimensions || false}
+                                  onChange={(e) => setBarcodeOptions(prev => ({
+                                    ...prev,
+                                    content: { ...prev.content, includeDimensions: e.target.checked }
+                                  }))}
+                                  className="h-4 w-4 text-teal-600 focus:ring-teal-500 border-gray-300 rounded"
+                                  id="barcode-include-dimensions"
+                                />
+                                <label htmlFor="barcode-include-dimensions" className="ml-2 text-sm text-gray-700">
+                                  Dimensions
+                                </label>
+                              </div>
+                              <div className="flex items-center">
+                                <input
+                                  type="checkbox"
+                                  checked={barcodeOptions.content?.includeCAL || false}
+                                  onChange={(e) => setBarcodeOptions(prev => ({
+                                    ...prev,
+                                    content: { ...prev.content, includeCAL: e.target.checked }
+                                  }))}
+                                  className="h-4 w-4 text-teal-600 focus:ring-teal-500 border-gray-300 rounded"
+                                  id="barcode-include-cal"
+                                />
+                                <label htmlFor="barcode-include-cal" className="ml-2 text-sm text-gray-700">
+                                  CAL
+                                </label>
+                              </div>
+                            </div>
+
+                            {/* Additional */}
+                            <div className="space-y-2 md:col-span-2">
+                              <h4 className="text-xs font-semibold text-gray-500 uppercase mb-2">Additional</h4>
+                              <div className="flex items-center">
+                                <input
+                                  type="checkbox"
+                                  checked={barcodeOptions.content?.includeNotes || false}
+                                  onChange={(e) => setBarcodeOptions(prev => ({
+                                    ...prev,
+                                    content: { ...prev.content, includeNotes: e.target.checked }
+                                  }))}
+                                  className="h-4 w-4 text-teal-600 focus:ring-teal-500 border-gray-300 rounded"
+                                  id="barcode-include-notes"
+                                />
+                                <label htmlFor="barcode-include-notes" className="ml-2 text-sm text-gray-700">
+                                  Notes
+                                </label>
+                              </div>
+                              <div>
+                                <label className="block text-sm text-gray-700 mb-1">Custom Text (optional)</label>
+                                <input
+                                  type="text"
+                                  value={barcodeOptions.content?.customText || ''}
+                                  onChange={(e) => setBarcodeOptions(prev => ({
+                                    ...prev,
+                                    content: { ...prev.content, customText: e.target.value }
+                                  }))}
+                                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
+                                  placeholder="Additional text to display on label"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Action Buttons */}
+                      <div className="grid grid-cols-2 gap-4">
+                        {!barcodeData.remoteUrl && (
+                          <button
+                            onClick={() => handleBarcode('generate')}
+                            disabled={barcodeData.busy}
+                            className="flex items-center justify-center gap-2 px-4 py-2.5 bg-teal-600 text-white rounded-lg hover:bg-teal-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                          >
+                            {barcodeData.busy ? (
+                              <>
+                                <ArrowPathIcon className="w-4 h-4 animate-spin" />
+                                Generating...
+                              </>
+                            ) : (
+                              <>
+                                <DocumentTextIcon className="w-4 h-4" />
+                                Generate Barcode
+                              </>
+                            )}
+                          </button>
+                        )}
+
+                        {barcodeData.localUrl && !barcodeData.remoteUrl && (
+                          <button
+                            onClick={() => handleBarcode('save')}
+                            disabled={barcodeData.busy}
+                            className="flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                          >
+                            {barcodeData.busy ? (
+                              <>
+                                <ArrowPathIcon className="w-4 h-4 animate-spin" />
+                                Saving...
+                              </>
+                            ) : (
+                              <>
+                                <CheckCircleIcon className="w-4 h-4" />
+                                Save to System
+                              </>
+                            )}
+                          </button>
+                        )}
+
+                        {(barcodeData.localUrl || barcodeData.remoteUrl) && (
+                          <button
+                            onClick={() => handleBarcode('download')}
+                            disabled={barcodeData.busy}
+                            className="flex items-center justify-center gap-2 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                          >
+                            <ArrowDownTrayIcon className="w-4 h-4" />
+                            Download PNG
+                          </button>
+                        )}
+
+                        {barcodeData.remoteUrl && (
+                          <button
+                            onClick={() => handleBarcode('delete')}
+                            disabled={barcodeData.busy}
+                            className="flex items-center justify-center gap-2 px-4 py-2.5 border border-red-200 text-red-600 rounded-lg hover:bg-red-50 font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                          >
+                            {barcodeData.busy ? (
+                              <>
+                                <ArrowPathIcon className="w-4 h-4 animate-spin" />
+                                Deleting...
+                              </>
+                            ) : (
+                              <>
+                                <XMarkIcon className="w-4 h-4" />
+                                Delete Barcode
+                              </>
+                            )}
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Barcode Info */}
+                      {barcodeData.info && (
+                        <div className="mt-4 p-3 bg-teal-50 border border-teal-200 rounded-lg">
+                          <p className="text-xs text-teal-700">
+                            <span className="font-medium">Label Size:</span> {barcodeData.info.labelWidth}mm × {barcodeData.info.labelHeight}mm
+                          </p>
+                          <p className="text-xs text-teal-600 mt-1">
+                            Image Size: {barcodeData.info.width}px × {barcodeData.info.height}px
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Error Display */}
+                      {barcodeData.error && (
+                        <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+                          <div className="flex items-start gap-2">
+                            <ExclamationTriangleIcon className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+                            <div>
+                              <p className="text-sm font-medium text-red-900">Error</p>
+                              <p className="text-sm text-red-700 mt-1">{barcodeData.error}</p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Status Info */}
+                      {barcodeData.remoteUrl && (
+                        <div className="mt-4 p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
+                          <div className="flex items-center gap-2">
+                            <CheckCircleIcon className="w-5 h-5 text-emerald-600" />
+                            <p className="text-sm text-emerald-700">
+                              Barcode is saved and linked to this product
                             </p>
                           </div>
                         </div>

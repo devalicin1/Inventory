@@ -13,4 +13,6 @@ export { QualityReport } from './QualityReport'
 export { WorkcenterPerformanceReport } from './WorkcenterPerformanceReport'
 export { JobStatusReport } from './JobStatusReport'
 export { StageTimeReport } from './StageTimeReport'
+export { StuckJobsReport } from './StuckJobsReport'
+export { WIPInventoryReport } from './WIPInventoryReport'
 

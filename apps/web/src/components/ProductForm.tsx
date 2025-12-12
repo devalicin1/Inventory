@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { createProduct, updateProduct, type ProductInput, type Group } from '../api/products'
 import { listCustomFields, type CustomField } from '../api/settings'
+import { LABEL_SIZES, PAPER_SIZES, generateBarcodeDataURL, type LabelSize, type PaperSize, type BarcodeOptions } from '../utils/barcode'
 
 interface Props {
   workspaceId: string
@@ -54,6 +55,33 @@ export function ProductForm({ workspaceId, groups, onCreated, onClose, productId
     classification: false,
     technical: false,
     tagsAndNotes: false,
+    barcode: false,
+  })
+  
+  // Barcode options
+  const [generateBarcode, setGenerateBarcode] = useState(true)
+  const [barcodeOptions, setBarcodeOptions] = useState<BarcodeOptions>({
+    format: 'CODE128',
+    labelSize: '100x50',
+    paperSize: 'A4',
+    showText: true,
+    content: {
+      includeSKU: true,
+      includeProductName: true,
+      includePrice: false,
+      includeCategory: false,
+    },
+  })
+  
+  // Barcode preview state
+  const [barcodePreview, setBarcodePreview] = useState<{
+    dataUrl: string | null
+    busy: boolean
+    error: string | null
+  }>({
+    dataUrl: null,
+    busy: false,
+    error: null,
   })
 
   // Custom fields for selected group
@@ -78,6 +106,61 @@ export function ProductForm({ workspaceId, groups, onCreated, onClose, productId
     return () => { cancelled = true }
   }, [workspaceId, form.groupId])
 
+  // Auto-generate barcode preview when options or form data changes (only when barcode section is expanded) - TEMPORARILY DISABLED
+  useEffect(() => {
+    // Temporarily disabled
+    return
+    // if (!expandedSections.barcode || !generateBarcode) return
+    // if (!form.sku && !form.name) return // Need at least SKU or name
+
+    // let cancelled = false
+    // const timeoutId = setTimeout(async () => {
+    //   try {
+    //     setBarcodePreview(prev => ({ ...prev, busy: true, error: null }))
+    //     const sku = form.sku || 'PREVIEW'
+    //     const groupName = form.groupId ? groups.find(g => g.id === form.groupId)?.name : undefined
+    //     const options: BarcodeOptions = {
+    //       ...barcodeOptions,
+    //       productData: {
+    //         sku: form.sku || 'PREVIEW',
+    //         name: form.name || 'Product Name',
+    //         price: form.pricePerBox,
+    //         category: form.category,
+    //         subcategory: form.subcategory,
+    //         uom: form.uom,
+    //         quantityBox: form.quantityBox,
+    //         pcsPerBox: form.pcsPerBox,
+    //         materialSeries: form.materialSeries,
+    //         boardType: form.boardType,
+    //         gsm: form.gsm,
+    //         dimensionsWxLmm: form.dimensionsWxLmm,
+    //         cal: form.cal,
+    //         minStock: form.minStock,
+    //         reorderPoint: form.reorderPoint,
+    //         minLevelBox: form.minLevelBox,
+    //         status: form.status,
+    //         groupName: groupName,
+    //         tags: form.tags,
+    //         notes: form.notes,
+    //       },
+    //     }
+    //     const res = await generateBarcodeDataURL(sku, options)
+    //     if (!cancelled) {
+    //       setBarcodePreview(prev => ({ ...prev, dataUrl: res.dataUrl, busy: false }))
+    //     }
+    //   } catch (e: any) {
+    //     if (!cancelled) {
+    //       setBarcodePreview(prev => ({ ...prev, error: e?.message || 'Failed to generate preview', busy: false }))
+    //     }
+    //   }
+    // }, 500) // Debounce 500ms
+
+    // return () => {
+    //   cancelled = true
+    //   clearTimeout(timeoutId)
+    // }
+  }, [expandedSections.barcode, generateBarcode, barcodeOptions, form, groups])
+
   const handleChange = (key: keyof ProductInput, value: any) => {
     setForm((f) => ({ ...f, [key]: value }))
   }
@@ -87,8 +170,13 @@ export function ProductForm({ workspaceId, groups, onCreated, onClose, productId
     setSubmitting(true)
     setError(null)
     try {
-      // merge custom values
-      const payload: any = { ...form, ...customValues }
+      // merge custom values and barcode options
+      const payload: any = { 
+        ...form, 
+        ...customValues,
+        generateBarcode,
+        barcodeOptions: generateBarcode ? barcodeOptions : undefined,
+      }
       if (productId) {
         await updateProduct(workspaceId, productId, payload)
       } else {
@@ -119,7 +207,7 @@ export function ProductForm({ workspaceId, groups, onCreated, onClose, productId
         <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between bg-white">
           <div>
             <h3 className="text-xl font-bold text-gray-900">{productId ? 'Edit Product' : 'Add New Product'}</h3>
-            <p className="text-sm text-gray-600 mt-1">QR code and barcode will be generated automatically</p>
+            <p className="text-sm text-gray-600 mt-1">QR code will be generated automatically.</p>
           </div>
           <button 
             onClick={onClose}
@@ -508,6 +596,517 @@ export function ProductForm({ workspaceId, groups, onCreated, onClose, productId
                       </div>
                     )}
                   </section>
+
+                  {/* Barcode Configuration - Collapsible - TEMPORARILY HIDDEN */}
+                  {false && (
+                  <section className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => toggleSection('barcode')}
+                      className="w-full px-6 py-4 text-left flex items-center justify-between hover:bg-gray-50 transition-colors"
+                    >
+                      <h4 className="text-lg font-semibold text-gray-900 flex items-center">
+                        <svg className="w-5 h-5 text-teal-600 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                        Barcode Settings
+                      </h4>
+                      <svg 
+                        className={`w-5 h-5 text-gray-500 transform transition-transform ${expandedSections.barcode ? 'rotate-180' : ''}`}
+                        fill="none" 
+                        stroke="currentColor" 
+                        viewBox="0 0 24 24"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+                    {expandedSections.barcode && (
+                      <div className="px-6 pb-6">
+                        <div className="space-y-6">
+                          {/* Enable/Disable Barcode */}
+                          <div className="flex items-center">
+                            <input
+                              type="checkbox"
+                              checked={generateBarcode}
+                              onChange={(e) => setGenerateBarcode(e.target.checked)}
+                              className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                              id="generate-barcode"
+                            />
+                            <label htmlFor="generate-barcode" className="ml-2 text-sm font-medium text-gray-700">
+                              Generate barcode for this product
+                            </label>
+                          </div>
+
+                          {generateBarcode && (
+                            <>
+                              {/* Barcode Preview */}
+                              <div className="bg-gray-50 rounded-lg border-2 border-dashed border-gray-300 p-6 flex flex-col items-center justify-center min-h-[200px]">
+                                {barcodePreview.busy ? (
+                                  <div className="flex flex-col items-center gap-3">
+                                    <svg className="animate-spin h-8 w-8 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                    </svg>
+                                    <p className="text-sm text-gray-600">Generating preview...</p>
+                                  </div>
+                                ) : barcodePreview.error ? (
+                                  <div className="flex flex-col items-center gap-2 text-red-600">
+                                    <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    </svg>
+                                    <p className="text-sm">{barcodePreview.error}</p>
+                                  </div>
+                                ) : barcodePreview.dataUrl ? (
+                                  <img 
+                                    src={barcodePreview.dataUrl} 
+                                    alt="Barcode Preview" 
+                                    className="max-w-full max-h-64 object-contain bg-white p-4 rounded-lg shadow-sm border border-gray-200"
+                                  />
+                                ) : (
+                                  <div className="flex flex-col items-center gap-2 text-gray-400">
+                                    <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                    </svg>
+                                    <p className="text-sm">Barcode preview will appear here</p>
+                                    <p className="text-xs text-gray-500">Enter product name and SKU to see preview</p>
+                                  </div>
+                                )}
+                              </div>
+                              {/* Barcode Format */}
+                              <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Barcode Format</label>
+                                <select
+                                  value={barcodeOptions.format || 'CODE128'}
+                                  onChange={(e) => setBarcodeOptions(prev => ({ ...prev, format: e.target.value as any }))}
+                                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                                >
+                                  <option value="CODE128">CODE128 (Recommended)</option>
+                                  <option value="CODE39">CODE39</option>
+                                  <option value="EAN13">EAN13</option>
+                                  <option value="EAN8">EAN8</option>
+                                  <option value="UPC">UPC</option>
+                                  <option value="ITF14">ITF14</option>
+                                </select>
+                              </div>
+
+                              {/* Label Size */}
+                              <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Label Size</label>
+                                <select
+                                  value={barcodeOptions.labelSize || '100x50'}
+                                  onChange={(e) => setBarcodeOptions(prev => ({ ...prev, labelSize: e.target.value as LabelSize }))}
+                                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                                >
+                                  {Object.entries(LABEL_SIZES).map(([key, size]) => (
+                                    <option key={key} value={key}>{size.name}</option>
+                                  ))}
+                                </select>
+                                {barcodeOptions.labelSize === 'custom' && (
+                                  <div className="mt-2 grid grid-cols-2 gap-2">
+                                    <div>
+                                      <label className="block text-xs text-gray-600 mb-1">Width (mm)</label>
+                                      <input
+                                        type="number"
+                                        value={barcodeOptions.customWidth || 100}
+                                        onChange={(e) => setBarcodeOptions(prev => ({ ...prev, customWidth: Number(e.target.value) }))}
+                                        className="w-full px-2 py-1 text-sm border border-gray-300 rounded"
+                                        min="10"
+                                        max="500"
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className="block text-xs text-gray-600 mb-1">Height (mm)</label>
+                                      <input
+                                        type="number"
+                                        value={barcodeOptions.customHeight || 50}
+                                        onChange={(e) => setBarcodeOptions(prev => ({ ...prev, customHeight: Number(e.target.value) }))}
+                                        className="w-full px-2 py-1 text-sm border border-gray-300 rounded"
+                                        min="10"
+                                        max="500"
+                                      />
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Paper Size */}
+                              <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Paper Size (for printing)</label>
+                                <select
+                                  value={barcodeOptions.paperSize || 'A4'}
+                                  onChange={(e) => setBarcodeOptions(prev => ({ ...prev, paperSize: e.target.value as PaperSize }))}
+                                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                                >
+                                  {Object.entries(PAPER_SIZES).map(([key, size]) => (
+                                    <option key={key} value={key}>{size.name}</option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              {/* Show Barcode Text */}
+                              <div className="flex items-center">
+                                <input
+                                  type="checkbox"
+                                  checked={barcodeOptions.showText !== false}
+                                  onChange={(e) => setBarcodeOptions(prev => ({ ...prev, showText: e.target.checked }))}
+                                  className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                  id="show-barcode-text"
+                                />
+                                <label htmlFor="show-barcode-text" className="ml-2 text-sm text-gray-700">
+                                  Show barcode value below barcode
+                                </label>
+                              </div>
+
+                              {/* Content Options */}
+                              <div className="border-t border-gray-200 pt-4">
+                                <label className="block text-sm font-medium text-gray-700 mb-3">Label Content</label>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-96 overflow-y-auto pr-2">
+                                  {/* Basic Info */}
+                                  <div className="space-y-2">
+                                    <h4 className="text-xs font-semibold text-gray-500 uppercase mb-2">Basic Information</h4>
+                                    <div className="flex items-center">
+                                      <input
+                                        type="checkbox"
+                                        checked={barcodeOptions.content?.includeProductName !== false}
+                                        onChange={(e) => setBarcodeOptions(prev => ({
+                                          ...prev,
+                                          content: { ...prev.content, includeProductName: e.target.checked }
+                                        }))}
+                                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                        id="include-name"
+                                      />
+                                      <label htmlFor="include-name" className="ml-2 text-sm text-gray-700">
+                                        Product Name
+                                      </label>
+                                    </div>
+                                    <div className="flex items-center">
+                                      <input
+                                        type="checkbox"
+                                        checked={barcodeOptions.content?.includeSKU !== false}
+                                        onChange={(e) => setBarcodeOptions(prev => ({
+                                          ...prev,
+                                          content: { ...prev.content, includeSKU: e.target.checked }
+                                        }))}
+                                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                        id="include-sku"
+                                      />
+                                      <label htmlFor="include-sku" className="ml-2 text-sm text-gray-700">
+                                        SKU
+                                      </label>
+                                    </div>
+                                    <div className="flex items-center">
+                                      <input
+                                        type="checkbox"
+                                        checked={barcodeOptions.content?.includePrice || false}
+                                        onChange={(e) => setBarcodeOptions(prev => ({
+                                          ...prev,
+                                          content: { ...prev.content, includePrice: e.target.checked }
+                                        }))}
+                                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                        id="include-price"
+                                      />
+                                      <label htmlFor="include-price" className="ml-2 text-sm text-gray-700">
+                                        Price
+                                      </label>
+                                    </div>
+                                    <div className="flex items-center">
+                                      <input
+                                        type="checkbox"
+                                        checked={barcodeOptions.content?.includeStatus || false}
+                                        onChange={(e) => setBarcodeOptions(prev => ({
+                                          ...prev,
+                                          content: { ...prev.content, includeStatus: e.target.checked }
+                                        }))}
+                                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                        id="include-status"
+                                      />
+                                      <label htmlFor="include-status" className="ml-2 text-sm text-gray-700">
+                                        Status
+                                      </label>
+                                    </div>
+                                    <div className="flex items-center">
+                                      <input
+                                        type="checkbox"
+                                        checked={barcodeOptions.content?.includeGroup || false}
+                                        onChange={(e) => setBarcodeOptions(prev => ({
+                                          ...prev,
+                                          content: { ...prev.content, includeGroup: e.target.checked }
+                                        }))}
+                                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                        id="include-group"
+                                      />
+                                      <label htmlFor="include-group" className="ml-2 text-sm text-gray-700">
+                                        Group
+                                      </label>
+                                    </div>
+                                  </div>
+
+                                  {/* Classification */}
+                                  <div className="space-y-2">
+                                    <h4 className="text-xs font-semibold text-gray-500 uppercase mb-2">Classification</h4>
+                                    <div className="flex items-center">
+                                      <input
+                                        type="checkbox"
+                                        checked={barcodeOptions.content?.includeCategory || false}
+                                        onChange={(e) => setBarcodeOptions(prev => ({
+                                          ...prev,
+                                          content: { ...prev.content, includeCategory: e.target.checked }
+                                        }))}
+                                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                        id="include-category"
+                                      />
+                                      <label htmlFor="include-category" className="ml-2 text-sm text-gray-700">
+                                        Category
+                                      </label>
+                                    </div>
+                                    <div className="flex items-center">
+                                      <input
+                                        type="checkbox"
+                                        checked={barcodeOptions.content?.includeSubcategory || false}
+                                        onChange={(e) => setBarcodeOptions(prev => ({
+                                          ...prev,
+                                          content: { ...prev.content, includeSubcategory: e.target.checked }
+                                        }))}
+                                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                        id="include-subcategory"
+                                      />
+                                      <label htmlFor="include-subcategory" className="ml-2 text-sm text-gray-700">
+                                        Subcategory
+                                      </label>
+                                    </div>
+                                    <div className="flex items-center">
+                                      <input
+                                        type="checkbox"
+                                        checked={barcodeOptions.content?.includeTags || false}
+                                        onChange={(e) => setBarcodeOptions(prev => ({
+                                          ...prev,
+                                          content: { ...prev.content, includeTags: e.target.checked }
+                                        }))}
+                                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                        id="include-tags"
+                                      />
+                                      <label htmlFor="include-tags" className="ml-2 text-sm text-gray-700">
+                                        Tags
+                                      </label>
+                                    </div>
+                                  </div>
+
+                                  {/* Inventory */}
+                                  <div className="space-y-2">
+                                    <h4 className="text-xs font-semibold text-gray-500 uppercase mb-2">Inventory</h4>
+                                    <div className="flex items-center">
+                                      <input
+                                        type="checkbox"
+                                        checked={barcodeOptions.content?.includeUOM || false}
+                                        onChange={(e) => setBarcodeOptions(prev => ({
+                                          ...prev,
+                                          content: { ...prev.content, includeUOM: e.target.checked }
+                                        }))}
+                                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                        id="include-uom"
+                                      />
+                                      <label htmlFor="include-uom" className="ml-2 text-sm text-gray-700">
+                                        Unit of Measure
+                                      </label>
+                                    </div>
+                                    <div className="flex items-center">
+                                      <input
+                                        type="checkbox"
+                                        checked={barcodeOptions.content?.includeQuantityBox || false}
+                                        onChange={(e) => setBarcodeOptions(prev => ({
+                                          ...prev,
+                                          content: { ...prev.content, includeQuantityBox: e.target.checked }
+                                        }))}
+                                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                        id="include-quantity-box"
+                                      />
+                                      <label htmlFor="include-quantity-box" className="ml-2 text-sm text-gray-700">
+                                        Quantity Box
+                                      </label>
+                                    </div>
+                                    <div className="flex items-center">
+                                      <input
+                                        type="checkbox"
+                                        checked={barcodeOptions.content?.includePcsPerBox || false}
+                                        onChange={(e) => setBarcodeOptions(prev => ({
+                                          ...prev,
+                                          content: { ...prev.content, includePcsPerBox: e.target.checked }
+                                        }))}
+                                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                        id="include-pcs-per-box"
+                                      />
+                                      <label htmlFor="include-pcs-per-box" className="ml-2 text-sm text-gray-700">
+                                        Pieces Per Box
+                                      </label>
+                                    </div>
+                                    <div className="flex items-center">
+                                      <input
+                                        type="checkbox"
+                                        checked={barcodeOptions.content?.includeMinStock || false}
+                                        onChange={(e) => setBarcodeOptions(prev => ({
+                                          ...prev,
+                                          content: { ...prev.content, includeMinStock: e.target.checked }
+                                        }))}
+                                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                        id="include-min-stock"
+                                      />
+                                      <label htmlFor="include-min-stock" className="ml-2 text-sm text-gray-700">
+                                        Min Stock
+                                      </label>
+                                    </div>
+                                    <div className="flex items-center">
+                                      <input
+                                        type="checkbox"
+                                        checked={barcodeOptions.content?.includeReorderPoint || false}
+                                        onChange={(e) => setBarcodeOptions(prev => ({
+                                          ...prev,
+                                          content: { ...prev.content, includeReorderPoint: e.target.checked }
+                                        }))}
+                                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                        id="include-reorder-point"
+                                      />
+                                      <label htmlFor="include-reorder-point" className="ml-2 text-sm text-gray-700">
+                                        Reorder Point
+                                      </label>
+                                    </div>
+                                    <div className="flex items-center">
+                                      <input
+                                        type="checkbox"
+                                        checked={barcodeOptions.content?.includeMinLevelBox || false}
+                                        onChange={(e) => setBarcodeOptions(prev => ({
+                                          ...prev,
+                                          content: { ...prev.content, includeMinLevelBox: e.target.checked }
+                                        }))}
+                                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                        id="include-min-level-box"
+                                      />
+                                      <label htmlFor="include-min-level-box" className="ml-2 text-sm text-gray-700">
+                                        Min Level Box
+                                      </label>
+                                    </div>
+                                  </div>
+
+                                  {/* Technical Specs */}
+                                  <div className="space-y-2">
+                                    <h4 className="text-xs font-semibold text-gray-500 uppercase mb-2">Technical Specs</h4>
+                                    <div className="flex items-center">
+                                      <input
+                                        type="checkbox"
+                                        checked={barcodeOptions.content?.includeMaterialSeries || false}
+                                        onChange={(e) => setBarcodeOptions(prev => ({
+                                          ...prev,
+                                          content: { ...prev.content, includeMaterialSeries: e.target.checked }
+                                        }))}
+                                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                        id="include-material-series"
+                                      />
+                                      <label htmlFor="include-material-series" className="ml-2 text-sm text-gray-700">
+                                        Material/Series
+                                      </label>
+                                    </div>
+                                    <div className="flex items-center">
+                                      <input
+                                        type="checkbox"
+                                        checked={barcodeOptions.content?.includeBoardType || false}
+                                        onChange={(e) => setBarcodeOptions(prev => ({
+                                          ...prev,
+                                          content: { ...prev.content, includeBoardType: e.target.checked }
+                                        }))}
+                                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                        id="include-board-type"
+                                      />
+                                      <label htmlFor="include-board-type" className="ml-2 text-sm text-gray-700">
+                                        Board Type
+                                      </label>
+                                    </div>
+                                    <div className="flex items-center">
+                                      <input
+                                        type="checkbox"
+                                        checked={barcodeOptions.content?.includeGSM || false}
+                                        onChange={(e) => setBarcodeOptions(prev => ({
+                                          ...prev,
+                                          content: { ...prev.content, includeGSM: e.target.checked }
+                                        }))}
+                                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                        id="include-gsm"
+                                      />
+                                      <label htmlFor="include-gsm" className="ml-2 text-sm text-gray-700">
+                                        GSM
+                                      </label>
+                                    </div>
+                                    <div className="flex items-center">
+                                      <input
+                                        type="checkbox"
+                                        checked={barcodeOptions.content?.includeDimensions || false}
+                                        onChange={(e) => setBarcodeOptions(prev => ({
+                                          ...prev,
+                                          content: { ...prev.content, includeDimensions: e.target.checked }
+                                        }))}
+                                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                        id="include-dimensions"
+                                      />
+                                      <label htmlFor="include-dimensions" className="ml-2 text-sm text-gray-700">
+                                        Dimensions
+                                      </label>
+                                    </div>
+                                    <div className="flex items-center">
+                                      <input
+                                        type="checkbox"
+                                        checked={barcodeOptions.content?.includeCAL || false}
+                                        onChange={(e) => setBarcodeOptions(prev => ({
+                                          ...prev,
+                                          content: { ...prev.content, includeCAL: e.target.checked }
+                                        }))}
+                                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                        id="include-cal"
+                                      />
+                                      <label htmlFor="include-cal" className="ml-2 text-sm text-gray-700">
+                                        CAL
+                                      </label>
+                                    </div>
+                                  </div>
+
+                                  {/* Additional */}
+                                  <div className="space-y-2 md:col-span-2">
+                                    <h4 className="text-xs font-semibold text-gray-500 uppercase mb-2">Additional</h4>
+                                    <div className="flex items-center">
+                                      <input
+                                        type="checkbox"
+                                        checked={barcodeOptions.content?.includeNotes || false}
+                                        onChange={(e) => setBarcodeOptions(prev => ({
+                                          ...prev,
+                                          content: { ...prev.content, includeNotes: e.target.checked }
+                                        }))}
+                                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                        id="include-notes"
+                                      />
+                                      <label htmlFor="include-notes" className="ml-2 text-sm text-gray-700">
+                                        Notes
+                                      </label>
+                                    </div>
+                                    <div>
+                                      <label className="block text-sm text-gray-700 mb-1">Custom Text (optional)</label>
+                                      <input
+                                        type="text"
+                                        value={barcodeOptions.content?.customText || ''}
+                                        onChange={(e) => setBarcodeOptions(prev => ({
+                                          ...prev,
+                                          content: { ...prev.content, customText: e.target.value }
+                                        }))}
+                                        className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                        placeholder="Additional text to display on label"
+                                      />
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </section>
+                  )}
                 </div>
               </div>
 

@@ -194,10 +194,29 @@ export const ConfirmStageChangeModal: FC<ConfirmStageChangeModalProps> = ({
   }
 
   const planned = calculatePlannedQty()
-  const WASTAGE_THRESHOLD = 400
   // Use planned quantity in output UOM for threshold comparison
   const plannedQtyInOutputUOM = planned.qtyInOutputUOM || planned.qty
-  const completionThreshold = Math.max(0, plannedQtyInOutputUOM - WASTAGE_THRESHOLD)
+  
+  // Calculate tolerance based on order quantity
+  const calculateToleranceThresholds = (plannedQty: number): { lower: number; upper: number } => {
+    let tolerancePercent: number
+    if (plannedQty < 1000) {
+      tolerancePercent = 0.10
+    } else if (plannedQty < 5000) {
+      tolerancePercent = 0.075
+    } else if (plannedQty < 10000) {
+      tolerancePercent = 0.05
+    } else {
+      tolerancePercent = 0.03
+    }
+    const calculatedTolerance = Math.round(plannedQty * tolerancePercent)
+    const lower = Math.max(50, Math.min(calculatedTolerance, 2000))
+    const upper = Math.max(50, Math.min(calculatedTolerance, 2000))
+    return { lower, upper }
+  }
+  
+  const tolerance = calculateToleranceThresholds(plannedQtyInOutputUOM)
+  const completionThreshold = Math.max(0, plannedQtyInOutputUOM - tolerance.lower)
   const isIncomplete = plannedQtyInOutputUOM > 0 && totalAfterThisEntry < completionThreshold
   // Check if threshold is already met with existing production (without current entry)
   const thresholdAlreadyMet = plannedQtyInOutputUOM > 0 && totalProducedInStage >= completionThreshold
@@ -459,7 +478,8 @@ export const ConfirmStageChangeModal: FC<ConfirmStageChangeModalProps> = ({
                 }
 
                 if (requireOutput && isIncomplete) {
-                  alert(`⚠️ Cannot proceed: Production quantity below required threshold.\n\nRequired: ${completionThreshold.toLocaleString()}+ ${currentStageOutputUOM || 'sheets'}\nCurrent: ${totalAfterThisEntry.toLocaleString()} ${currentStageOutputUOM || 'sheets'}\n\nPlease complete production before moving to next stage.`)
+                  const remainingNeeded = Math.max(0, completionThreshold - totalAfterThisEntry)
+                  alert(`⚠️ Cannot proceed: Production quantity below required threshold.\n\nRequired: ${completionThreshold.toLocaleString()}+ ${currentStageOutputUOM || 'sheets'}\nCurrent: ${totalAfterThisEntry.toLocaleString()} ${currentStageOutputUOM || 'sheets'}\nRemaining needed: ${remainingNeeded.toLocaleString()} ${currentStageOutputUOM || 'sheets'}\n\nPlease complete production before moving to next stage.`)
                   return
                 }
                 
@@ -477,7 +497,7 @@ export const ConfirmStageChangeModal: FC<ConfirmStageChangeModalProps> = ({
                 requireOutput && !thresholdAlreadyMet && !hasAddedRecord 
                   ? 'Please add a production record first using "Add Record" button' 
                   : requireOutput && isIncomplete
-                    ? `Threshold not met. Required: ${completionThreshold.toLocaleString()}+ ${currentStageOutputUOM || 'sheets'}`
+                    ? `Threshold not met. Need ${Math.max(0, completionThreshold - totalAfterThisEntry).toLocaleString()} more ${currentStageOutputUOM || 'sheets'} (minimum total: ${completionThreshold.toLocaleString()}+)`
                     : undefined
               }
             >

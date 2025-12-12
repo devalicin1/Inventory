@@ -41,7 +41,15 @@ export const PackagingTab: FC<PackagingTabProps> = ({ job, workspaceId, workflow
     }
 
     const targetStageId = lastCartoonStageId || lastStageId
-    const targetStageRuns = productionRuns.filter((r: any) => r.stageId === targetStageId)
+    // Filter runs for target stage, excluding transfer runs (WIP transfers, not actual production)
+    const targetStageRuns = productionRuns.filter((r: any) => {
+      if (r.stageId !== targetStageId) return false
+      // Exclude transfer runs (these are WIP transfers, not actual production)
+      if ((r as any).transferSourceRunIds && Array.isArray((r as any).transferSourceRunIds) && (r as any).transferSourceRunIds.length > 0) {
+        return false
+      }
+      return true
+    })
 
     const totalCartoonOutput = targetStageRuns.reduce((sum: number, r: any) => {
       return sum + Number(r.qtyGood || 0)

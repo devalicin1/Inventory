@@ -15,7 +15,7 @@ import {
 } from 'firebase/firestore'
 import { getDownloadURL, ref, uploadBytes, deleteObject } from 'firebase/storage'
 import { generateQRCodeDataURL } from '../utils/qrcode'
-import { generateBarcodeDataURL } from '../utils/barcode'
+import { generateBarcodeDataURL, type BarcodeOptions } from '../utils/barcode'
 import { sanitizeForFirestore, coerceNumberOrNull } from '../utils/sanitize'
 
 // Ticket interface (shared with production-jobs)
@@ -58,6 +58,9 @@ export interface ProductInput {
   cal?: string
   tags?: string[]
   notes?: string
+  // Barcode generation options
+  generateBarcode?: boolean
+  barcodeOptions?: BarcodeOptions
 }
 
 export interface Product extends ProductInput {
@@ -187,10 +190,50 @@ export async function createProduct(workspaceId: string, input: ProductInput): P
   }
 
   const qrData = await generateQRCodeDataURL(input.sku || docRef.id)
-  const barcodeData = await generateBarcodeDataURL(input.sku || docRef.id)
+  
+  // Generate barcode only if requested (default: true for backward compatibility)
+  let barcodeUrl: string | undefined
+  if (input.generateBarcode !== false) {
+    try {
+      const barcodeOptions: BarcodeOptions = {
+        ...(input.barcodeOptions || {}),
+        productData: {
+          sku: input.sku || docRef.id,
+          name: input.name,
+          price: input.pricePerBox,
+          category: input.category,
+          subcategory: input.subcategory,
+          uom: input.uom,
+          quantityBox: input.quantityBox,
+          pcsPerBox: input.pcsPerBox,
+          materialSeries: input.materialSeries,
+          boardType: input.boardType,
+          gsm: input.gsm,
+          dimensionsWxLmm: input.dimensionsWxLmm,
+          cal: input.cal,
+          minStock: input.minStock,
+          reorderPoint: input.reorderPoint,
+          minLevelBox: input.minLevelBox,
+          status: input.status,
+          tags: input.tags,
+          notes: input.notes,
+        },
+      }
+      const barcodeResult = await generateBarcodeDataURL(input.sku || docRef.id, barcodeOptions)
+      const barRef = ref(storage, `workspaces/${workspaceId}/products/${docRef.id}/barcode.png`)
+      
+      // Convert data URL to bytes
+      const res = await fetch(barcodeResult.dataUrl)
+      const buf = await res.arrayBuffer()
+      await uploadBytes(barRef, new Uint8Array(buf), { contentType: 'image/png' })
+      barcodeUrl = await getDownloadURL(barRef)
+    } catch (err) {
+      console.warn('Barcode generation failed (continuing anyway):', err)
+      // Continue without barcode
+    }
+  }
 
   const qrRef = ref(storage, `workspaces/${workspaceId}/products/${docRef.id}/qr.png`)
-  const barRef = ref(storage, `workspaces/${workspaceId}/products/${docRef.id}/barcode.png`)
 
   // Convert data URLs to bytes
   async function uploadDataUrl(storageRef: any, dataUrl: string) {
@@ -200,10 +243,7 @@ export async function createProduct(workspaceId: string, input: ProductInput): P
     return await getDownloadURL(storageRef)
   }
 
-  const [qrUrl, barcodeUrl] = await Promise.all([
-    uploadDataUrl(qrRef, qrData.dataUrl),
-    uploadDataUrl(barRef, barcodeData),
-  ])
+  const qrUrl = await uploadDataUrl(qrRef, qrData.dataUrl)
 
   const afterCreateUpdate = sanitizeForFirestore({
     imageUrl: imageUrl ?? null,
@@ -351,6 +391,41 @@ export async function saveProductQr(
     updatedAt: serverTimestamp(),
   } as any)
   return url
+}
+
+export async function saveProductBarcode(
+  workspaceId: string,
+  productId: string,
+  dataUrl: string
+): Promise<string> {
+  const barRef = ref(storage, `workspaces/${workspaceId}/products/${productId}/barcode.png`)
+  const res = await fetch(dataUrl)
+  const buf = await res.arrayBuffer()
+  await uploadBytes(barRef, new Uint8Array(buf), { contentType: 'image/png' })
+  const url = await getDownloadURL(barRef)
+  await updateDoc(doc(db, 'workspaces', workspaceId, 'products', productId), {
+    barcodeUrl: url,
+    updatedAt: serverTimestamp(),
+  } as any)
+  return url
+}
+
+export async function deleteProductBarcode(
+  workspaceId: string,
+  productId: string
+): Promise<void> {
+  const barRef = ref(storage, `workspaces/${workspaceId}/products/${productId}/barcode.png`)
+  try {
+    await deleteObject(barRef)
+  } catch (e: any) {
+    if (e.code !== 'storage/object-not-found') {
+      throw e
+    }
+  }
+  await updateDoc(doc(db, 'workspaces', workspaceId, 'products', productId), {
+    barcodeUrl: null,
+    updatedAt: serverTimestamp(),
+  } as any)
 }
 
 export async function deleteProductQr(

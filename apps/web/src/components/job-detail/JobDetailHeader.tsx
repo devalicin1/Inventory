@@ -119,8 +119,25 @@ export const JobDetailHeader: FC<JobDetailHeaderProps> = ({
       }
     }
 
-    const WASTAGE_THRESHOLD_LOWER = 400
-    const completionThreshold = Math.max(0, plannedQty - WASTAGE_THRESHOLD_LOWER)
+    // Calculate tolerance based on order quantity
+    const calculateToleranceThresholds = (plannedQty: number): { lower: number; upper: number } => {
+      let tolerancePercent: number
+      if (plannedQty < 1000) {
+        tolerancePercent = 0.10
+      } else if (plannedQty < 5000) {
+        tolerancePercent = 0.075
+      } else if (plannedQty < 10000) {
+        tolerancePercent = 0.05
+      } else {
+        tolerancePercent = 0.03
+      }
+      const calculatedTolerance = Math.round(plannedQty * tolerancePercent)
+      const lower = Math.max(50, Math.min(calculatedTolerance, 2000))
+      const upper = Math.max(50, Math.min(calculatedTolerance, 2000))
+      return { lower, upper }
+    }
+    const tolerance = calculateToleranceThresholds(plannedQty)
+    const completionThreshold = Math.max(0, plannedQty - tolerance.lower)
 
     return totalProduced >= completionThreshold
   }

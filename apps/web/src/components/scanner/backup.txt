@@ -1,10 +1,10 @@
-
 import { useState, useRef, useEffect, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { BrowserMultiFormatReader } from '@zxing/browser'
 import {
   type Job,
   listJobs,
+  getJob,
   setJobStatus,
   createConsumption,
   createTimeLog,
@@ -17,7 +17,8 @@ import {
   recalculateJobBomConsumption,
   subscribeToJob,
   subscribeToJobConsumptions,
-  subscribeToJobProductionRuns
+  subscribeToJobProductionRuns,
+  recordJobOutput
 } from '../api/production-jobs'
 import {
   getProductByCode,
@@ -27,6 +28,7 @@ import {
   type ListedProduct
 } from '../api/inventory'
 import { ConfirmInventoryPostingModal } from './ConfirmInventoryPostingModal'
+import type { BatchQrPayload, StageTransitionRule } from './jobs/create/types'
 import { listStockReasons } from '../api/settings'
 import {
   QrCodeIcon,
@@ -68,14 +70,43 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
   const [activeAction, setActiveAction] = useState<string | null>(null)
   const [actionData, setActionData] = useState<any>({})
   const [showInventoryPostingModal, setShowInventoryPostingModal] = useState(false)
-  
+  const [showLotInventoryPostingModal, setShowLotInventoryPostingModal] = useState(false)
+  const [selectedLotForPosting, setSelectedLotForPosting] = useState<{ lot: string; qty: number } | null>(null)
+ 
   // Dialog states for consume and produce
   const [showConsumeDialog, setShowConsumeDialog] = useState(false)
   const [showProduceDialog, setShowProduceDialog] = useState(false)
-  
+ 
   // Local state for dialog production runs (fetched when dialog opens)
   const [dialogProductionRuns, setDialogProductionRuns] = useState<any[]>([])
   const [isLoadingDialogRuns, setIsLoadingDialogRuns] = useState(false)
+  // Local batch tracking (front-end only for now)
+  const [batches, setBatches] = useState<Record<string, { qty: number; unit: string; stageId: string }>>({})
+ 
+  // Batch transfer modal state
+  const [showBatchTransferModal, setShowBatchTransferModal] = useState(false)
+  const [batchTransferData, setBatchTransferData] = useState<{
+    batchPayload: BatchQrPayload
+    rule?: StageTransitionRule
+    lotId: string
+    sourceStageName: string
+    targetStageName: string
+  } | null>(null)
+ 
+  // Stage output selection modal state
+  const [showStageOutputModal, setShowStageOutputModal] = useState(false)
+  const [selectedStageForOutput, setSelectedStageForOutput] = useState<{
+    stageId: string
+    stageName: string
+    nextStageId?: string
+    nextStageName?: string
+  } | null>(null)
+  const [freshRunsForModal, setFreshRunsForModal] = useState<any[]>([])
+  const [isLoadingFreshRuns, setIsLoadingFreshRuns] = useState(false)
+  const [selectedOutputIds, setSelectedOutputIds] = useState<Set<string>>(new Set())
+ 
+  // Selected stage for Record Output dialog (allows recording output to any stage)
+  const [selectedOutputStageId, setSelectedOutputStageId] = useState<string | null>(null)
 
   // Camera scanning state
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -147,6 +178,27 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
           setProductionRuns(runs) // Also update main state
           console.log('[ProductionScanner] Fetched production runs on dialog open:', runs.length, runs)
           setIsLoadingDialogRuns(false)
+         
+          // Auto-select stage with transferred lots when runs are loaded
+          if (selectedJob && !selectedOutputStageId) {
+            const plannedStages = selectedJob.plannedStageIds || []
+            // Find the last stage that has transferred lots (WIP from previous stage)
+            for (let i = plannedStages.length - 1; i >= 0; i--) {
+              const stageId = plannedStages[i]
+              const stageRuns = runs.filter((r: any) => r.stageId === stageId)
+              const hasTransferredLots = stageRuns.some((r: any) =>
+                r.transferSourceRunIds && Array.isArray(r.transferSourceRunIds) && r.transferSourceRunIds.length > 0
+              )
+              if (hasTransferredLots) {
+                setSelectedOutputStageId(stageId)
+                break
+              }
+            }
+            // If no transferred lots found, use current stage
+            if (!selectedOutputStageId) {
+              setSelectedOutputStageId(selectedJob.currentStageId || null)
+            }
+          }
         } catch (error) {
           console.error('[ProductionScanner] Error fetching production runs:', error)
           setIsLoadingDialogRuns(false)
@@ -157,8 +209,9 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
       // Reset dialog state when dialog closes
       setDialogProductionRuns([])
       setIsLoadingDialogRuns(false)
+      setSelectedOutputStageId(null) // Reset stage selection when closing
     }
-  }, [showProduceDialog, selectedJob?.id, workspaceId])
+  }, [showProduceDialog, selectedJob?.id, workspaceId, selectedOutputStageId])
 
   // Fetch initial consumptions when job is selected
   const { data: initialConsumptions } = useQuery({
@@ -217,11 +270,90 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
         if (showProduceDialog) {
           setDialogProductionRuns(runs)
         }
+       
+        // Auto-select stage with transferred lots when runs are loaded and dialog is open
+        if (showProduceDialog && selectedJob && !selectedOutputStageId) {
+          const plannedStages = selectedJob.plannedStageIds || []
+          // Find the last stage that has transferred lots (WIP from previous stage)
+          for (let i = plannedStages.length - 1; i >= 0; i--) {
+            const stageId = plannedStages[i]
+            const stageRuns = runs.filter((r: any) => r.stageId === stageId)
+            const hasTransferredLots = stageRuns.some((r: any) =>
+              r.transferSourceRunIds && Array.isArray(r.transferSourceRunIds) && r.transferSourceRunIds.length > 0
+            )
+            if (hasTransferredLots) {
+              setSelectedOutputStageId(stageId)
+              break
+            }
+          }
+        }
       }
     )
 
     return () => unsubscribe()
-  }, [workspaceId, selectedJob?.id, initialProductionRuns, showProduceDialog])
+  }, [workspaceId, selectedJob?.id, initialProductionRuns, showProduceDialog, selectedOutputStageId])
+
+  // Auto-fill lot number when stage changes or dialog opens (FIFO)
+  useEffect(() => {
+    if (!showProduceDialog || !selectedJob || !selectedOutputStageId) return
+   
+    const effectiveRuns = dialogProductionRuns.length > 0
+      ? dialogProductionRuns
+      : (productionRuns.length > 0 ? productionRuns : (initialProductionRuns || []))
+   
+    const outputStageId = selectedOutputStageId
+    const transferredRuns = effectiveRuns.filter((r: any) => {
+      if (r.stageId !== outputStageId) return false
+      return r.transferSourceRunIds && Array.isArray(r.transferSourceRunIds) && r.transferSourceRunIds.length > 0
+    })
+   
+    if (transferredRuns.length === 0) return
+   
+    // Group by lot and calculate availability
+    const lotMap = new Map<string, { transferredQty: number; processedQty: number; transferDate: Date }>()
+    transferredRuns.forEach((transferRun: any) => {
+      const lot = transferRun.lot || ''
+      if (!lot) return
+     
+      const transferredQty = Number(transferRun.qtyGood || 0)
+      const transferDate = transferRun.at
+        ? (typeof transferRun.at === 'string' ? new Date(transferRun.at) : new Date((transferRun.at as any).seconds * 1000))
+        : new Date()
+     
+      const processedRuns = effectiveRuns.filter((r: any) =>
+        r.stageId === outputStageId &&
+        r.lot === lot &&
+        !(r.transferSourceRunIds && Array.isArray(r.transferSourceRunIds) && r.transferSourceRunIds.length > 0)
+      )
+      const processedQty = processedRuns.reduce((sum: number, r: any) => sum + Number(r.qtyGood || 0), 0)
+     
+      if (lotMap.has(lot)) {
+        const existing = lotMap.get(lot)!
+        existing.transferredQty += transferredQty
+        existing.processedQty += processedQty
+        if (transferDate < existing.transferDate) {
+          existing.transferDate = transferDate
+        }
+      } else {
+        lotMap.set(lot, { transferredQty, processedQty, transferDate })
+      }
+    })
+   
+    // Find FIFO lot (oldest with remaining quantity)
+    const lotAvailability = Array.from(lotMap.entries())
+      .map(([lot, info]) => ({
+        lot,
+        remainingQty: info.transferredQty - info.processedQty,
+        transferDate: info.transferDate
+      }))
+      .filter(l => l.remainingQty > 0)
+      .sort((a, b) => a.transferDate.getTime() - b.transferDate.getTime())
+   
+    // Auto-fill if no lot is manually set
+    if (lotAvailability.length > 0 && !actionData.lot) {
+      setActionData(prev => ({ ...prev, lot: lotAvailability[0].lot }))
+    }
+  }, [showProduceDialog, selectedOutputStageId, dialogProductionRuns.length, productionRuns.length, initialProductionRuns?.length, selectedJob?.id, actionData.lot])
 
   // Initialize consumptions from query, then update via real-time subscription
   useEffect(() => {
@@ -268,14 +400,13 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
           updatedAt: new Date() as any
         })
       }
-      
+     
       // Invalidate ALL job queries (including filtered ones) using wildcard
       await queryClient.invalidateQueries({ queryKey: ['jobs', workspaceId], exact: false })
       await queryClient.invalidateQueries({ queryKey: ['job', workspaceId, variables.jobId] })
-      
+     
       // Real-time subscription will update selectedJob with server data
-      // Use resetSelectionAfterAction to allow re-scanning the same code
-      resetSelectionAfterAction()
+      // Don't reset selection - user should stay on job detail screen to continue working
     },
   })
 
@@ -310,12 +441,12 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
         }
         setConsumptions(prev => [newConsumption, ...prev])
       }
-      
+     
       // Invalidate ALL job queries (including filtered ones) using wildcard
       await queryClient.invalidateQueries({ queryKey: ['jobs', workspaceId], exact: false })
       await queryClient.invalidateQueries({ queryKey: ['job', workspaceId, selectedJob!.id] })
       await queryClient.invalidateQueries({ queryKey: ['jobConsumptions', workspaceId, selectedJob!.id] })
-      
+     
       // Real-time subscription will update selectedJob and consumptions with server data
       setActiveAction(null)
       setActionData({})
@@ -330,7 +461,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
     mutationFn: (data: any) => createProductionRun(workspaceId, selectedJob!.id, data),
     onSuccess: async (_, variables) => {
       const job = selectedJob
-      
+     
       // Optimistic update: immediately add production run to state
       if (job && variables) {
         const newRun = {
@@ -346,12 +477,12 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
         }
         setProductionRuns(prev => [newRun, ...prev])
       }
-      
+     
       // Invalidate ALL job queries (including filtered ones) using wildcard
       await queryClient.invalidateQueries({ queryKey: ['jobs', workspaceId], exact: false })
       await queryClient.invalidateQueries({ queryKey: ['jobRuns', workspaceId, job!.id] })
       await queryClient.invalidateQueries({ queryKey: ['allJobRuns', workspaceId] })
-      
+     
       // Show success message with details
       if (job) {
         try {
@@ -368,7 +499,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
       } else {
         alert('✓ Production output recorded!')
       }
-      
+     
       setActiveAction(null)
       setActionData({})
     },
@@ -405,14 +536,184 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
     onSuccess: async () => {
       // Invalidate ALL job queries (including filtered ones) using wildcard
       await queryClient.invalidateQueries({ queryKey: ['jobs', workspaceId], exact: false })
-      resetSelectionAfterAction()
+      // Don't reset selection - user should stay on job detail screen to continue working
     },
   })
 
   const moveStageMutation = useMutation({
-    mutationFn: ({ jobId, newStageId, note }: { jobId: string; newStageId: string; note?: string }) =>
-      moveJobToStage(workspaceId, jobId, newStageId, 'current-user', note),
+    mutationFn: ({ jobId, newStageId, previousStageId, note }: { jobId: string; newStageId: string; previousStageId?: string; note?: string }) => {
+      console.log(`[Move to] Moving job ${jobId} from ${previousStageId} to ${newStageId}`)
+      return moveJobToStage(workspaceId, jobId, newStageId, 'current-user', note)
+    },
     onSuccess: async (_, variables) => {
+      console.log(`[Move to] onSuccess called with variables:`, variables)
+      // After stage move, automatically transfer all outputs from previous stage to new stage
+      if (selectedJob && selectedJob.id === variables.jobId) {
+        // Use previousStageId from variables (captured before mutation) instead of selectedJob.currentStageId
+        // because selectedJob might already be updated by the mutation
+        const previousStageId = variables.previousStageId || selectedJob.currentStageId
+        const newStageId = variables.newStageId
+        console.log(`[Move to] onSuccess: previousStageId=${previousStageId}, newStageId=${newStageId}, selectedJob.currentStageId=${selectedJob.currentStageId}`)
+       
+        if (previousStageId && previousStageId !== newStageId) {
+          try {
+            // Fetch all production runs for the previous stage (exclude transfer runs)
+            const allRuns = await listJobProductionRuns(workspaceId, variables.jobId)
+            console.log(`[Move to] All runs fetched:`, allRuns.map(r => ({ id: r.id, stageId: r.stageId, lot: r.lot })))
+            const previousStageRuns = allRuns.filter((r: any) => {
+              if (r.stageId !== previousStageId) return false
+              // Exclude transfer runs (only count actual production)
+              if (r.transferSourceRunIds && Array.isArray(r.transferSourceRunIds) && r.transferSourceRunIds.length > 0) {
+                return false
+              }
+              return true
+            })
+            console.log(`[Move to] Previous stage runs (stageId=${previousStageId}):`, previousStageRuns.map(r => ({ id: r.id, stageId: r.stageId, lot: r.lot, qtyGood: r.qtyGood })))
+           
+            // If there are outputs to transfer, create transfer run(s) in the new stage
+            console.log(`[Move to] previousStageRuns.length=${previousStageRuns.length}, allRuns.length=${allRuns.length}`)
+            if (previousStageRuns.length > 0) {
+              console.log(`[Move to] Starting transfer process...`)
+              // Get stage info for UOM conversion
+              const workflow = workflows.find(w => w.id === selectedJob.workflowId)
+              const previousStageInfo = workflow?.stages?.find((s: any) => s.id === previousStageId) as any
+              const newStageInfo = workflow?.stages?.find((s: any) => s.id === newStageId) as any
+              const previousStageOutputUOM = previousStageInfo?.outputUOM || previousStageInfo?.inputUOM || ''
+              const newStageInputUOM = newStageInfo?.inputUOM || ''
+              const newStageOutputUOM = newStageInfo?.outputUOM || ''
+              const numberUp = selectedJob.productionSpecs?.numberUp || 1
+             
+              // Group runs by lot (if they have lot numbers)
+              const runsByLot = new Map<string, typeof previousStageRuns>()
+              const runsWithoutLot: typeof previousStageRuns = []
+             
+              previousStageRuns.forEach((run: any) => {
+                const lot = run.lot || ''
+                if (lot) {
+                  if (!runsByLot.has(lot)) {
+                    runsByLot.set(lot, [])
+                  }
+                  runsByLot.get(lot)!.push(run)
+                } else {
+                  runsWithoutLot.push(run)
+                }
+              })
+             
+              // Generate lot ID for transfer
+              const generateLotId = () => {
+                const timestamp = new Date().toISOString().slice(0, 10).replace(/-/g, '')
+                const random = Math.random().toString(36).substring(2, 6).toUpperCase()
+                return `${selectedJob.code || selectedJob.id}-${timestamp}-${random}`
+              }
+             
+              // Transfer runs grouped by lot
+              for (const [lot, runs] of runsByLot.entries()) {
+                const totalQty = runs.reduce((sum: number, r: any) => sum + Number(r.qtyGood || 0), 0)
+                const sourceRunIds = runs.map((r: any) => r.id)
+               
+                // Convert UOM if needed
+                let transferQty = totalQty
+                if (previousStageOutputUOM !== newStageInputUOM) {
+                  if (previousStageOutputUOM === 'cartoon' && newStageInputUOM === 'sheets' && numberUp > 0) {
+                    transferQty = totalQty / numberUp
+                  } else if (previousStageOutputUOM === 'sheets' && newStageInputUOM === 'cartoon' && numberUp > 0) {
+                    transferQty = totalQty * numberUp
+                  }
+                }
+               
+                // Convert to output UOM if needed
+                if (newStageInputUOM !== newStageOutputUOM) {
+                  if (newStageInputUOM === 'sheets' && newStageOutputUOM === 'cartoon' && numberUp > 0) {
+                    transferQty = transferQty * numberUp
+                  } else if (newStageInputUOM === 'cartoon' && newStageOutputUOM === 'sheets' && numberUp > 0) {
+                    transferQty = transferQty / numberUp
+                  }
+                }
+               
+                if (transferQty > 0) {
+                  console.log(`[Move to] Creating transfer run: stageId=${newStageId}, lot=${lot}, qty=${transferQty}, sourceRunIds=`, sourceRunIds)
+                  const transferRun = await createProductionRun(workspaceId, variables.jobId, {
+                    stageId: newStageId,
+                    qtyGood: transferQty,
+                    qtyScrap: 0,
+                    lot: lot, // Keep original lot number
+                    operatorId: 'current-user',
+                    at: new Date(),
+                    transferSourceRunIds: sourceRunIds, // Track source runs
+                    notes: `Auto-transferred from ${previousStageInfo?.name || previousStageId} via "Move to" button`
+                  } as any)
+                  console.log(`[Move to] Transfer run created:`, transferRun)
+                }
+              }
+             
+              // Transfer runs without lot numbers as a single batch
+              if (runsWithoutLot.length > 0) {
+                const totalQty = runsWithoutLot.reduce((sum: number, r: any) => sum + Number(r.qtyGood || 0), 0)
+                const sourceRunIds = runsWithoutLot.map((r: any) => r.id)
+                const transferLotId = generateLotId()
+               
+                // Convert UOM if needed
+                let transferQty = totalQty
+                if (previousStageOutputUOM !== newStageInputUOM) {
+                  if (previousStageOutputUOM === 'cartoon' && newStageInputUOM === 'sheets' && numberUp > 0) {
+                    transferQty = totalQty / numberUp
+                  } else if (previousStageOutputUOM === 'sheets' && newStageInputUOM === 'cartoon' && numberUp > 0) {
+                    transferQty = totalQty * numberUp
+                  }
+                }
+               
+                // Convert to output UOM if needed
+                if (newStageInputUOM !== newStageOutputUOM) {
+                  if (newStageInputUOM === 'sheets' && newStageOutputUOM === 'cartoon' && numberUp > 0) {
+                    transferQty = transferQty * numberUp
+                  } else if (newStageInputUOM === 'cartoon' && newStageOutputUOM === 'sheets' && numberUp > 0) {
+                    transferQty = transferQty / numberUp
+                  }
+                }
+               
+                if (transferQty > 0) {
+                  await createProductionRun(workspaceId, variables.jobId, {
+                    stageId: newStageId,
+                    qtyGood: transferQty,
+                    qtyScrap: 0,
+                    lot: transferLotId,
+                    operatorId: 'current-user',
+                    at: new Date(),
+                    transferSourceRunIds: sourceRunIds, // Track source runs
+                    notes: `Auto-transferred from ${previousStageInfo?.name || previousStageId} via "Move to" button`
+                  } as any)
+                }
+              }
+             
+              // Refresh production runs
+              queryClient.invalidateQueries({ queryKey: ['jobRuns', workspaceId, variables.jobId] })
+             
+              // Wait a bit for Firestore to sync, then refresh fresh runs
+              setTimeout(() => {
+                // Also refresh freshRunsForModal if modal is open
+                if (showStageOutputModal && selectedJob?.id === variables.jobId) {
+                  console.log(`[Move to] Refreshing fresh runs for modal after transfer...`)
+                  setIsLoadingFreshRuns(true)
+                  listJobProductionRuns(workspaceId, variables.jobId)
+                    .then(runs => {
+                      console.log(`[Move to] Fresh runs refreshed:`, runs.map(r => ({ id: r.id, stageId: r.stageId, lot: r.lot, transferSourceRunIds: (r as any).transferSourceRunIds })))
+                      setFreshRunsForModal(runs)
+                      setIsLoadingFreshRuns(false)
+                    })
+                    .catch(err => {
+                      console.error('Failed to refresh fresh runs after transfer:', err)
+                      setIsLoadingFreshRuns(false)
+                    })
+                }
+              }, 1500) // Wait 1.5 seconds for Firestore to sync
+            }
+          } catch (e) {
+            console.error('[ProductionScanner] Failed to auto-transfer outputs after stage move:', e)
+            // Don't block the stage move if transfer fails - just log the error
+          }
+        }
+      }
+
       // Optimistic update: immediately update selectedJob state
       if (selectedJob && selectedJob.id === variables.jobId) {
         setSelectedJob({
@@ -421,13 +722,22 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
           updatedAt: new Date() as any
         })
       }
-      
+
       // Invalidate ALL job queries (including filtered ones) using wildcard
       await queryClient.invalidateQueries({ queryKey: ['jobs', workspaceId], exact: false })
       await queryClient.invalidateQueries({ queryKey: ['job', workspaceId, selectedJob?.id] })
-      
+
+      // After Firestore write completes, fetch the latest job snapshot to be 100% in sync
+      try {
+        const freshJob = await getJob(workspaceId, variables.jobId)
+        if (freshJob) {
+          setSelectedJob(freshJob)
+        }
+      } catch (e) {
+        console.warn('[ProductionScanner] Failed to refresh job after stage move:', e)
+      }
+
       // Don't reset selection - keep the job selected so user can see the updated stage
-      // Real-time subscription will update selectedJob with server data automatically
       // Only clear action data, not the selected job
       setActiveAction(null)
       setActionData({})
@@ -437,10 +747,46 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
     }
   })
 
+  const parseBatchPayload = (raw: string): BatchQrPayload | null => {
+    try {
+      const parsed = JSON.parse(raw)
+      if (parsed && parsed.type === 'batch') {
+        return parsed as BatchQrPayload
+      }
+      return null
+    } catch {
+      return null
+    }
+  }
+
+  const getTransitionRuleForStages = (job: Job, fromStageId: string, toStageId: string): StageTransitionRule | undefined => {
+    // Prefer workflow-level rules from Production Settings
+    const workflow = workflows.find((w: any) => w.id === job.workflowId)
+    const wfTransitions = (workflow?.allowedTransitions || []) as any[]
+    const wfRule = wfTransitions.find(
+      (t: any) => t.fromStageId === fromStageId && t.toStageId === toStageId
+    )
+    if (wfRule) {
+      return {
+        fromStageId,
+        toStageId,
+        requireOutputToAdvance: wfRule.requireOutputToAdvance ?? (job as any).requireOutputToAdvance !== false,
+        minQtyToStartNextStage: wfRule.minQtyToStartNextStage,
+        unit: wfRule.unit || 'sheet',
+        allowPartial: wfRule.allowPartial !== false,
+        allowRework: false,
+      }
+    }
+
+    // Fallback to any legacy job-level rules if present
+    const jobRules = (job as any).stageTransitionRules as StageTransitionRule[] | undefined
+    return jobRules?.find(r => r.fromStageId === fromStageId && r.toStageId === toStageId)
+  }
+
   const handleScan = async (code: string) => {
     const trimmedCode = code.trim()
     const now = Date.now()
-    
+   
     // If user dismissed this code, don't open it again until they scan something else
     if (dismissedCode.current) {
       const dismissed = dismissedCode.current.toLowerCase()
@@ -451,7 +797,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
       // User scanned a different code, clear the dismissed code
       dismissedCode.current = null
     }
-    
+   
     // Prevent duplicate scans within 2 seconds
     if (lastScanTime > 0 && (now - lastScanTime) < 2000) {
       // Same code scanned too quickly, ignore
@@ -462,13 +808,13 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
       }
     }
     setLastScanTime(now)
-    
+   
     // Check workspaceId
     if (!workspaceId) {
       console.error('workspaceId is null or undefined')
       return
     }
-    
+   
     // Wait for jobs to load if still loading
     if (jobsLoading) {
       console.log('Jobs still loading, please wait...')
@@ -481,15 +827,73 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
       return
     }
 
-    // 1. Check Jobs - case-insensitive search (by code, sku, or id)
+    // 1. Detect batch QR payloads first (for stage-to-stage transfers)
+    const batchPayload = parseBatchPayload(trimmedCode)
+    if (batchPayload && selectedJob && batchPayload.jobId === selectedJob.id) {
+      const rule = getTransitionRuleForStages(
+        selectedJob,
+        batchPayload.sourceStageId,
+        batchPayload.targetStageId
+      )
+
+      // Update local batch tracking for UI/debug
+      setBatches(prev => ({
+        ...prev,
+        [batchPayload.batchId]: {
+          qty: batchPayload.qty,
+          unit: batchPayload.unit,
+          stageId: batchPayload.sourceStageId
+        }
+      }))
+
+      if (rule && rule.minQtyToStartNextStage && !rule.allowPartial) {
+        // If partial is not allowed, ensure this batch alone satisfies the minimum
+        if (batchPayload.qty < rule.minQtyToStartNextStage) {
+          alert(
+            `This batch has ${batchPayload.qty} ${batchPayload.unit}, but at least ${rule.minQtyToStartNextStage} ${rule.unit} are required before starting the next stage.`
+          )
+          return
+        }
+      }
+
+      // Generate lot ID from job code and batch ID
+      const lotId = `${selectedJob.code || selectedJob.id}-${batchPayload.batchId}`
+     
+      // Get stage names for display
+      const sourceStageName = getStageName(batchPayload.sourceStageId)
+      const targetStageName = getStageName(batchPayload.targetStageId)
+
+      // Open batch transfer confirmation modal
+      setBatchTransferData({
+        batchPayload,
+        rule,
+        lotId,
+        sourceStageName,
+        targetStageName
+      })
+      setShowBatchTransferModal(true)
+
+      setRecentScans(prev => [
+        {
+          code: trimmedCode,
+          type: 'job',
+          timestamp: new Date()
+        },
+        ...prev
+      ])
+
+      return
+    }
+
+    // 2. Check Jobs - case-insensitive search (by code, sku, or id)
     const jobs = jobsData?.jobs || []
-    console.log('Scan attempt:', { 
-      code: trimmedCode, 
+    console.log('Scan attempt:', {
+      code: trimmedCode,
       workspaceId,
       jobsCount: jobs.length,
       jobCodes: jobs.map(j => j.code || j.id).slice(0, 5)
     })
-    
+   
     const job = jobs.find(j => {
       const jobCode = (j.code || '').trim().toLowerCase()
       const jobSku = (j.sku || '').trim().toLowerCase()
@@ -497,12 +901,26 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
       const searchCode = trimmedCode.toLowerCase()
       return jobCode === searchCode || jobSku === searchCode || jobId === searchCode
     })
-    
+   
     if (job) {
       console.log('Job found:', job.code || job.id)
       setSelectedJob(job)
       addToHistory(trimmedCode, 'job')
       setScanAttempts(0) // Reset scan attempts on success
+
+      // Automatically open the Record Output dialog when a job is selected
+      // via QR code or manual search on the scanner screen.
+      setActiveAction('produce')
+      setActionData((prev: any) => ({
+        ...prev,
+        qtyGood: prev?.qtyGood ?? 0,
+        qtyScrap: prev?.qtyScrap ?? 0,
+        lot: prev?.lot ?? '',
+        workcenterId: prev?.workcenterId ?? job.workcenterId ?? undefined
+        // runDateTime will be initialized inside the dialog on first render
+      }))
+      setShowProduceDialog(true)
+
       return
     }
 
@@ -521,12 +939,12 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
     }
 
     // 3. Not Found - log but don't spam alerts
-    console.log('Scan not found:', { 
-      code: trimmedCode, 
+    console.log('Scan not found:', {
+      code: trimmedCode,
       jobsCount: jobs.length,
       sampleJobCodes: jobs.map(j => j.code || j.id).slice(0, 3)
     })
-    
+   
     // Only show alert once per unique code
     const alreadyShown = recentScans.some(s => s.code === trimmedCode && s.type === 'none')
     if (!alreadyShown) {
@@ -580,13 +998,13 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
 
   const calculateProgress = (job: Job): { produced: number; planned: number; percentage: number; uom: string } => {
     const outputItem = job.output?.[0]
-    
+   
     // Use job's output data if available (this is updated by createProductionRun)
     // Otherwise calculate from production runs
     let produced: number
     let planned: number
     let uom: string
-    
+   
     if (outputItem?.qtyProduced !== undefined && outputItem?.qtyPlanned !== undefined) {
       // Use job.output data - this is the most reliable as it's updated by the API
       produced = Number(outputItem.qtyProduced || 0)
@@ -599,12 +1017,12 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
       const lastStageId = plannedStages.length > 0 ? plannedStages[plannedStages.length - 1] : job.currentStageId
       const lastStageInfo = getStageInfo(lastStageId)
       const finalOutputUOM = (lastStageInfo as any)?.outputUOM || outputItem?.uom || job.unit || 'sheets'
-      
+     
       // Sum all production runs (they're already in their stage's output UOM)
       // For final output, we need runs from the last stage that outputs in final UOM
       const allRuns = productionRuns
       let totalProduced = 0
-      
+     
       // Find the last stage with the final output UOM
       for (let i = plannedStages.length - 1; i >= 0; i--) {
         const stageId = plannedStages[i]
@@ -616,14 +1034,14 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
           break
         }
       }
-      
+     
       // If no runs found in final stage, sum all runs (fallback)
       if (totalProduced === 0) {
         totalProduced = allRuns.reduce((sum: number, r: any) => sum + Number(r.qtyGood || 0), 0)
       }
-      
+     
       produced = totalProduced
-      
+     
       // Calculate planned
       if (finalOutputUOM === 'cartoon' || finalOutputUOM === 'box' || finalOutputUOM === 'boxes') {
         const boxQty = job.packaging?.plannedBoxes || 0
@@ -631,11 +1049,11 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
         planned = boxQty * pcsPerBox
         uom = 'cartoon'
       } else {
-        const sheetItem = Array.isArray(job.bom) ? job.bom.find((item: any) => 
+        const sheetItem = Array.isArray(job.bom) ? job.bom.find((item: any) =>
           ['sht', 'sheet', 'sheets'].includes(String(item.uom || '').toLowerCase())
         ) : null
-        planned = sheetItem 
-          ? Number(sheetItem.qtyRequired || 0) 
+        planned = sheetItem
+          ? Number(sheetItem.qtyRequired || 0)
           : (outputItem?.qtyPlanned as number) || Number(job.quantity || 0)
         uom = finalOutputUOM
       }
@@ -643,10 +1061,10 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
 
     // Calculate percentage
     const percentage = planned > 0 ? Math.min(100, (produced / planned) * 100) : 0
-    
-    return { 
-      produced, 
-      planned, 
+   
+    return {
+      produced,
+      planned,
       percentage,
       uom
     }
@@ -671,81 +1089,55 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
     const stageOutputUOM = stageInfo.outputUOM || ''
     const numberUp = job.productionSpecs?.numberUp || 1
 
-    // Get runs for this stage
-    const stageRuns = productionRuns.filter((r: any) => r.stageId === stageId)
+    // Get runs for this stage (exclude pure transfer runs that were created just
+    // to move lots between stages – those have transferSourceRunIds set)
+    const stageRuns = productionRuns.filter((r: any) =>
+      r.stageId === stageId && !Array.isArray((r as any).transferSourceRunIds)
+    )
     const totalProduced = stageRuns.reduce((sum: number, r: any) => {
       // Production runs are stored in output UOM
       return sum + Number(r.qtyGood || 0)
     }, 0)
 
     // Calculate planned quantity for this stage
-    const plannedStages = job.plannedStageIds || []
-    const stageIndex = plannedStages.indexOf(stageId)
-    const previousStageId = stageIndex > 0 ? plannedStages[stageIndex - 1] : null
-
+    // Always use job's original order quantity, converted to this stage's output UOM
     let plannedQty: number
     let plannedUOM: string = stageOutputUOM || stageInputUOM || 'sheets'
-
-    if (previousStageId) {
-      // Use previous stage's output as this stage's planned input
-      const previousStageInfo = getStageInfo(previousStageId) as any
-      const previousStageOutputUOM = previousStageInfo?.outputUOM || ''
-      const previousStageRuns = productionRuns.filter((r: any) => r.stageId === previousStageId)
-      const previousStageTotalOutput = previousStageRuns.reduce((sum: number, r: any) => {
-        return sum + Number(r.qtyGood || 0)
-      }, 0)
-
-      if (previousStageTotalOutput > 0) {
-        // Convert previous stage output to current stage input UOM
-        if (previousStageOutputUOM === stageInputUOM) {
-          plannedQty = previousStageTotalOutput
-        } else if (previousStageOutputUOM === 'cartoon' && stageInputUOM === 'sheets' && numberUp > 0) {
-          plannedQty = previousStageTotalOutput / numberUp
-        } else if (previousStageOutputUOM === 'sheets' && stageInputUOM === 'cartoon' && numberUp > 0) {
-          plannedQty = previousStageTotalOutput * numberUp
-        } else {
-          plannedQty = previousStageTotalOutput
-        }
-
-        // Convert current stage input to output UOM for display
-        if (stageInputUOM === stageOutputUOM) {
-          // No conversion needed
-        } else if (stageInputUOM === 'sheets' && stageOutputUOM === 'cartoon' && numberUp > 0) {
-          plannedQty = plannedQty * numberUp
-          plannedUOM = 'cartoon'
-        } else if (stageInputUOM === 'cartoon' && stageOutputUOM === 'sheets' && numberUp > 0) {
-          plannedQty = plannedQty / numberUp
-          plannedUOM = 'sheets'
-        }
-      } else {
-        // No previous stage output, use original plan
-        if (stageOutputUOM === 'cartoon') {
-          const boxQty = job.packaging?.plannedBoxes || 0
-          const pcsPerBox = job.packaging?.pcsPerBox || 1
-          plannedQty = boxQty * pcsPerBox
-          plannedUOM = 'cartoon'
-        } else {
-          const sheetItem = Array.isArray(job.bom) ? job.bom.find((item: any) => 
-            ['sht', 'sheet', 'sheets'].includes(String(item.uom || '').toLowerCase())
-          ) : null
-          plannedQty = sheetItem ? Number(sheetItem.qtyRequired || 0) : (job.output?.[0]?.qtyPlanned as number) || Number(job.quantity || 0)
-          plannedUOM = 'sheets'
-        }
-      }
-    } else {
-      // First stage - use original planned quantity
-      if (stageOutputUOM === 'cartoon') {
-        const boxQty = job.packaging?.plannedBoxes || 0
-        const pcsPerBox = job.packaging?.pcsPerBox || 1
+   
+    if (stageOutputUOM === 'cartoon') {
+      // If output is cartoon, use packaging info (plannedBoxes * pcsPerBox)
+      // This is the correct way to calculate planned cartoon quantity
+      const boxQty = job.packaging?.plannedBoxes || 0
+      const pcsPerBox = job.packaging?.pcsPerBox || 1
+      if (boxQty > 0 && pcsPerBox > 0) {
         plannedQty = boxQty * pcsPerBox
         plannedUOM = 'cartoon'
       } else {
-        const sheetItem = Array.isArray(job.bom) ? job.bom.find((item: any) => 
-          ['sht', 'sheet', 'sheets'].includes(String(item.uom || '').toLowerCase())
-        ) : null
-        plannedQty = sheetItem ? Number(sheetItem.qtyRequired || 0) : (job.output?.[0]?.qtyPlanned as number) || Number(job.quantity || 0)
-        plannedUOM = 'sheets'
+        // Fallback: if no packaging info, try to convert from sheets using numberUp
+        const plannedSheets = (job.output?.[0]?.qtyPlanned as number) || Number(job.quantity || 0)
+        if (numberUp > 0) {
+          plannedQty = plannedSheets * numberUp
+          plannedUOM = 'cartoon'
+        } else {
+          // Last resort: use quantity directly
+          plannedQty = plannedSheets
+          plannedUOM = 'cartoon'
+        }
       }
+    } else {
+      // Output is sheets (or same as input)
+      // For sheets, get planned quantity from BOM (sheets item) or output[0].qtyPlanned
+      // Don't use job.quantity directly as it might be in boxes, not sheets
+      const bom = Array.isArray(job.bom) ? job.bom : []
+      const sheetItem = bom.find((item: any) => {
+        const uom = String(item.uom || '').toLowerCase()
+        return ['sht', 'sheet', 'sheets'].includes(uom)
+      })
+      const plannedSheets = sheetItem
+        ? Number(sheetItem.qtyRequired || 0)
+        : ((job.output?.[0]?.qtyPlanned as number) || Number(job.quantity || 0))
+      plannedQty = plannedSheets
+      plannedUOM = 'sheets'
     }
 
     const percentage = plannedQty > 0 ? Math.min(100, (totalProduced / plannedQty) * 100) : 0
@@ -761,6 +1153,36 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
     }
   }
 
+  // Helper function to calculate tolerance thresholds based on order quantity
+  const calculateToleranceThresholds = (plannedQty: number): { lower: number; upper: number } => {
+    // Calculate tolerance as percentage of planned quantity
+    // Smaller orders: higher percentage tolerance
+    // Larger orders: lower percentage tolerance (with min/max limits)
+    let tolerancePercent: number
+   
+    if (plannedQty < 1000) {
+      // Small orders (< 1000): 10% tolerance, minimum 50
+      tolerancePercent = 0.10
+    } else if (plannedQty < 5000) {
+      // Medium orders (1000-5000): 7.5% tolerance
+      tolerancePercent = 0.075
+    } else if (plannedQty < 10000) {
+      // Large orders (5000-10000): 5% tolerance
+      tolerancePercent = 0.05
+    } else {
+      // Very large orders (> 10000): 3% tolerance, maximum 2000
+      tolerancePercent = 0.03
+    }
+   
+    const calculatedTolerance = Math.round(plannedQty * tolerancePercent)
+   
+    // Apply min/max limits
+    const lower = Math.max(50, Math.min(calculatedTolerance, 2000))
+    const upper = Math.max(50, Math.min(calculatedTolerance, 2000))
+   
+    return { lower, upper }
+  }
+
   // Calculate production summary for current stage
   const calculateProductionSummary = (job: Job, customProductionRuns?: any[]) => {
     const currentStageInfo = getStageInfo(job.currentStageId) as any
@@ -771,25 +1193,58 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
     // Use custom production runs if provided, otherwise use state
     const runsToUse = customProductionRuns || productionRuns
 
-    // Get current stage runs
-    const currentStageRuns = runsToUse.filter((r: any) => r.stageId === job.currentStageId)
+    // Get current stage runs (exclude transfer runs - only count actual production)
+    const currentStageRuns = runsToUse.filter((r: any) => {
+      if (r.stageId !== job.currentStageId) return false
+      // Exclude transfer runs (these are WIP transfers, not actual production)
+      if (r.transferSourceRunIds && Array.isArray(r.transferSourceRunIds) && r.transferSourceRunIds.length > 0) {
+        return false
+      }
+      return true
+    })
     const totalProducedInStage = currentStageRuns.reduce((sum: number, r: any) => {
       return sum + Number(r.qtyGood || 0)
     }, 0)
 
-    // Calculate planned quantity
+    // Calculate planned quantity - always use job's original order quantity, converted to this stage's output UOM
+    // Calculate planned quantity - always use job's original order quantity, converted to this stage's output UOM
     let plannedQty: number
     let plannedUOM: string = currentStageOutputUOM || currentStageInputUOM || 'sheets'
-
+   
     if (currentStageOutputUOM === 'cartoon') {
+      // If output is cartoon, use packaging info (plannedBoxes * pcsPerBox)
+      // This is the correct way to calculate planned cartoon quantity
       const boxQty = job.packaging?.plannedBoxes || 0
       const pcsPerBox = job.packaging?.pcsPerBox || 1
-      plannedQty = boxQty * pcsPerBox
+      if (boxQty > 0 && pcsPerBox > 0) {
+        plannedQty = boxQty * pcsPerBox
+        plannedUOM = 'cartoon'
+      } else {
+        // Fallback: if no packaging info, try to convert from sheets using numberUp
+        const plannedSheets = (job.output?.[0]?.qtyPlanned as number) || Number(job.quantity || 0)
+        if (numberUp > 0) {
+          plannedQty = plannedSheets * numberUp
+          plannedUOM = 'cartoon'
+        } else {
+          // Last resort: use quantity directly
+          plannedQty = plannedSheets
+          plannedUOM = 'cartoon'
+        }
+      }
     } else {
-      const sheetItem = Array.isArray(job.bom) ? job.bom.find((item: any) => 
-        ['sht', 'sheet', 'sheets'].includes(String(item.uom || '').toLowerCase())
-      ) : null
-      plannedQty = sheetItem ? Number(sheetItem.qtyRequired || 0) : (job.output?.[0]?.qtyPlanned as number) || Number(job.quantity || 0)
+      // Output is sheets (or same as input)
+      // For sheets, get planned quantity from BOM (sheets item) or output[0].qtyPlanned
+      // Don't use job.quantity directly as it might be in boxes, not sheets
+      const bom = Array.isArray(job.bom) ? job.bom : []
+      const sheetItem = bom.find((item: any) => {
+        const uom = String(item.uom || '').toLowerCase()
+        return ['sht', 'sheet', 'sheets'].includes(uom)
+      })
+      const plannedSheets = sheetItem
+        ? Number(sheetItem.qtyRequired || 0)
+        : ((job.output?.[0]?.qtyPlanned as number) || Number(job.quantity || 0))
+      plannedQty = plannedSheets
+      plannedUOM = 'sheets'
     }
 
     // Convert function
@@ -800,11 +1255,10 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
       return qtyInInputUOM
     }
 
-    // Calculate threshold
-    const WASTAGE_THRESHOLD_LOWER = 400 // Alt sınır: planned - 400
-    const WASTAGE_THRESHOLD_UPPER = 500 // Üst sınır: planned + 500
-    const completionThreshold = Math.max(0, plannedQty - WASTAGE_THRESHOLD_LOWER)
-    const completionThresholdUpper = plannedQty + WASTAGE_THRESHOLD_UPPER
+    // Calculate threshold based on order quantity
+    const tolerance = calculateToleranceThresholds(plannedQty)
+    const completionThreshold = Math.max(0, plannedQty - tolerance.lower)
+    const completionThresholdUpper = plannedQty + tolerance.upper
 
     return {
       currentStageInputUOM,
@@ -825,7 +1279,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
 
   // Track dismissed codes - these won't trigger modal again until user scans a DIFFERENT code first
   const dismissedCode = useRef<string | null>(null)
-  
+ 
   // Reset selection after successful action (allows re-scanning same code)
   const resetSelectionAfterAction = () => {
     // Clear dismissed code so the same code can be scanned again
@@ -836,7 +1290,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
     setActionData({})
     setLastScannedCode(null)
   }
-  
+ 
   // Reset selection when user dismisses (X button) - blocks same code from re-opening
   const resetSelectionDismissed = () => {
     // Remember the code that was dismissed so it won't re-open automatically
@@ -845,14 +1299,14 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
     } else if (selectedProduct) {
       dismissedCode.current = selectedProduct.sku || selectedProduct.id
     }
-    
+   
     setSelectedJob(null)
     setSelectedProduct(null)
     setActiveAction(null)
     setActionData({})
     setLastScannedCode(null)
   }
-  
+ 
   // Alias for backward compatibility - uses dismiss behavior by default
   const resetSelection = resetSelectionDismissed
 
@@ -898,7 +1352,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
       }
       reader.current = null
     }
-    
+   
     // Clean up any existing video stream
     if (videoRef.current) {
       const existingStream = videoRef.current.srcObject as MediaStream
@@ -909,15 +1363,15 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
         videoRef.current.srcObject = null
       }
     }
-    
+   
     // Initialize new reader instance for this scan session
     reader.current = new BrowserMultiFormatReader()
-    
+   
     // Reset scan tracking
     setScanAttempts(0)
     setLastScanTime(Date.now())
     hasProcessedScan.current = false
-    
+   
     const startScanning = async () => {
       try {
         setIsScanning(true)
@@ -926,13 +1380,13 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
         // First, request camera permission explicitly for mobile devices
         // Use higher resolution for better small QR code detection while maintaining performance
         try {
-          const stream = await navigator.mediaDevices.getUserMedia({ 
-            video: { 
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: {
               facingMode: 'environment', // Prefer back camera on mobile
               width: { ideal: 1280, min: 640, max: 1920 }, // Higher resolution for small QR codes
               height: { ideal: 720, min: 480, max: 1080 },
               frameRate: { ideal: 30, max: 30 } // Limit frame rate for better performance
-            } 
+            }
           })
           // Stop the stream immediately - we'll use the reader's stream
           stream.getTracks().forEach(track => track.stop())
@@ -948,13 +1402,13 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
           }
           throw permissionError
         }
-        
+       
         // Wait a bit for video element to be ready
         await new Promise(resolve => setTimeout(resolve, 100))
-        
+       
         // List available video input devices
         const devices = await BrowserMultiFormatReader.listVideoInputDevices()
-        
+       
         if (devices.length === 0) {
           throw new Error('No camera found. Please check your device permissions.')
         }
@@ -962,8 +1416,8 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
         // Prefer back camera on mobile (usually the last one), otherwise use first available
         let deviceId = devices[devices.length - 1]?.deviceId
         // Try to find back camera explicitly
-        const backCamera = devices.find(d => 
-          d.label.toLowerCase().includes('back') || 
+        const backCamera = devices.find(d =>
+          d.label.toLowerCase().includes('back') ||
           d.label.toLowerCase().includes('rear') ||
           d.label.toLowerCase().includes('environment') ||
           d.label.toLowerCase().includes('facing back')
@@ -991,8 +1445,8 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
 
         // Start decoding from video device with enhanced detection for small QR codes
         await reader.current!.decodeFromVideoDevice(
-          deviceId, 
-          videoRef.current, 
+          deviceId,
+          videoRef.current,
           (result, err) => {
             if (result) {
               // Make sure we only handle a successful scan once
@@ -1002,16 +1456,16 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
               hasProcessedScan.current = true
 
               const scannedCode = result.getText().trim()
-              
+             
               // Prevent processing the same code multiple times
               if (lastScannedCode === scannedCode) {
                 return // Ignore duplicate scans
               }
-              
+             
               setLastScannedCode(scannedCode)
               setScanAttempts(0) // Reset on success
               setLastScanTime(Date.now())
-              
+             
               // Stop camera immediately after successful scan
               // First, stop all video tracks
               if (videoRef.current) {
@@ -1023,7 +1477,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                   videoRef.current.srcObject = null
                 }
               }
-              
+             
               // Then reset and nullify the reader to ensure clean state for next scan
               if (reader.current) {
                 try {
@@ -1034,16 +1488,16 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                 // Nullify reader to force new instance on next scan
                 reader.current = null
               }
-              
+             
               setIsScanning(false)
-              
+             
               // Reset hasProcessedScan flag after a short delay to allow next scan
               setTimeout(() => {
                 hasProcessedScan.current = false
               }, 100)
-              
+             
               handleScan(scannedCode)
-              
+             
               // Reset lastScannedCode after 3 seconds to allow re-scanning same code
               setTimeout(() => {
                 setLastScannedCode(null)
@@ -1062,7 +1516,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
         )
       } catch (err) {
         let errorMessage = 'Failed to start camera'
-        
+       
         if (err instanceof Error) {
           if (err.message.includes('permission')) {
             errorMessage = err.message
@@ -1080,7 +1534,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
             errorMessage = err.message || errorMessage
           }
         }
-        
+       
         setCameraError(errorMessage)
         setIsScanning(false)
         console.error('Camera error:', err)
@@ -1100,7 +1554,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
         }
         reader.current = null
       }
-      
+     
       // Stop all video tracks to ensure camera is fully closed
       if (videoRef.current) {
         const stream = videoRef.current.srcObject as MediaStream
@@ -1111,7 +1565,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
           videoRef.current.srcObject = null
         }
       }
-      
+     
       setIsScanning(false)
       setCameraError(null)
     }
@@ -1197,16 +1651,16 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
                   {/* Dark overlay outside scan area */}
                   <div className="absolute inset-0 bg-black/40" />
-                  
+                 
                   {/* Scan area */}
                   <div className={`w-[75%] max-w-[280px] aspect-square relative z-10 transition-all duration-300 ${
                     scanAttempts > 10 ? 'animate-pulse' : ''
                   }`}>
                     {/* Clear center */}
-                    <div className="absolute inset-0 bg-transparent rounded-2xl" style={{ 
-                      boxShadow: '0 0 0 9999px rgba(0,0,0,0.5)' 
+                    <div className="absolute inset-0 bg-transparent rounded-2xl" style={{
+                      boxShadow: '0 0 0 9999px rgba(0,0,0,0.5)'
                     }} />
-                    
+                   
                     {/* Corner brackets */}
                     <div className={`absolute -top-1 -left-1 w-10 h-10 border-t-4 border-l-4 rounded-tl-xl transition-colors duration-300 ${
                       scanAttempts > 10 ? 'border-yellow-400' : 'border-blue-400'
@@ -1220,14 +1674,14 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                     <div className={`absolute -bottom-1 -right-1 w-10 h-10 border-b-4 border-r-4 rounded-br-xl transition-colors duration-300 ${
                       scanAttempts > 10 ? 'border-yellow-400' : 'border-blue-400'
                     }`} />
-                    
+                   
                     {/* Scanning line animation */}
                     {isScanning && scanAttempts <= 10 && (
                       <div className="absolute inset-x-2 top-1/2 h-0.5 bg-gradient-to-r from-transparent via-blue-400 to-transparent animate-pulse" />
                     )}
                   </div>
                 </div>
-                
+               
                 {/* Scanning status - Bottom */}
                 <div className="absolute bottom-0 left-0 right-0 z-20 p-4">
                   {scanAttempts > 10 ? (
@@ -1350,14 +1804,14 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
             key={i}
             onClick={() => scan.type !== 'none' && handleScan(scan.code)}
             className={`p-4 flex items-center gap-4 transition-colors ${
-              scan.type === 'none' 
-                ? 'bg-red-50 cursor-default' 
+              scan.type === 'none'
+                ? 'bg-red-50 cursor-default'
                 : 'active:bg-gray-50 cursor-pointer'
             }`}
           >
             <div className={`w-14 h-14 rounded-2xl flex items-center justify-center flex-shrink-0 ${
-              scan.type === 'job' 
-                ? 'bg-blue-100' 
+              scan.type === 'job'
+                ? 'bg-blue-100'
                 : scan.type === 'product'
                 ? 'bg-green-100'
                 : 'bg-red-100'
@@ -1456,8 +1910,8 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                 <h2 className="text-2xl font-bold text-gray-900 mb-1">{selectedJob.code}</h2>
                 <p className="text-base text-gray-600 line-clamp-2">{selectedJob.productName}</p>
               </div>
-              <button 
-                onClick={resetSelection} 
+              <button
+                onClick={resetSelection}
                 className="w-12 h-12 bg-gray-100 rounded-2xl flex items-center justify-center active:bg-gray-200 flex-shrink-0 ml-3"
               >
                 <XMarkIcon className="h-6 w-6 text-gray-600" />
@@ -1539,41 +1993,123 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
               return (
                 <div className="mt-4 space-y-3">
                   <h4 className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Stage Progress</h4>
-                  {stageProgresses.map((stageProgress) => (
-                    <div key={stageProgress.stageId} className="space-y-1">
-                      <div className="flex justify-between items-center">
-                        <div className="flex items-center gap-2">
-                          <span className={`text-xs font-medium ${stageProgress.isCurrent ? 'text-blue-600' : 'text-gray-600'}`}>
-                            {stageProgress.stageName}
-                            {stageProgress.isCurrent && (
-                              <span className="ml-1 text-blue-600">(Current)</span>
+                  {stageProgresses.map((stageProgress) => {
+                    // Find next stage
+                    const plannedStages = selectedJob.plannedStageIds || []
+                    const currentIndex = plannedStages.indexOf(stageProgress.stageId)
+                    const nextStageId = currentIndex >= 0 && currentIndex < plannedStages.length - 1
+                      ? plannedStages[currentIndex + 1]
+                      : undefined
+                    const nextStage = nextStageId
+                      ? workflows.find(w => w.stages?.some(s => s.id === nextStageId))?.stages?.find(s => s.id === nextStageId)
+                      : undefined
+                   
+                    // Check if this is the last stage
+                    const workflow = workflows.find(w => w.id === selectedJob.workflowId)
+                    const allStages = workflow?.stages || []
+                    const isLastStage = plannedStages.length > 0
+                      ? plannedStages[plannedStages.length - 1] === stageProgress.stageId
+                      : (allStages.length > 0 && allStages[allStages.length - 1]?.id === stageProgress.stageId)
+                   
+                    // Get production runs for this stage
+                    const stageRuns = productionRuns.filter(r => r.stageId === stageProgress.stageId)
+                    // Only count actual production runs (exclude transfer runs)
+                    // Transfer runs have transferSourceRunIds array, which means they were transferred from another stage
+                    const actualProductionRuns = stageRuns.filter((r: any) => {
+                      // Exclude runs that were transferred from another stage
+                      return !(r.transferSourceRunIds && Array.isArray(r.transferSourceRunIds) && r.transferSourceRunIds.length > 0)
+                    })
+                    const hasOutputs = actualProductionRuns.length > 0
+                   
+                    // Check if "Move to" button is active for current stage
+                    // If threshold is met and "Move to" button is available, disable "Tap to transfer"
+                    // to avoid duplicate transfers (both would transfer the same outputs)
+                    // For last stage, allow transfer to inventory if there are outputs
+                    let canUseTapToTransfer = (hasOutputs && nextStageId) || (hasOutputs && isLastStage)
+                    if (stageProgress.isCurrent && productionSummaryMemo) {
+                      const currentStageSummary = productionSummaryMemo
+                      const {
+                        totalProducedInStage,
+                        plannedQty,
+                        completionThreshold
+                      } = currentStageSummary
+                      const isIncomplete = plannedQty > 0 && totalProducedInStage < completionThreshold
+                      const requireOutput = (selectedJob as any).requireOutputToAdvance !== false
+                     
+                      // If threshold is met (isIncomplete = false) and requireOutput is true,
+                      // "Move to" button will be active and will handle transfer automatically
+                      // So disable "Tap to transfer" to avoid duplicate transfers
+                      // But allow inventory transfer for last stage even if threshold is met
+                      if (!isIncomplete && requireOutput && !isLastStage) {
+                        canUseTapToTransfer = false
+                      }
+                    }
+                   
+                    return (
+                      <div
+                        key={stageProgress.stageId}
+                        className={`space-y-1 ${canUseTapToTransfer ? 'cursor-pointer hover:bg-gray-50 -mx-2 px-2 py-1 rounded-lg transition-colors' : ''}`}
+                        onClick={() => {
+                          if (canUseTapToTransfer) {
+                            if (isLastStage) {
+                              // For last stage, open inventory posting modal directly
+                              setShowInventoryPostingModal(true)
+                            } else {
+                              // For other stages, open transfer modal
+                              setSelectedStageForOutput({
+                                stageId: stageProgress.stageId,
+                                stageName: stageProgress.stageName,
+                                nextStageId,
+                                nextStageName: nextStage?.name
+                              })
+                              setSelectedOutputIds(new Set())
+                              setShowStageOutputModal(true)
+                            }
+                          }
+                        }}
+                      >
+                        <div className="flex justify-between items-center">
+                          <div className="flex items-center gap-2">
+                            <span className={`text-xs font-medium ${stageProgress.isCurrent ? 'text-blue-600' : 'text-gray-600'}`}>
+                              {stageProgress.stageName}
+                              {stageProgress.isCurrent && (
+                                <span className="ml-1 text-blue-600">(Current)</span>
+                              )}
+                            </span>
+                            {canUseTapToTransfer && (
+                              <span className="text-xs text-gray-400">
+                                • Tap to {isLastStage ? 'transfer to inventory' : 'transfer'}
+                              </span>
                             )}
+                          </div>
+                          <span className="text-xs font-semibold text-gray-900">
+                            {stageProgress.produced.toLocaleString()} / {stageProgress.planned.toLocaleString()} {stageProgress.uom}
                           </span>
                         </div>
-                        <span className="text-xs font-semibold text-gray-900">
-                          {stageProgress.produced.toLocaleString()} / {stageProgress.planned.toLocaleString()} {stageProgress.uom}
-                        </span>
+                        <div className="w-full bg-gray-200 rounded-full h-2">
+                          <div
+                            className={`h-2 rounded-full transition-all ${
+                              stageProgress.isCurrent
+                                ? 'bg-blue-600'
+                                : stageProgress.percentage >= 100
+                                  ? 'bg-green-500'
+                                  : 'bg-gray-400'
+                            }`}
+                            style={{ width: `${Math.min(100, stageProgress.percentage)}%` }}
+                          />
+                        </div>
+                        <p className="text-xs text-gray-500">
+                          {stageProgress.percentage.toFixed(1)}% complete
+                          {stageProgress.isCurrent && stageProgress.percentage < 100 && (
+                            <span className="ml-2 text-orange-600">• In Progress</span>
+                          )}
+                          {hasOutputs && (
+                            <span className="ml-2 text-blue-600">• {stageRuns.length} output{stageRuns.length > 1 ? 's' : ''}</span>
+                          )}
+                        </p>
                       </div>
-                      <div className="w-full bg-gray-200 rounded-full h-2">
-                        <div
-                          className={`h-2 rounded-full transition-all ${
-                            stageProgress.isCurrent 
-                              ? 'bg-blue-600' 
-                              : stageProgress.percentage >= 100 
-                                ? 'bg-green-500' 
-                                : 'bg-gray-400'
-                          }`}
-                          style={{ width: `${Math.min(100, stageProgress.percentage)}%` }}
-                        />
-                      </div>
-                      <p className="text-xs text-gray-500">
-                        {stageProgress.percentage.toFixed(1)}% complete
-                        {stageProgress.isCurrent && stageProgress.percentage < 100 && (
-                          <span className="ml-2 text-orange-600">• In Progress</span>
-                        )}
-                      </p>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )
             })()}
@@ -1610,7 +2146,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                           await recalculateJobBomConsumption(workspaceId, selectedJob.id)
                           await queryClient.invalidateQueries({ queryKey: ['jobs', workspaceId] })
                           // Refresh selected job
-                          const updatedJobs = await queryClient.fetchQuery({ 
+                          const updatedJobs = await queryClient.fetchQuery({
                             queryKey: ['jobs', workspaceId],
                             queryFn: () => listJobs(workspaceId)
                           })
@@ -1695,10 +2231,10 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                     completionThreshold,
                     currentStageOutputUOM
                   } = currentStageSummary
-                  
+                 
                   const isIncomplete = plannedQty > 0 && totalProducedInStage < completionThreshold
                   const requireOutput = (selectedJob as any).requireOutputToAdvance !== false
-                  
+                 
                   return (
                     <button
                       onClick={() => {
@@ -1706,9 +2242,16 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                           alert(`⚠️ Cannot proceed: Production quantity below threshold.\n\nRequired: ${completionThreshold.toLocaleString()}+ ${currentStageOutputUOM || 'units'}\nCurrent: ${totalProducedInStage.toLocaleString()} ${currentStageOutputUOM || 'units'}\n\nPlease complete production before moving to next stage.`)
                           return
                         }
-                        
+                       
                         if (confirm(`Move from ${currentStageName} to ${nextStage.name}?`)) {
-                          moveStageMutation.mutate({ jobId: selectedJob.id, newStageId: nextStage.id })
+                          // Capture previousStageId before mutation (selectedJob.currentStageId might change after mutation)
+                          const previousStageId = selectedJob.currentStageId
+                          console.log(`[Move to] Button clicked: jobId=${selectedJob.id}, previousStageId=${previousStageId}, newStageId=${nextStage.id}`)
+                          moveStageMutation.mutate({
+                            jobId: selectedJob.id,
+                            newStageId: nextStage.id,
+                            previousStageId: previousStageId
+                          })
                         }
                       }}
                       disabled={moveStageMutation.isPending || (requireOutput && isIncomplete)}
@@ -1781,7 +2324,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                   const isLastStage = planned.length > 0
                     ? planned[planned.length - 1] === selectedJob.currentStageId
                     : (allStages.length > 0 && allStages[allStages.length - 1]?.id === selectedJob.currentStageId)
-                  
+                 
                   // Calculate threshold for current stage
                   const currentStageSummary = productionSummaryMemo
                   const {
@@ -1791,17 +2334,35 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                     completionThresholdUpper,
                     currentStageOutputUOM
                   } = currentStageSummary
-                  
+                 
                   const isIncomplete = plannedQty > 0 && totalProducedInStage < completionThreshold
                   const isOverLimit = plannedQty > 0 && totalProducedInStage > completionThresholdUpper
                   const thresholdMet = plannedQty > 0 && totalProducedInStage >= completionThreshold && totalProducedInStage <= completionThresholdUpper
                   const requireOutput = (selectedJob as any).requireOutputToAdvance !== false
-                  
+                 
                   // Check if can complete
                   const canComplete = isLastStage && (!requireOutput || thresholdMet)
-                  
+                 
+                  // Debug logging
+                  console.log('[Complete Job Button] Debug:', {
+                    isInProgress,
+                    isBlocked,
+                    hasProductionSummary: !!productionSummaryMemo,
+                    isLastStage,
+                    currentStageId: selectedJob.currentStageId,
+                    plannedStageIds: planned,
+                    lastPlannedStage: planned.length > 0 ? planned[planned.length - 1] : null,
+                    totalProducedInStage,
+                    plannedQty,
+                    completionThreshold,
+                    completionThresholdUpper,
+                    thresholdMet,
+                    requireOutput,
+                    canComplete
+                  })
+                 
                   if (!canComplete) return null
-                  
+                 
                   return (
                     <button
                       onClick={() => {
@@ -1816,7 +2377,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                             return
                           }
                         }
-                        
+                       
                         // Ask if user wants to post to inventory first
                         setShowInventoryPostingModal(true)
                       }}
@@ -1896,8 +2457,8 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                   <span className="inline-flex items-center px-3 py-1.5 rounded-xl text-xs font-bold bg-green-100 text-green-700">
                     PRODUCT
                   </span>
-                  <button 
-                    onClick={resetSelection} 
+                  <button
+                    onClick={resetSelection}
                     className="w-10 h-10 bg-gray-100 rounded-xl flex items-center justify-center active:bg-gray-200"
                   >
                     <XMarkIcon className="h-5 w-5 text-gray-600" />
@@ -1989,10 +2550,10 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
     const isReceive = activeAction === 'in'
     const isShip = activeAction === 'out'
     const title = isReceive ? 'Receive Stock' : isShip ? 'Ship / Use Stock' : 'Adjust Stock'
-    const btnGradient = isReceive 
-      ? 'bg-gradient-to-r from-green-500 to-green-600 shadow-green-500/30' 
-      : isShip 
-      ? 'bg-gradient-to-r from-red-500 to-red-600 shadow-red-500/30' 
+    const btnGradient = isReceive
+      ? 'bg-gradient-to-r from-green-500 to-green-600 shadow-green-500/30'
+      : isShip
+      ? 'bg-gradient-to-r from-red-500 to-red-600 shadow-red-500/30'
       : 'bg-gradient-to-r from-gray-600 to-gray-700 shadow-gray-600/30'
 
     // Filter reasons based on operation type
@@ -2006,7 +2567,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <h3 className="font-bold text-gray-900 text-lg">{title}</h3>
-          <button 
+          <button
             onClick={() => { setActiveAction(null); setActionData({}) }}
             className="w-10 h-10 bg-gray-100 rounded-xl flex items-center justify-center active:bg-gray-200"
           >
@@ -2093,17 +2654,17 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
 
     const bomItems = selectedJob.bom || []
     const selectedBomItem = bomItems.find(item => item.sku === actionData.sku)
-    const remainingRequired = selectedBomItem 
+    const remainingRequired = selectedBomItem
       ? Math.max(0, selectedBomItem.qtyRequired - (selectedBomItem.consumed || 0))
       : null
 
     // Find product for stock check
-    const selectedProductForStock = actionData.itemId 
+    const selectedProductForStock = actionData.itemId
       ? products.find(p => p.id === actionData.itemId)
-      : actionData.sku 
+      : actionData.sku
         ? products.find(p => p.sku === actionData.sku)
         : null
-    
+   
     const availableStock = selectedProductForStock ? (selectedProductForStock.qtyOnHand || 0) : null
     const requestedQty = Number(actionData.qtyUsed) || 0
     const isInsufficientStock = availableStock !== null && requestedQty > availableStock
@@ -2118,7 +2679,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
         {/* Header */}
         <div className="flex-shrink-0 bg-gradient-to-r from-orange-500 to-orange-600 text-white px-4 py-4 safe-area-inset-top">
           <div className="flex items-center justify-between">
-            <button 
+            <button
               onClick={handleClose}
               className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center active:bg-white/30"
             >
@@ -2175,13 +2736,13 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                       const prod = products.find(p => p.id === itemId)
                       if (prod) product = prod
                     }
-                    
+                   
                     const remainingQty = Math.max(0, item.qtyRequired - (item.consumed || 0))
                     const availableQty = product ? (product.qtyOnHand || 0) : null
-                    const defaultQty = availableQty !== null 
+                    const defaultQty = availableQty !== null
                       ? Math.min(remainingQty, availableQty)
                       : remainingQty
-                    
+                   
                     setActionData({
                       ...actionData,
                       bomItemIndex: index,
@@ -2267,8 +2828,8 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
               className="w-full p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-orange-500/20 focus:border-orange-500 text-base"
               value={actionData.sku || ''}
               onChange={e => {
-                setActionData({ 
-                  ...actionData, 
+                setActionData({
+                  ...actionData,
                   sku: e.target.value,
                   bomItemIndex: undefined
                 })
@@ -2368,8 +2929,8 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
               }}
               disabled={consumptionMutation.isPending || !actionData.sku || !actionData.qtyUsed}
               className={`flex-1 py-4 rounded-2xl font-bold shadow-lg transition-all disabled:opacity-50 disabled:shadow-none active:scale-[0.98] ${
-                isInsufficientStock 
-                  ? 'bg-gradient-to-r from-red-500 to-red-600 text-white shadow-red-500/30' 
+                isInsufficientStock
+                  ? 'bg-gradient-to-r from-red-500 to-red-600 text-white shadow-red-500/30'
                   : 'bg-gradient-to-r from-orange-500 to-orange-600 text-white shadow-orange-500/30'
               }`}
             >
@@ -2388,9 +2949,10 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
     // Priority order: dialogProductionRuns (freshly fetched) > productionRuns (state) > initialProductionRuns (query cache)
     const effectiveProductionRuns = dialogProductionRuns.length > 0
       ? dialogProductionRuns
-      : (productionRuns.length > 0 
-        ? productionRuns 
+      : (productionRuns.length > 0
+        ? productionRuns
         : (initialProductionRuns || []))
+
 
     // Debug: Log production runs to verify data is loaded
     console.log('[ProductionScanner] Dialog opened - Production Runs:', {
@@ -2410,7 +2972,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
         <div className="fixed inset-0 z-[60] flex flex-col bg-white">
           <div className="flex-shrink-0 bg-gradient-to-r from-blue-500 to-blue-600 text-white px-4 py-4 safe-area-inset-top">
             <div className="flex items-center justify-between">
-              <button 
+              <button
                 onClick={() => setShowProduceDialog(false)}
                 className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center active:bg-white/30"
               >
@@ -2433,20 +2995,167 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
       )
     }
 
-    // Always recalculate using effective production runs to ensure fresh data
-    // This ensures the dialog shows the latest production runs even if state is empty
-    const summary = calculateProductionSummary(selectedJob, effectiveProductionRuns)
-    const {
-      currentStageInputUOM,
-      currentStageOutputUOM,
-      numberUp,
-      totalProducedInStage,
-      plannedQty,
-      plannedUOM,
-      completionThreshold,
-      completionThresholdUpper,
-      convertToOutputUOM
-    } = summary
+    // Determine which stage to show output for
+    // If selectedOutputStageId is set, use that; otherwise use currentStageId
+    const outputStageId = selectedOutputStageId || selectedJob.currentStageId || ''
+   
+    // Get stage info for selected stage
+    const outputStageInfo = getStageInfo(outputStageId) as any
+    const outputStageName = outputStageInfo?.name || getStageName(outputStageId, selectedJob.status)
+   
+    // Get production runs for the selected stage (not current stage)
+    // Exclude transfer runs (runs that were created from previous stage transfers, not actual production)
+    const outputStageRuns = effectiveProductionRuns.filter((r: any) => {
+      if (r.stageId !== outputStageId) return false
+      // Exclude runs that are transfers (have transferSourceRunIds - these are WIP, not produced)
+      if (r.transferSourceRunIds && Array.isArray(r.transferSourceRunIds) && r.transferSourceRunIds.length > 0) {
+        return false
+      }
+      return true
+    })
+   
+    // Calculate summary for the selected stage
+    const stageInputUOM = outputStageInfo?.inputUOM || ''
+    const stageOutputUOM = outputStageInfo?.outputUOM || ''
+    const numberUp = selectedJob.productionSpecs?.numberUp || 1
+   
+    // Calculate total produced in selected stage (only actual production runs, not transfers)
+    const totalProducedInStage = outputStageRuns.reduce((sum: number, r: any) => {
+      return sum + Number(r.qtyGood || 0)
+    }, 0)
+   
+    // Calculate planned quantity for selected stage
+    // Always use job's original order quantity, converted to this stage's output UOM
+    let plannedQty: number
+    let plannedUOM: string = stageOutputUOM || stageInputUOM || 'sheets'
+   
+    if (stageOutputUOM === 'cartoon') {
+      // If output is cartoon, use packaging info (plannedBoxes * pcsPerBox)
+      // This is the correct way to calculate planned cartoon quantity
+      const boxQty = selectedJob.packaging?.plannedBoxes || 0
+      const pcsPerBox = selectedJob.packaging?.pcsPerBox || 1
+      if (boxQty > 0 && pcsPerBox > 0) {
+        plannedQty = boxQty * pcsPerBox
+        plannedUOM = 'cartoon'
+      } else {
+        // Fallback: if no packaging info, try to convert from sheets using numberUp
+        const plannedSheets = (selectedJob.output?.[0]?.qtyPlanned as number) || Number(selectedJob.quantity || 0)
+        if (numberUp > 0) {
+          plannedQty = plannedSheets * numberUp
+          plannedUOM = 'cartoon'
+        } else {
+          // Last resort: use quantity directly
+          plannedQty = plannedSheets
+          plannedUOM = 'cartoon'
+        }
+      }
+    } else {
+      // Output is sheets (or same as input)
+      // For sheets, get planned quantity from BOM (sheets item) or output[0].qtyPlanned
+      // Don't use job.quantity directly as it might be in boxes, not sheets
+      const bom = Array.isArray(selectedJob.bom) ? selectedJob.bom : []
+      const sheetItem = bom.find((item: any) => {
+        const uom = String(item.uom || '').toLowerCase()
+        return ['sht', 'sheet', 'sheets'].includes(uom)
+      })
+      const plannedSheets = sheetItem
+        ? Number(sheetItem.qtyRequired || 0)
+        : ((selectedJob.output?.[0]?.qtyPlanned as number) || Number(selectedJob.quantity || 0))
+      plannedQty = plannedSheets
+      plannedUOM = 'sheets'
+    }
+   
+    // Calculate threshold based on order quantity
+    const tolerance = calculateToleranceThresholds(plannedQty)
+    const completionThreshold = Math.max(0, plannedQty - tolerance.lower)
+    const completionThresholdUpper = plannedQty + tolerance.upper
+   
+    const convertToOutputUOM = (qtyInInputUOM: number): number => {
+      if (stageInputUOM === 'sheets' && stageOutputUOM === 'cartoon' && numberUp > 0) {
+        return qtyInInputUOM * numberUp
+      }
+      return qtyInInputUOM
+    }
+   
+    const currentStageInputUOM = stageInputUOM
+    const currentStageOutputUOM = stageOutputUOM
+
+    // Calculate transferred quantity (WIP from previous stages)
+    const transferredRuns = effectiveProductionRuns.filter((r: any) => {
+      if (r.stageId !== outputStageId) return false
+      // Only count runs that are transfers (have transferSourceRunIds)
+      if (r.transferSourceRunIds && Array.isArray(r.transferSourceRunIds) && r.transferSourceRunIds.length > 0) {
+        return true
+      }
+      return false
+    })
+    const totalTransferred = transferredRuns.reduce((sum: number, r: any) => {
+      return sum + Number(r.qtyGood || 0)
+    }, 0)
+
+    // Group transferred runs by lot number and calculate FIFO availability
+    const lotAvailability: Array<{
+      lot: string
+      transferredQty: number
+      processedQty: number
+      remainingQty: number
+      transferDate: Date
+    }> = []
+   
+    transferredRuns.forEach((transferRun: any) => {
+      const lot = transferRun.lot || ''
+      if (!lot) return
+     
+      const transferredQty = Number(transferRun.qtyGood || 0)
+      const transferDate = transferRun.at
+        ? (typeof transferRun.at === 'string' ? new Date(transferRun.at) : new Date((transferRun.at as any).seconds * 1000))
+        : new Date()
+     
+      // Calculate how much of this lot has been processed in this stage
+      const processedRuns = outputStageRuns.filter((r: any) => r.lot === lot)
+      const processedQty = processedRuns.reduce((sum: number, r: any) => {
+        return sum + Number(r.qtyGood || 0)
+      }, 0)
+     
+      const remainingQty = transferredQty - processedQty
+     
+      // Check if this lot already exists in our list
+      const existingLot = lotAvailability.find(l => l.lot === lot)
+      if (existingLot) {
+        existingLot.transferredQty += transferredQty
+        existingLot.processedQty += processedQty
+        existingLot.remainingQty = existingLot.transferredQty - existingLot.processedQty
+        // Use earliest transfer date
+        if (transferDate < existingLot.transferDate) {
+          existingLot.transferDate = transferDate
+        }
+      } else {
+        lotAvailability.push({
+          lot,
+          transferredQty,
+          processedQty,
+          remainingQty,
+          transferDate
+        })
+      }
+    })
+   
+    // Sort by transfer date (FIFO - oldest first)
+    lotAvailability.sort((a, b) => a.transferDate.getTime() - b.transferDate.getTime())
+   
+    // Find the first lot with remaining quantity (FIFO)
+    const nextAvailableLot = lotAvailability.find(l => l.remainingQty > 0)
+   
+    // Check if we're on the last stage and find completed lots (fully processed)
+    const planned: string[] = (selectedJob as any).plannedStageIds || []
+    const workflow = workflows.find(w => w.id === selectedJob.workflowId)
+    const allStages = workflow?.stages || []
+    const isLastStage = planned.length > 0
+      ? planned[planned.length - 1] === outputStageId
+      : (allStages.length > 0 && allStages[allStages.length - 1]?.id === outputStageId)
+   
+    // Find completed lots (transferred qty = processed qty, no remaining)
+    const completedLots = lotAvailability.filter(l => l.remainingQty <= 0 && l.processedQty > 0)
 
     const qtyGood = actionData.qtyGood || 0
     const qtyScrap = actionData.qtyScrap || 0
@@ -2466,6 +3175,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
     const handleClose = () => {
       setShowProduceDialog(false)
       setActionData({})
+      setSelectedOutputStageId(null) // Reset stage selection when closing
     }
 
     return (
@@ -2473,7 +3183,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
         {/* Header */}
         <div className="flex-shrink-0 bg-gradient-to-r from-blue-500 to-blue-600 text-white px-4 py-4 safe-area-inset-top">
           <div className="flex items-center justify-between">
-            <button 
+            <button
               onClick={handleClose}
               className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center active:bg-white/30"
             >
@@ -2497,20 +3207,60 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
               </div>
               <div className="flex-1 min-w-0">
                 <p className="font-bold text-gray-900 truncate">{selectedJob.productName}</p>
-                <p className="text-sm text-blue-600">Stage: {getStageName(selectedJob.currentStageId, selectedJob.status)}</p>
+                <p className="text-sm text-blue-600">Job Stage: {getStageName(selectedJob.currentStageId, selectedJob.status)}</p>
               </div>
             </div>
+          </div>
+
+          {/* Stage Selector */}
+          <div>
+            <label className="block text-sm font-bold text-gray-700 mb-2">
+              Record Output For Stage
+            </label>
+            <select
+              value={outputStageId}
+              onChange={e => setSelectedOutputStageId(e.target.value || null)}
+              className="w-full p-4 border-2 border-blue-200 rounded-2xl focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 text-base bg-white font-semibold"
+            >
+              {selectedJob.plannedStageIds?.map((stageId: string) => {
+                const stage = workflows.find(w => w.stages?.some(s => s.id === stageId))?.stages?.find(s => s.id === stageId)
+                const stageName = stage?.name || stageId
+                const isCurrent = stageId === selectedJob.currentStageId
+                const stageRuns = effectiveProductionRuns.filter((r: any) => r.stageId === stageId)
+                const hasTransferredLots = stageRuns.some((r: any) => r.transferSourceRunIds && Array.isArray(r.transferSourceRunIds) && r.transferSourceRunIds.length > 0)
+               
+                return (
+                  <option key={stageId} value={stageId}>
+                    {stageName} {isCurrent ? '(Current)' : ''} {hasTransferredLots ? '• Has transferred lots' : ''}
+                  </option>
+                )
+              }) || (
+                <option value={selectedJob.currentStageId || ''}>
+                  {getStageName(selectedJob.currentStageId, selectedJob.status)}
+                </option>
+              )}
+            </select>
+            {outputStageId !== selectedJob.currentStageId && (
+              <p className="text-xs text-amber-600 mt-2">
+                ⚠️ Recording output to a different stage than job's current stage
+              </p>
+            )}
           </div>
 
           {/* Production Summary */}
           {plannedQty > 0 && (
             <div className="bg-white border-2 border-blue-200 rounded-2xl p-4">
               <h4 className="font-bold text-gray-900 mb-3">Production Progress</h4>
-              <div className="grid grid-cols-3 gap-3 text-center mb-3">
+              <div className="grid grid-cols-2 gap-3 text-center mb-3">
                 <div className="bg-gray-50 rounded-xl p-3">
                   <span className="text-xs text-gray-500 block">Planned</span>
                   <div className="font-bold text-gray-900">{plannedQty.toLocaleString()}</div>
                   <span className="text-xs text-gray-500">{plannedUOM}</span>
+                </div>
+                <div className="bg-purple-50 rounded-xl p-3">
+                  <span className="text-xs text-purple-600 block">Transferred</span>
+                  <div className="font-bold text-purple-600">{totalTransferred.toLocaleString()}</div>
+                  <span className="text-xs text-purple-600">{currentStageOutputUOM || 'units'}</span>
                 </div>
                 <div className="bg-blue-50 rounded-xl p-3">
                   <span className="text-xs text-blue-600 block">Produced</span>
@@ -2523,7 +3273,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                   <span className="text-xs text-orange-600">{currentStageOutputUOM || 'units'}</span>
                 </div>
               </div>
-              
+             
               {/* Progress Bar */}
               <div className="w-full bg-gray-200 rounded-full h-3 mb-2">
                 <div
@@ -2533,7 +3283,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                   style={{ width: `${Math.min(100, (totalProducedInStage / plannedQty) * 100)}%` }}
                 />
               </div>
-              
+             
               {isIncomplete && (
                 <div className="bg-amber-100 border border-amber-200 rounded-xl px-4 py-2 text-sm text-amber-800">
                   <span className="font-bold">⚠️ Incomplete:</span> Need {completionThreshold.toLocaleString()}+ {currentStageOutputUOM || 'units'}
@@ -2625,14 +3375,42 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
 
           {/* Lot Number */}
           <div>
-            <label className="block text-sm font-bold text-gray-700 mb-2">Lot Number (Optional)</label>
-            <input
-              type="text"
-              placeholder="Enter lot number"
-              className="w-full p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 text-base"
-              value={actionData.lot || ''}
-              onChange={e => setActionData({ ...actionData, lot: e.target.value })}
-            />
+            <label className="block text-sm font-bold text-gray-700 mb-2">
+              Lot Number {totalTransferred > 0 ? '(Required - Select from transferred lots)' : '(Auto-generated if empty)'}
+            </label>
+            {totalTransferred > 0 && lotAvailability.length > 0 ? (
+              <select
+                className="w-full p-4 border-2 border-blue-200 rounded-2xl focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 text-base bg-white font-semibold"
+                value={actionData.lot || nextAvailableLot?.lot || ''}
+                onChange={e => setActionData({ ...actionData, lot: e.target.value })}
+              >
+                <option value="">Select a lot...</option>
+                {lotAvailability.map((lotInfo) => (
+                  <option
+                    key={lotInfo.lot}
+                    value={lotInfo.lot}
+                    disabled={lotInfo.remainingQty <= 0}
+                  >
+                    {lotInfo.lot} - Available: {lotInfo.remainingQty.toLocaleString()} {currentStageOutputUOM || 'units'}
+                    {lotInfo.remainingQty <= 0 ? ' (Fully processed)' : ''}
+                    {lotInfo.lot === nextAvailableLot?.lot ? ' (Recommended - FIFO)' : ''}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="text"
+                placeholder="Leave empty for auto-generation"
+                className="w-full p-4 border-2 border-gray-200 rounded-2xl focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 text-base"
+                value={actionData.lot || ''}
+                onChange={e => setActionData({ ...actionData, lot: e.target.value })}
+              />
+            )}
+            {totalTransferred > 0 && nextAvailableLot && (
+              <p className="text-xs text-blue-600 mt-2">
+                💡 Recommended: {nextAvailableLot.lot} ({nextAvailableLot.remainingQty.toLocaleString()} {currentStageOutputUOM || 'units'} available - FIFO)
+              </p>
+            )}
           </div>
 
           {/* Notes */}
@@ -2646,6 +3424,40 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
               onChange={e => setActionData({ ...actionData, notes: e.target.value })}
             />
           </div>
+
+          {/* Completed Lots - Post to Inventory */}
+          {isLastStage && completedLots.length > 0 && (
+            <div className="bg-emerald-50 border-2 border-emerald-200 rounded-2xl p-4">
+              <h4 className="font-bold text-emerald-900 mb-3 flex items-center gap-2">
+                <CheckCircleIcon className="h-5 w-5" />
+                Completed Lots - Ready for Inventory
+              </h4>
+              <div className="space-y-2">
+                {completedLots.map((lotInfo) => (
+                  <div key={lotInfo.lot} className="bg-white rounded-xl p-3 border border-emerald-200">
+                    <div className="flex items-center justify-between mb-2">
+                      <div>
+                        <p className="font-semibold text-gray-900">{lotInfo.lot}</p>
+                        <p className="text-sm text-gray-600">
+                          Processed: {lotInfo.processedQty.toLocaleString()} {currentStageOutputUOM || 'units'}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setSelectedLotForPosting({ lot: lotInfo.lot, qty: lotInfo.processedQty })
+                          setShowLotInventoryPostingModal(true)
+                        }}
+                        className="px-4 py-2 bg-emerald-600 text-white rounded-xl font-semibold hover:bg-emerald-700 transition-colors flex items-center gap-2"
+                      >
+                        <ArrowUpTrayIcon className="h-4 w-4" />
+                        Post to Inventory
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Fixed Bottom Action Buttons */}
@@ -2658,9 +3470,70 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
               Cancel
             </button>
             <button
-              onClick={() => {
+              onClick={async () => {
                 if (!qtyGood || qtyGood <= 0) {
                   alert('Please enter Good Quantity to add production record.')
+                  return
+                }
+
+                // Strong validation using fresh runs from backend (prevents race conditions)
+                try {
+                  const freshRuns = await listJobProductionRuns(workspaceId, selectedJob.id)
+                  const freshStageRuns = freshRuns.filter((r: any) => r.stageId === outputStageId)
+                  const freshTransferRuns = freshStageRuns.filter((r: any) =>
+                    r.transferSourceRunIds && Array.isArray(r.transferSourceRunIds) && r.transferSourceRunIds.length > 0
+                  )
+                  const freshProductionRuns = freshStageRuns.filter((r: any) =>
+                    !r.transferSourceRunIds || !Array.isArray(r.transferSourceRunIds) || r.transferSourceRunIds.length === 0
+                  )
+
+                  const freshTotalTransferred = freshTransferRuns.reduce((sum: number, r: any) => sum + Number(r.qtyGood || 0), 0)
+                  const freshTotalProduced = freshProductionRuns.reduce((sum: number, r: any) => sum + Number(r.qtyGood || 0), 0)
+
+                  // If there are transfers, ensure we don't exceed their total
+                  if (freshTotalTransferred > 0) {
+                    const selectedLot = actionData.lot
+                    if (!selectedLot) {
+                      alert('Please select a lot number. A lot number is required when processing transferred materials.')
+                      return
+                    }
+
+                    // Lot-level check
+                    const freshLotTransferred = freshTransferRuns
+                      .filter((r: any) => r.lot === selectedLot)
+                      .reduce((sum: number, r: any) => sum + Number(r.qtyGood || 0), 0)
+                    const freshLotProduced = freshProductionRuns
+                      .filter((r: any) => r.lot === selectedLot)
+                      .reduce((sum: number, r: any) => sum + Number(r.qtyGood || 0), 0)
+
+                    const lotRemaining = freshLotTransferred - freshLotProduced
+                    const qtyInOutputUOM = convertToOutputUOM(qtyGood)
+
+                    if (lotRemaining < qtyInOutputUOM) {
+                      alert(
+                        `⚠️ Insufficient lot quantity!\n\n` +
+                        `Lot: ${selectedLot}\n` +
+                        `Available: ${lotRemaining.toLocaleString()} ${currentStageOutputUOM || 'units'}\n` +
+                        `Requested: ${qtyInOutputUOM.toLocaleString()} ${currentStageOutputUOM || 'units'}`
+                      )
+                      return
+                    }
+
+                    // Global transferred vs produced check
+                    if (freshTotalProduced + qtyInOutputUOM > freshTotalTransferred) {
+                      alert(
+                        `⚠️ Cannot process more than transferred quantity!\n\n` +
+                        `Total Transferred: ${freshTotalTransferred.toLocaleString()} ${currentStageOutputUOM || 'units'}\n` +
+                        `Already Produced: ${freshTotalProduced.toLocaleString()} ${currentStageOutputUOM || 'units'}\n` +
+                        `This Entry: ${qtyInOutputUOM.toLocaleString()} ${currentStageOutputUOM || 'units'}\n` +
+                        `Maximum allowed: ${freshTotalTransferred.toLocaleString()} ${currentStageOutputUOM || 'units'}`
+                      )
+                      return
+                    }
+                  }
+                } catch (e) {
+                  console.error('Failed to validate against fresh production runs:', e)
+                  alert('Failed to validate production quantity. Please try again.')
                   return
                 }
 
@@ -2669,18 +3542,28 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                   return
                 }
 
+                // Only convert if input and output UOMs are different
+                // When converting, round to nearest integer to avoid floating point issues
                 const qtyGoodToSave = currentStageInputUOM === 'sheets' && currentStageOutputUOM === 'cartoon' && numberUp > 0
-                  ? convertToOutputUOM(qtyGood)
-                  : qtyGood
+                  ? Math.round(convertToOutputUOM(qtyGood))
+                  : Math.round(qtyGood)
                 const qtyScrapToSave = currentStageInputUOM === 'sheets' && currentStageOutputUOM === 'cartoon' && numberUp > 0 && qtyScrap > 0
-                  ? convertToOutputUOM(qtyScrap)
-                  : qtyScrap
+                  ? Math.round(convertToOutputUOM(qtyScrap))
+                  : Math.round(qtyScrap)
+
+                // Generate lot number automatically if not provided
+                const generateLotId = () => {
+                  const timestamp = new Date().toISOString().slice(0, 10).replace(/-/g, '')
+                  const random = Math.random().toString(36).substring(2, 6).toUpperCase()
+                  return `${selectedJob.code || selectedJob.id}-${timestamp}-${random}`
+                }
+                const lotNumber = actionData.lot || generateLotId()
 
                 productionMutation.mutate({
                   qtyGood: qtyGoodToSave,
                   qtyScrap: qtyScrapToSave || undefined,
-                  lot: actionData.lot || undefined,
-                  stageId: selectedJob?.currentStageId,
+                  lot: lotNumber,
+                  stageId: outputStageId, // Use selected stage, not current stage
                   workcenterId: actionData.workcenterId || selectedJob?.workcenterId,
                   operatorId: 'current-user',
                   at: actionData.runDateTime ? new Date(actionData.runDateTime) : undefined,
@@ -2688,6 +3571,7 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                 }, {
                   onSuccess: () => {
                     handleClose()
+                    setSelectedOutputStageId(null) // Reset stage selection
                   }
                 })
               }}
@@ -2700,6 +3584,557 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
             >
               {productionMutation.isPending ? 'Recording...' : isOverLimit ? 'Over Limit' : 'Save Output'}
             </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Fetch fresh production runs when modal opens
+  useEffect(() => {
+    if (showStageOutputModal && selectedJob?.id) {
+      setIsLoadingFreshRuns(true)
+      listJobProductionRuns(workspaceId, selectedJob.id)
+        .then(runs => {
+          console.log('[Modal] Fresh runs loaded:', runs.map(r => ({ id: r.id, stageId: r.stageId, lot: r.lot, transferSourceRunIds: (r as any).transferSourceRunIds })))
+          const byStage = runs.reduce((acc: any, r: any) => {
+            acc[r.stageId] = (acc[r.stageId] || 0) + 1
+            return acc
+          }, {})
+          console.log('[Modal] Total runs:', runs.length, 'By stage:', byStage)
+          console.log('[Modal] All stage IDs in runs:', [...new Set(runs.map(r => r.stageId))])
+          setFreshRunsForModal(runs)
+          setIsLoadingFreshRuns(false)
+        })
+        .catch(err => {
+          console.error('Failed to fetch fresh runs for modal:', err)
+          setFreshRunsForModal(productionRuns)
+          setIsLoadingFreshRuns(false)
+        })
+    } else {
+      setFreshRunsForModal([])
+      setIsLoadingFreshRuns(false)
+    }
+  }, [showStageOutputModal, selectedJob?.id, workspaceId]) // Removed productionRuns dependency to always fetch fresh data
+
+  // --- Stage Output Selection Modal ---
+  const renderStageOutputModal = () => {
+    if (!showStageOutputModal || !selectedStageForOutput || !selectedJob) return null
+
+    const { stageId, stageName, nextStageId, nextStageName } = selectedStageForOutput
+   
+    // Check if this is the last stage
+    const planned: string[] = (selectedJob as any).plannedStageIds || []
+    const workflow = workflows.find(w => w.id === selectedJob.workflowId)
+    const allStages = workflow?.stages || []
+    const isLastStage = planned.length > 0
+      ? planned[planned.length - 1] === stageId
+      : (allStages.length > 0 && allStages[allStages.length - 1]?.id === stageId)
+   
+    // Show loading state while fetching fresh data
+    if (isLoadingFreshRuns) {
+      return (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-2 sm:p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-xl sm:rounded-2xl shadow-2xl w-full max-w-md mx-2 sm:mx-4 p-6">
+            <div className="flex flex-col items-center justify-center">
+              <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+              <p className="text-gray-600 font-medium text-sm sm:text-base">Loading production data...</p>
+            </div>
+          </div>
+        </div>
+      )
+    }
+   
+    // Use fresh runs if available, otherwise fallback to productionRuns
+    const runsToUse = freshRunsForModal.length > 0 ? freshRunsForModal : productionRuns
+   
+    // Get production runs for this stage (use fresh data)
+    // Only include actual production runs (exclude transfer runs)
+    // Transfer runs have transferSourceRunIds array, which means they were transferred from another stage
+    const stageRuns = runsToUse.filter(r => {
+      if (r.stageId !== stageId) return false
+      // Exclude runs that were transferred from another stage
+      const run = r as any
+      return !(run.transferSourceRunIds && Array.isArray(run.transferSourceRunIds) && run.transferSourceRunIds.length > 0)
+    })
+
+    // Determine which runs have already been transferred to the next stage
+    // Simple check: if a run's lot number exists in the next stage, it's already transferred
+    // Check ALL runs in next stage (including transfer runs) because "Move to" creates transfer runs with lot numbers
+    const allNextStageRuns = runsToUse.filter(r => r.stageId === nextStageId)
+    const nextStageLotNumbers = new Set<string>(
+      allNextStageRuns
+        .map(r => r.lot)
+        .filter((lot): lot is string => !!lot)
+    )
+   
+    // Debug: Log next stage runs and lot numbers
+    console.log(`[Transfer Check] Checking stage ${stageId} -> ${nextStageId}`)
+    console.log(`[Transfer Check] runsToUse total:`, runsToUse.length, runsToUse.map(r => ({ id: r.id, stageId: r.stageId, lot: r.lot })))
+    console.log(`[Transfer Check] Next stage runs (stageId=${nextStageId}):`, allNextStageRuns.map(r => ({ id: r.id, lot: r.lot, transferSourceRunIds: (r as any).transferSourceRunIds })))
+    console.log(`[Transfer Check] Next stage lot numbers:`, Array.from(nextStageLotNumbers))
+    console.log(`[Transfer Check] Current stage runs (stageId=${stageId}):`, stageRuns.map(r => ({ id: r.id, lot: r.lot })))
+
+    const isRunAlreadyTransferred = (run: any) => {
+      // Check if this run's ID is explicitly marked as a source for a transfer run in the next stage
+      const transferredRunIds = new Set<string>(
+        allNextStageRuns
+          .filter(r => Array.isArray((r as any).transferSourceRunIds))
+          .flatMap(r => (r as any).transferSourceRunIds as string[])
+      )
+      if (transferredRunIds.has(String(run.id))) {
+        console.log(`[Transfer Check] Run ${run.id} already transferred (ID in transferSourceRunIds)`)
+        return true
+      }
+     
+      // If run has a lot number and that lot exists in next stage, it's already transferred
+      if (run.lot && nextStageLotNumbers.has(run.lot)) {
+        console.log(`[Transfer Check] Run ${run.id} with lot ${run.lot} already transferred (lot exists in next stage)`)
+        return true
+      }
+     
+      console.log(`[Transfer Check] Run ${run.id} with lot ${run.lot} is NOT transferred`)
+      return false
+    }
+
+    // Determine display unit based on stage output UOM or job unit
+    const workflowForStage = workflows.find(w => w.stages?.some(s => s.id === stageId))
+    const stageInfo = workflowForStage?.stages?.find(s => s.id === stageId) as any | undefined
+    const displayUnit =
+      (stageInfo?.outputUOM as string | undefined)
+      || (stageInfo?.inputUOM as string | undefined)
+      || (selectedJob.unit as string | undefined)
+      || 'units'
+   
+    if (stageRuns.length === 0) {
+      return (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-2 sm:p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-xl sm:rounded-2xl shadow-2xl w-full max-w-md mx-2 sm:mx-4">
+            <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-gray-200 bg-gradient-to-r from-blue-500 to-blue-600 rounded-t-xl sm:rounded-t-2xl">
+              <div className="flex items-center justify-between">
+                <h3 className="text-base sm:text-lg font-semibold text-white">No Outputs</h3>
+                <button
+                  onClick={() => {
+                    setShowStageOutputModal(false)
+                    setSelectedStageForOutput(null)
+                    setSelectedOutputIds(new Set())
+                  }}
+                  className="w-10 h-10 sm:w-8 sm:h-8 bg-white/20 rounded-lg flex items-center justify-center hover:bg-white/30 active:bg-white/40 transition-colors"
+                >
+                  <XMarkIcon className="h-6 w-6 sm:h-5 sm:w-5 text-white" />
+                </button>
+              </div>
+            </div>
+            <div className="p-4 sm:p-6">
+              <p className="text-gray-600 text-center mb-4 text-sm sm:text-base">No production outputs found for this stage.</p>
+              <button
+                onClick={() => {
+                  setShowStageOutputModal(false)
+                  setSelectedStageForOutput(null)
+                  setSelectedOutputIds(new Set())
+                }}
+                className="w-full px-4 py-4 sm:py-3 rounded-xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 active:bg-gray-300 transition-colors touch-manipulation text-base"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )
+    }
+
+    const toggleOutputSelection = (runId: string) => {
+      const run = stageRuns.find(r => r.id === runId)
+      if (!run || isRunAlreadyTransferred(run)) return
+
+      setSelectedOutputIds(prev => {
+        const newSet = new Set(prev)
+        if (newSet.has(runId)) {
+          newSet.delete(runId)
+        } else {
+          newSet.add(runId)
+        }
+        return newSet
+      })
+    }
+
+    const toggleAll = () => {
+      const selectableRuns = stageRuns.filter(r => !isRunAlreadyTransferred(r))
+      if (selectedOutputIds.size === selectableRuns.length) {
+        setSelectedOutputIds(new Set())
+      } else {
+        setSelectedOutputIds(new Set(selectableRuns.map(r => r.id)))
+      }
+    }
+
+    const selectedRuns = stageRuns.filter(r => selectedOutputIds.has(r.id) && !isRunAlreadyTransferred(r))
+    const totalQty = selectedRuns.reduce((sum, r) => sum + (r.qtyGood || 0), 0)
+   
+    // Generate lot ID from job code and timestamp
+    const generateLotId = () => {
+      const timestamp = new Date().toISOString().slice(0, 10).replace(/-/g, '')
+      const random = Math.random().toString(36).substring(2, 6).toUpperCase()
+      return `${selectedJob.code || selectedJob.id}-${timestamp}-${random}`
+    }
+
+    const handleMoveToNextStage = async () => {
+      if (selectedRuns.length === 0) {
+        alert('Please select at least one output to transfer.')
+        return
+      }
+
+      // If last stage, transfer to inventory instead
+      if (isLastStage) {
+        // Close the transfer modal first
+        setShowStageOutputModal(false)
+        setSelectedStageForOutput(null)
+        setSelectedOutputIds(new Set())
+       
+        // Open inventory posting modal
+        setShowInventoryPostingModal(true)
+        return
+      }
+
+      if (!nextStageId) {
+        alert('No next stage available.')
+        return
+      }
+
+      try {
+        const lotId = generateLotId()
+        const sourceRunIds = selectedRuns.map(r => String(r.id))
+
+        // Create a single production run in the next stage with combined quantity
+        // and keep a reference to source run IDs so we don't transfer them again
+        await productionMutation.mutateAsync({
+          stageId: nextStageId,
+          qtyGood: totalQty,
+          lot: lotId,
+          workcenterId: selectedJob.workcenterId,
+          at: new Date(),
+          transferSourceRunIds: sourceRunIds,
+        } as any)
+
+        // Refresh fresh runs after transfer to update "already transferred" status
+        setIsLoadingFreshRuns(true)
+        listJobProductionRuns(workspaceId, selectedJob.id)
+          .then(runs => {
+            setFreshRunsForModal(runs)
+            setIsLoadingFreshRuns(false)
+          })
+          .catch(err => {
+            console.error('Failed to refresh fresh runs after transfer:', err)
+            setIsLoadingFreshRuns(false)
+          })
+
+        // Close modal and reset state
+        setShowStageOutputModal(false)
+        setSelectedStageForOutput(null)
+        setSelectedOutputIds(new Set())
+       
+        // Show success message
+        alert(
+          `✓ Outputs moved to next stage as lot!\n\n` +
+          `Job: ${selectedJob.code || selectedJob.id}\n` +
+          `Lot: ${lotId}\n` +
+          `From: ${stageName}\n` +
+          `To: ${nextStageName || 'Next Stage'}\n` +
+          `Quantity: ${totalQty.toLocaleString()} ${displayUnit}\n` +
+          `Outputs: ${selectedRuns.length}`
+        )
+      } catch (error: any) {
+        alert(error?.message || 'Failed to move outputs to next stage')
+      }
+    }
+
+    return (
+      <div className="fixed inset-0 z-[60] flex items-center justify-center p-2 sm:p-4 bg-black/50 backdrop-blur-sm">
+        <div className="bg-white rounded-xl sm:rounded-2xl shadow-2xl w-full max-w-lg mx-2 sm:mx-4 max-h-[95vh] sm:max-h-[90vh] flex flex-col">
+          <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-gray-200 bg-gradient-to-r from-blue-500 to-blue-600 rounded-t-xl sm:rounded-t-2xl flex-shrink-0">
+            <div className="flex items-center justify-between">
+              <div className="flex-1 min-w-0 pr-2">
+                <h3 className="text-base sm:text-lg font-semibold text-white">
+                  {isLastStage ? 'Select Outputs to Transfer to Inventory' : 'Select Outputs to Transfer'}
+                </h3>
+                <p className="text-xs sm:text-sm text-blue-100 mt-0.5 sm:mt-1 truncate">
+                  {isLastStage ? `${stageName} → Inventory` : `${stageName} → ${nextStageName || 'Next Stage'}`}
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setShowStageOutputModal(false)
+                  setSelectedStageForOutput(null)
+                  setSelectedOutputIds(new Set())
+                }}
+                className="w-10 h-10 sm:w-8 sm:h-8 bg-white/20 rounded-lg flex items-center justify-center hover:bg-white/30 active:bg-white/40 transition-colors flex-shrink-0"
+              >
+                <XMarkIcon className="h-6 w-6 sm:h-5 sm:w-5 text-white" />
+              </button>
+            </div>
+          </div>
+         
+          <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+            {/* Select All */}
+            <div className="mb-4 pb-4 border-b border-gray-200">
+              <label className="flex items-center gap-3 cursor-pointer touch-manipulation">
+                <input
+                  type="checkbox"
+                  checked={(() => {
+                    const selectableRuns = stageRuns.filter(r => !isRunAlreadyTransferred(r))
+                    return selectedOutputIds.size > 0 && selectedOutputIds.size === selectableRuns.length
+                  })()}
+                  onChange={toggleAll}
+                  className="w-6 h-6 sm:w-5 sm:h-5 text-blue-600 rounded border-gray-300 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                />
+                <span className="font-semibold text-gray-900 text-base sm:text-base">
+                  Select All ({stageRuns.length} outputs)
+                </span>
+              </label>
+            </div>
+
+            {/* Output List */}
+            <div className="space-y-3 sm:space-y-3">
+              {stageRuns.map((run) => {
+                const alreadyTransferred = isRunAlreadyTransferred(run)
+                const isSelected = selectedOutputIds.has(run.id) && !alreadyTransferred
+                const runDate = run.at ? (typeof run.at === 'string' ? new Date(run.at) : new Date((run.at as any).seconds * 1000)) : new Date()
+               
+                return (
+                  <div
+                    key={run.id}
+                    className={`border-2 rounded-xl p-4 sm:p-4 transition-all cursor-pointer touch-manipulation ${
+                      alreadyTransferred
+                        ? 'border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed'
+                        : isSelected
+                          ? 'border-blue-500 bg-blue-50'
+                          : 'border-gray-200 bg-white active:border-gray-300 active:bg-gray-50'
+                    }`}
+                    onClick={() => {
+                      if (!alreadyTransferred) {
+                        toggleOutputSelection(run.id)
+                      }
+                    }}
+                  >
+                    <div className="flex items-start gap-3">
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        disabled={alreadyTransferred}
+                        onChange={() => !alreadyTransferred && toggleOutputSelection(run.id)}
+                        onClick={(e) => e.stopPropagation()}
+                        className="w-6 h-6 sm:w-5 sm:h-5 text-blue-600 rounded border-gray-300 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 mt-0.5 disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-0 mb-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-semibold text-gray-900 text-base sm:text-base">
+                              {run.qtyGood?.toLocaleString() || 0} {displayUnit}
+                            </span>
+                            {run.lot && (
+                              <span className="text-xs sm:text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded break-all">
+                                Lot: {run.lot}
+                              </span>
+                            )}
+                            {alreadyTransferred && (
+                              <span className="text-xs sm:text-[11px] text-green-700 bg-green-50 border border-green-200 px-2 py-1 rounded whitespace-nowrap">
+                                Already transferred
+                              </span>
+                            )}
+                          </div>
+                          {run.workcenterId && (
+                            <span className="text-xs sm:text-xs text-gray-500 truncate">
+                              {workcenters.find(w => w.id === run.workcenterId)?.name || run.workcenterId}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 sm:gap-4 text-xs sm:text-xs text-gray-500">
+                          <span>{runDate.toLocaleDateString()}</span>
+                          <span>{runDate.toLocaleTimeString()}</span>
+                          {run.qtyScrap && run.qtyScrap > 0 && (
+                            <span className="text-red-600">Scrap: {run.qtyScrap}</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Footer with Summary and Action */}
+          <div className="px-4 sm:px-6 py-4 border-t border-gray-200 bg-gray-50 rounded-b-xl sm:rounded-b-2xl flex-shrink-0">
+            {selectedRuns.length > 0 && (
+              <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1 sm:gap-0 text-sm">
+                  <span className="text-gray-600">Selected:</span>
+                  <span className="font-semibold text-blue-900">
+                    {selectedRuns.length} output{selectedRuns.length > 1 ? 's' : ''} • {totalQty.toLocaleString()} units
+                  </span>
+                </div>
+              </div>
+            )}
+            <div className="flex flex-col sm:flex-row gap-3">
+              <button
+                onClick={() => {
+                  setShowStageOutputModal(false)
+                  setSelectedStageForOutput(null)
+                  setSelectedOutputIds(new Set())
+                }}
+                className="w-full sm:flex-1 px-4 py-4 sm:py-3 rounded-xl bg-white border-2 border-gray-300 text-gray-700 font-semibold hover:bg-gray-50 active:bg-gray-100 transition-colors touch-manipulation text-base"
+              >
+                Cancel
+              </button>
+              {(() => {
+                const isDisabled = productionMutation.isPending || selectedRuns.length === 0
+                return (
+                  <button
+                    onClick={handleMoveToNextStage}
+                    disabled={isDisabled}
+                    className={`w-full sm:flex-1 px-4 py-4 sm:py-3 rounded-xl font-semibold shadow-lg transition-all touch-manipulation text-base ${
+                      isDisabled
+                        ? 'bg-gray-300 text-gray-500 cursor-not-allowed shadow-none'
+                        : 'bg-gradient-to-r from-green-500 to-green-600 active:from-green-600 active:to-green-700 text-white'
+                    }`}
+                  >
+                    {productionMutation.isPending
+                      ? (isLastStage ? 'Transferring...' : 'Moving...')
+                      : (isLastStage ? 'Transfer to Inventory' : `Move to ${nextStageName || 'Next Stage'}`)}
+                  </button>
+                )
+              })()}
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // --- Batch Transfer Confirmation Modal ---
+  const renderBatchTransferModal = () => {
+    if (!showBatchTransferModal || !batchTransferData || !selectedJob) return null
+
+    const { batchPayload, rule, lotId, sourceStageName, targetStageName } = batchTransferData
+
+    const handleConfirm = async () => {
+      try {
+        // Create production run in target stage with lot information
+        await productionMutation.mutateAsync({
+          stageId: batchPayload.targetStageId,
+          qtyGood: batchPayload.qty,
+          lot: lotId,
+          workcenterId: selectedJob.workcenterId,
+          at: new Date(),
+        })
+
+        // Close modal and reset state
+        setShowBatchTransferModal(false)
+        setBatchTransferData(null)
+       
+        // Show success message
+        alert(
+          `✓ Batch moved to next stage as lot!\n\n` +
+          `Job: ${selectedJob.code || selectedJob.id}\n` +
+          `Lot: ${lotId}\n` +
+          `From: ${sourceStageName}\n` +
+          `To: ${targetStageName}\n` +
+          `Quantity: ${batchPayload.qty.toLocaleString()} ${batchPayload.unit}`
+        )
+      } catch (error: any) {
+        alert(error?.message || 'Failed to move batch to next stage')
+      }
+    }
+
+    return (
+      <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4">
+          <div className="px-6 py-4 border-b border-gray-200 bg-gradient-to-r from-blue-500 to-blue-600 rounded-t-2xl">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-white">Move Batch to Next Stage</h3>
+              <button
+                onClick={() => {
+                  setShowBatchTransferModal(false)
+                  setBatchTransferData(null)
+                }}
+                className="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center hover:bg-white/30 transition-colors"
+              >
+                <XMarkIcon className="h-5 w-5 text-white" />
+              </button>
+            </div>
+          </div>
+         
+          <div className="p-6 space-y-4">
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <p className="text-sm text-gray-700 mb-3">
+                Move this batch to the next stage as a <span className="font-semibold text-blue-600">lot</span>?
+              </p>
+             
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Job:</span>
+                  <span className="font-medium text-gray-900">{selectedJob.code || selectedJob.id}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Lot ID:</span>
+                  <span className="font-medium text-blue-600">{lotId}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600">From Stage:</span>
+                  <span className="font-medium text-gray-900">{sourceStageName}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600">To Stage:</span>
+                  <span className="font-medium text-green-600">{targetStageName}</span>
+                </div>
+                <div className="flex justify-between border-t pt-2 mt-2">
+                  <span className="text-gray-600">Quantity:</span>
+                  <span className="font-bold text-gray-900">
+                    {batchPayload.qty.toLocaleString()} {batchPayload.unit}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {rule && rule.minQtyToStartNextStage && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                <div className="flex items-start gap-2">
+                  <InformationCircleIcon className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                  <div className="text-xs text-amber-800">
+                    <p className="font-semibold mb-1">Minimum Quantity Required:</p>
+                    <p>
+                      {batchPayload.qty >= rule.minQtyToStartNextStage ? (
+                        <span className="text-green-700">✓ Meets minimum requirement ({rule.minQtyToStartNextStage} {rule.unit})</span>
+                      ) : (
+                        <span className="text-red-700">⚠️ Below minimum requirement ({rule.minQtyToStartNextStage} {rule.unit})</span>
+                      )}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="flex gap-3 pt-2">
+              <button
+                onClick={() => {
+                  setShowBatchTransferModal(false)
+                  setBatchTransferData(null)
+                }}
+                className="flex-1 px-4 py-3 rounded-xl bg-white border-2 border-gray-300 text-gray-700 font-semibold hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirm}
+                disabled={productionMutation.isPending}
+                className={`flex-1 px-4 py-3 rounded-xl font-semibold text-white shadow-lg transition-all disabled:opacity-50 disabled:shadow-none ${
+                  productionMutation.isPending
+                    ? 'bg-gray-400'
+                    : 'bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700'
+                }`}
+              >
+                {productionMutation.isPending ? 'Moving...' : 'Confirm & Move'}
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -2722,10 +4157,10 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
       {/* Modals / Action Sheets */}
       {selectedJob && renderJobSheet()}
       {selectedProduct && renderProductSheet()}
-      
+     
       {/* Consume Material Full-Screen Dialog */}
       {showConsumeDialog && selectedJob && renderConsumeMaterialDialog()}
-      
+     
       {/* Record Output Full-Screen Dialog */}
       {showProduceDialog && selectedJob && renderRecordOutputDialog()}
 
@@ -2737,16 +4172,149 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
           products={products}
           onClose={() => setShowInventoryPostingModal(false)}
           onSuccess={async () => {
-            // Complete the job after successful inventory posting
-            await statusMutation.mutateAsync({ jobId: selectedJob.id, status: 'done' })
-            setShowInventoryPostingModal(false)
-            // Refresh job data
+            // Refresh job data first to get latest production runs
             await queryClient.invalidateQueries({ queryKey: ['jobs', workspaceId] })
+            await queryClient.invalidateQueries({ queryKey: ['jobRuns', workspaceId, selectedJob.id] })
+           
+            // Fetch fresh job data to check tolerance
+            const freshJob = await getJob(workspaceId, selectedJob.id)
+            if (!freshJob) {
+              console.error('Failed to fetch fresh job data after inventory posting')
+              setShowInventoryPostingModal(false)
+              return
+            }
+           
+            // Fetch fresh production runs to calculate actual produced quantity
+            const freshRuns = await listJobProductionRuns(workspaceId, selectedJob.id)
+           
+            // Calculate tolerance check for the current stage
+            const planned: string[] = (freshJob as any).plannedStageIds || []
+            const workflow = workflows.find(w => w.id === freshJob.workflowId)
+            const allStages = workflow?.stages || []
+            const isLastStage = planned.length > 0
+              ? planned[planned.length - 1] === freshJob.currentStageId
+              : (allStages.length > 0 && allStages[allStages.length - 1]?.id === freshJob.currentStageId)
+           
+            if (isLastStage) {
+              // Get current stage summary to check tolerance
+              const currentStageRuns = freshRuns.filter((r: any) => {
+                if (r.stageId !== freshJob.currentStageId) return false
+                // Exclude transfer runs (only count actual production)
+                return !(r.transferSourceRunIds && Array.isArray(r.transferSourceRunIds) && r.transferSourceRunIds.length > 0)
+              })
+             
+              const totalProducedInStage = currentStageRuns.reduce((sum: number, r: any) => {
+                return sum + Number(r.qtyGood || 0)
+              }, 0)
+             
+              // Calculate planned quantity and threshold
+              const stageInfo = allStages.find((s: any) => s.id === freshJob.currentStageId) as any
+              const stageOutputUOM = stageInfo?.outputUOM || stageInfo?.inputUOM || ''
+              const numberUp = freshJob.productionSpecs?.numberUp || 1
+             
+              let plannedQty: number
+              if (stageOutputUOM === 'cartoon') {
+                const boxQty = freshJob.packaging?.plannedBoxes || 0
+                const pcsPerBox = freshJob.packaging?.pcsPerBox || 1
+                if (boxQty > 0 && pcsPerBox > 0) {
+                  plannedQty = boxQty * pcsPerBox
+                } else {
+                  const plannedSheets = (freshJob.output?.[0]?.qtyPlanned as number) || Number(freshJob.quantity || 0)
+                  plannedQty = numberUp > 0 ? plannedSheets * numberUp : plannedSheets
+                }
+              } else {
+                const bom = Array.isArray(freshJob.bom) ? freshJob.bom : []
+                const sheetItem = bom.find((item: any) => {
+                  const uom = String(item.uom || '').toLowerCase()
+                  return ['sht', 'sheet', 'sheets'].includes(uom)
+                })
+                plannedQty = sheetItem
+                  ? Number(sheetItem.qtyRequired || 0)
+                  : ((freshJob.output?.[0]?.qtyPlanned as number) || Number(freshJob.quantity || 0))
+              }
+             
+              // Calculate tolerance thresholds
+              const tolerance = calculateToleranceThresholds(plannedQty)
+              const completionThreshold = Math.max(0, plannedQty - tolerance.lower)
+              const completionThresholdUpper = plannedQty + tolerance.upper
+             
+              const isIncomplete = plannedQty > 0 && totalProducedInStage < completionThreshold
+              const isOverLimit = plannedQty > 0 && totalProducedInStage > completionThresholdUpper
+              const thresholdMet = plannedQty > 0 && totalProducedInStage >= completionThreshold && totalProducedInStage <= completionThresholdUpper
+              const requireOutput = (freshJob as any).requireOutputToAdvance !== false
+             
+              // Check if job is already completed
+              const isAlreadyDone = freshJob.status === 'done'
+             
+              // Only complete job if tolerance is met
+              if (requireOutput && thresholdMet) {
+                // Complete the job after successful inventory posting and tolerance check
+                if (!isAlreadyDone) {
+                  await statusMutation.mutateAsync({ jobId: selectedJob.id, status: 'done' })
+                }
+              } else if (requireOutput && isIncomplete) {
+                // If job is already done but below threshold, revert it back to in-progress
+                if (isAlreadyDone) {
+                  await statusMutation.mutateAsync({ jobId: selectedJob.id, status: 'in_progress' })
+                  alert(
+                    `⚠️ Job status reverted to "In Progress".\n\n` +
+                    `Inventory posted successfully, but job cannot remain completed.\n\n` +
+                    `Required: ${completionThreshold.toLocaleString()}+ ${stageOutputUOM || 'units'}\n` +
+                    `Current: ${totalProducedInStage.toLocaleString()} ${stageOutputUOM || 'units'}\n` +
+                    `Planned: ${plannedQty.toLocaleString()} ${stageOutputUOM || 'units'}\n\n` +
+                    `Please complete production to meet minimum tolerance before finishing the job.`
+                  )
+                } else {
+                  // Don't complete job if below threshold - just show warning
+                  alert(
+                    `⚠️ Inventory posted successfully, but job cannot be completed.\n\n` +
+                    `Required: ${completionThreshold.toLocaleString()}+ ${stageOutputUOM || 'units'}\n` +
+                    `Current: ${totalProducedInStage.toLocaleString()} ${stageOutputUOM || 'units'}\n` +
+                    `Planned: ${plannedQty.toLocaleString()} ${stageOutputUOM || 'units'}\n\n` +
+                    `Please complete production to meet minimum tolerance before finishing the job.`
+                  )
+                }
+              } else if (requireOutput && isOverLimit) {
+                // If job is already done but over limit, revert it back to in-progress
+                if (isAlreadyDone) {
+                  await statusMutation.mutateAsync({ jobId: selectedJob.id, status: 'in_progress' })
+                  alert(
+                    `⚠️ Job status reverted to "In Progress".\n\n` +
+                    `Inventory posted successfully, but job cannot remain completed.\n\n` +
+                    `Maximum Allowed: ${completionThresholdUpper.toLocaleString()} ${stageOutputUOM || 'units'}\n` +
+                    `Current: ${totalProducedInStage.toLocaleString()} ${stageOutputUOM || 'units'}\n` +
+                    `Planned: ${plannedQty.toLocaleString()} ${stageOutputUOM || 'units'}\n\n` +
+                    `Please adjust the quantity or consult a supervisor.`
+                  )
+                } else {
+                  // Don't complete job if over limit - just show warning
+                  alert(
+                    `⚠️ Inventory posted successfully, but job cannot be completed.\n\n` +
+                    `Maximum Allowed: ${completionThresholdUpper.toLocaleString()} ${stageOutputUOM || 'units'}\n` +
+                    `Current: ${totalProducedInStage.toLocaleString()} ${stageOutputUOM || 'units'}\n` +
+                    `Planned: ${plannedQty.toLocaleString()} ${stageOutputUOM || 'units'}\n\n` +
+                    `Please adjust the quantity or consult a supervisor.`
+                  )
+                }
+              } else if (!requireOutput) {
+                // If output is not required, complete the job
+                if (!isAlreadyDone) {
+                  await statusMutation.mutateAsync({ jobId: selectedJob.id, status: 'done' })
+                }
+              }
+            } else {
+              // Not last stage, don't complete job
+              console.log('[Inventory Posting] Job is not at last stage, not completing')
+            }
+           
+            setShowInventoryPostingModal(false)
+           
             // CRITICAL: Invalidate inventory queries to refresh stock after posting
             // This ensures inventory UI shows updated quantities
             queryClient.invalidateQueries({ queryKey: ['products', workspaceId] })
             queryClient.invalidateQueries({ queryKey: ['stockTxns', workspaceId] })
             queryClient.invalidateQueries({ queryKey: ['productOnHand', workspaceId] })
+           
             // Dispatch custom event to notify ProductDetails (for any open product)
             if (selectedJob.sku) {
               try {
@@ -2760,7 +4328,8 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
                 console.error('Failed to refresh product after job completion:', e)
               }
             }
-            const updatedJobs = await queryClient.fetchQuery({ 
+           
+            const updatedJobs = await queryClient.fetchQuery({
               queryKey: ['jobs', workspaceId],
               queryFn: () => listJobs(workspaceId)
             })
@@ -2771,6 +4340,128 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
           }}
         />
       )}
+
+      {/* Batch Transfer Confirmation Modal */}
+      {renderBatchTransferModal()}
+
+      {/* Stage Output Selection Modal */}
+      {renderStageOutputModal()}
+
+      {/* Lot Inventory Posting Modal */}
+      {showLotInventoryPostingModal && selectedJob && selectedLotForPosting && (() => {
+        const outputStageId = selectedOutputStageId || selectedJob.currentStageId || ''
+        const outputStageInfo = getStageInfo(outputStageId) as any
+        const currentStageOutputUOM = outputStageInfo?.outputUOM || outputStageInfo?.inputUOM || 'units'
+       
+        return (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+              <div className="px-6 py-4 border-b border-gray-200 bg-gradient-to-r from-emerald-500 to-emerald-600 rounded-t-2xl">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-semibold text-white">Post Lot to Inventory</h3>
+                  <button
+                    onClick={() => {
+                      setShowLotInventoryPostingModal(false)
+                      setSelectedLotForPosting(null)
+                    }}
+                    className="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center hover:bg-white/30 transition-colors"
+                  >
+                    <XMarkIcon className="h-5 w-5 text-white" />
+                  </button>
+                </div>
+              </div>
+              <div className="p-6">
+                <div className="mb-4">
+                  <p className="text-sm text-gray-600 mb-2">Lot Number:</p>
+                  <p className="font-bold text-gray-900 text-lg">{selectedLotForPosting.lot}</p>
+                </div>
+                <div className="mb-4">
+                  <p className="text-sm text-gray-600 mb-2">Quantity to Post:</p>
+                  <p className="font-bold text-gray-900 text-lg">
+                    {selectedLotForPosting.qty.toLocaleString()} {currentStageOutputUOM}
+                  </p>
+                </div>
+                <div className="mb-6">
+                  <p className="text-sm text-gray-600">
+                    This will post the completed lot to inventory. The job will remain active for other lots.
+                  </p>
+                </div>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => {
+                      setShowLotInventoryPostingModal(false)
+                      setSelectedLotForPosting(null)
+                    }}
+                    className="flex-1 px-4 py-3 rounded-xl bg-gray-100 text-gray-700 font-semibold hover:bg-gray-200 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={async () => {
+                      try {
+                        const outputStageId = selectedOutputStageId || selectedJob.currentStageId || ''
+                        // Post lot to inventory using recordJobOutput
+                        await recordJobOutput(workspaceId, selectedJob.id, {
+                          qtyOutput: selectedLotForPosting.qty,
+                          autoConsumeMaterials: false, // Don't auto-consume for partial lot posting
+                          completeJob: false, // Don't complete job, just post this lot
+                          stageId: outputStageId,
+                          lot: selectedLotForPosting.lot,
+                          notes: `Lot ${selectedLotForPosting.lot} posted to inventory (partial completion)`
+                        })
+                       
+                        // Refresh data
+                        queryClient.invalidateQueries({ queryKey: ['jobs', workspaceId] })
+                        queryClient.invalidateQueries({ queryKey: ['jobRuns', workspaceId, selectedJob.id] })
+                        queryClient.invalidateQueries({ queryKey: ['products', workspaceId] })
+                        queryClient.invalidateQueries({ queryKey: ['stockTxns', workspaceId] })
+                        queryClient.invalidateQueries({ queryKey: ['productOnHand', workspaceId] })
+                       
+                        // Refresh production runs
+                        const freshRuns = await listJobProductionRuns(workspaceId, selectedJob.id)
+                        setProductionRuns(freshRuns)
+                        setDialogProductionRuns(freshRuns)
+                       
+                        // Refresh job
+                        const updatedJob = await getJob(workspaceId, selectedJob.id)
+                        if (updatedJob) {
+                          setSelectedJob(updatedJob)
+                        }
+                       
+                        // Dispatch custom event
+                        if (selectedJob.sku) {
+                          try {
+                            const product = await getProductByCode(workspaceId, selectedJob.sku)
+                            if (product) {
+                              queryClient.invalidateQueries({ queryKey: ['stockTxns', workspaceId, product.id] })
+                              queryClient.invalidateQueries({ queryKey: ['productOnHand', workspaceId, product.id] })
+                              window.dispatchEvent(new CustomEvent('stockTransactionCreated', { detail: { productId: product.id } }))
+                            }
+                          } catch (e) {
+                            console.error('Failed to refresh product:', e)
+                          }
+                        }
+                       
+                        alert(`✅ Lot ${selectedLotForPosting.lot} (${selectedLotForPosting.qty.toLocaleString()} ${currentStageOutputUOM}) posted to inventory successfully!`)
+                       
+                        setShowLotInventoryPostingModal(false)
+                        setSelectedLotForPosting(null)
+                      } catch (error: any) {
+                        console.error('Failed to post lot to inventory:', error)
+                        alert(`❌ Failed to post lot to inventory: ${error.message || 'Unknown error'}`)
+                      }
+                    }}
+                    className="flex-1 px-4 py-3 rounded-xl bg-emerald-600 text-white font-semibold hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2"
+                  >
+                    <ArrowUpTrayIcon className="h-5 w-5" />
+                    Post to Inventory
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }

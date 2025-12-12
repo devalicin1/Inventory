@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useRef, useEffect } from 'react';
-import { CogIcon, CubeIcon, DocumentTextIcon, WrenchScrewdriverIcon, MagnifyingGlassIcon, FolderIcon, ChevronDownIcon } from '@heroicons/react/24/outline';
+import { CogIcon, DocumentTextIcon, MagnifyingGlassIcon, FolderIcon, ChevronDownIcon } from '@heroicons/react/24/outline';
 import type { JobFormData } from './types';
 import { Card } from '../../ui/Card';
 import { Input } from '../../ui/Input';
@@ -11,6 +11,7 @@ interface JobSpecsStepProps {
     setFormData: React.Dispatch<React.SetStateAction<JobFormData>>;
     sheetProducts: any[];
     groups?: Group[];
+    mode?: 'dimensions' | 'parameters' | 'both';
 }
 
 export const JobSpecsStep: React.FC<JobSpecsStepProps> = ({
@@ -18,13 +19,14 @@ export const JobSpecsStep: React.FC<JobSpecsStepProps> = ({
     setFormData,
     sheetProducts,
     groups = [],
+    mode = 'both',
 }) => {
     const [sheetSearchTerm, setSheetSearchTerm] = useState('');
     const [selectedGroupId, setSelectedGroupId] = useState<string>('');
     const [showSheetDropdown, setShowSheetDropdown] = useState(false);
-    const [selectedSheetId, setSelectedSheetId] = useState<string>('');
+    const [selectedSheetId, setSelectedSheetId] = useState<string>((formData.productionSpecs as any).selectedSheetId || '');
     const dropdownRef = useRef<HTMLDivElement>(null);
-    
+
     // Close dropdown when clicking outside
     useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
@@ -32,7 +34,7 @@ export const JobSpecsStep: React.FC<JobSpecsStepProps> = ({
                 setShowSheetDropdown(false);
             }
         };
-        
+
         if (showSheetDropdown) {
             document.addEventListener('mousedown', handleClickOutside);
             return () => {
@@ -40,14 +42,14 @@ export const JobSpecsStep: React.FC<JobSpecsStepProps> = ({
             };
         }
     }, [showSheetDropdown]);
-    
+
     // Build group hierarchy
     const groupMap = useMemo(() => {
         const map = new Map<string, Group>();
         groups.forEach(g => map.set(g.id, g));
         return map;
     }, [groups]);
-    
+
     const getGroupPath = (groupId: string | null | undefined): string => {
         if (!groupId) return 'Ungrouped';
         const group = groupMap.get(groupId);
@@ -67,7 +69,7 @@ export const JobSpecsStep: React.FC<JobSpecsStepProps> = ({
         }
         return parts.join(' / ');
     };
-    
+
     // Helper function to decode and clean product names
     const decodeProductName = (name: string | undefined): string => {
         if (!name) return '';
@@ -84,16 +86,16 @@ export const JobSpecsStep: React.FC<JobSpecsStepProps> = ({
         }
         return cleaned || name;
     };
-    
+
     // Use calculations from useJobCalculations hook
     const { theoreticalNumberUp, sheetsNeeded, sheetsNeededWithOvers, sheetsNeededWithWastage } = useJobCalculations(formData);
-    
+
     // Update BOM sheet quantity when sheetsNeeded changes
     useEffect(() => {
         if (selectedSheetId && (sheetsNeededWithWastage || sheetsNeeded)) {
             const calculatedQty = sheetsNeededWithWastage || sheetsNeeded || 0;
             const selectedSheet = sheetProducts.find(p => p.id === selectedSheetId);
-            
+
             if (selectedSheet && calculatedQty > 0) {
                 setFormData(prev => {
                     const existingSheetIndex = prev.bom.findIndex(
@@ -105,12 +107,12 @@ export const JobSpecsStep: React.FC<JobSpecsStepProps> = ({
                             return itemSku === productSku || itemName === productName;
                         }
                     );
-                    
+
                     if (existingSheetIndex !== -1) {
                         return {
                             ...prev,
-                            bom: prev.bom.map((item: any, idx: number) => 
-                                idx === existingSheetIndex 
+                            bom: prev.bom.map((item: any, idx: number) =>
+                                idx === existingSheetIndex
                                     ? { ...item, qty: calculatedQty, qtyRequired: calculatedQty }
                                     : item
                             )
@@ -126,14 +128,14 @@ export const JobSpecsStep: React.FC<JobSpecsStepProps> = ({
     const filteredSheets = useMemo(() => {
         return sheetProducts.filter(p => {
             const decodedName = decodeProductName(p.name);
-            const matchesSearch = !sheetSearchTerm || 
+            const matchesSearch = !sheetSearchTerm ||
                 decodedName.toLowerCase().includes(sheetSearchTerm.toLowerCase()) ||
                 p.sku?.toLowerCase().includes(sheetSearchTerm.toLowerCase());
             const matchesGroup = !selectedGroupId || (p as any).groupId === selectedGroupId;
             return matchesSearch && matchesGroup;
         });
     }, [sheetProducts, sheetSearchTerm, selectedGroupId]);
-    
+
     // Group sheets by group and sort alphabetically
     const groupedSheets = useMemo(() => {
         const grouped = new Map<string, typeof sheetProducts>();
@@ -143,7 +145,7 @@ export const JobSpecsStep: React.FC<JobSpecsStepProps> = ({
             const nameB = decodeProductName(b.name || '').toLowerCase();
             return nameA.localeCompare(nameB);
         });
-        
+
         sortedSheets.forEach(p => {
             const groupId = (p as any).groupId || '__ungrouped__';
             if (!grouped.has(groupId)) {
@@ -153,9 +155,28 @@ export const JobSpecsStep: React.FC<JobSpecsStepProps> = ({
         });
         return grouped;
     }, [filteredSheets]);
-    
+
     const selectedSheet = sheetProducts.find(p => p.id === selectedSheetId);
-    
+
+    // Sync selectedSheetId to formData whenever it changes
+    useEffect(() => {
+        if (selectedSheetId) {
+            setFormData(prev => ({
+                ...prev,
+                productionSpecs: {
+                    ...prev.productionSpecs,
+                    selectedSheetId,
+                },
+            }));
+        }
+    }, [selectedSheetId, setFormData]);
+
+
+
+    const showDimensions = mode === 'dimensions' || mode === 'both';
+
+
+
     // Calculate quantity in pcs (pieces) for display
     const quantityInPcs = useMemo(() => {
         let totalQty = formData.quantity || 0;
@@ -193,12 +214,12 @@ export const JobSpecsStep: React.FC<JobSpecsStepProps> = ({
             }
         }));
     };
-    
+
     // Helper function to extract dimensions from product name or specs
     const extractDimensions = (product: any): { width?: number; length?: number } => {
         const name = product.name || '';
         const specs = product.dimensionsWxLmm || product.dimensions || '';
-        
+
         // Try to extract from dimensions field (format: "615x905" or "615 x 905")
         if (specs) {
             const match = specs.match(/(\d+)\s*[x×]\s*(\d+)/i);
@@ -206,70 +227,184 @@ export const JobSpecsStep: React.FC<JobSpecsStepProps> = ({
                 return { width: Number(match[1]), length: Number(match[2]) };
             }
         }
-        
+
         // Try to extract from product name (format: "450 x 835" or "450x835")
         const nameMatch = name.match(/(\d+)\s*[x×]\s*(\d+)/i);
         if (nameMatch) {
             return { width: Number(nameMatch[1]), length: Number(nameMatch[2]) };
         }
-        
+
         return {};
     };
 
     return (
-        <div className="space-y-8">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                <div className="space-y-6">
+        <div className="space-y-2">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+                {/* LEFT: core required specifications */}
+                <div className="space-y-2">
                     <Card className="overflow-hidden">
-                        <div className="p-5 bg-gradient-to-r from-indigo-50 to-purple-50 border-b border-indigo-100">
-                            <h3 className="text-lg font-bold text-gray-900 flex items-center gap-3">
-                                <div className="p-2 bg-indigo-500 rounded-xl shadow-lg shadow-indigo-200">
-                                    <CogIcon className="h-5 w-5 text-white" />
+                        <div className="px-2 py-1.5 bg-gradient-to-r from-indigo-50 to-purple-50 border-b border-indigo-100">
+                            <h3 className="text-base font-semibold text-gray-900 flex items-center gap-1.5">
+                                <div className="p-1 bg-indigo-500 rounded-lg">
+                                    <CogIcon className="h-4 w-4 text-white" />
                                 </div>
                                 Production Specifications
                             </h3>
                         </div>
 
-                        <div className="p-6 space-y-6">
-                            {/* Product Dimensions */}
-                            <div className="pb-5 border-b-2 border-gray-100">
-                                <h4 className="text-sm font-bold text-gray-900 mb-4 flex items-center gap-2">
-                                    <CubeIcon className="h-5 w-5 text-indigo-500" />
-                                    Product Dimensions
-                                </h4>
-                                <div className="grid grid-cols-3 gap-4">
-                                    <Input
-                                        type="number"
-                                        label="Width (mm) *"
-                                        value={formData.productionSpecs.size.width}
-                                        onChange={(e) => updateSpec('size', 'width', Number(e.target.value))}
-                                    />
-                                    <Input
-                                        type="number"
-                                        label="Length (mm) *"
-                                        value={formData.productionSpecs.size.length}
-                                        onChange={(e) => updateSpec('size', 'length', Number(e.target.value))}
-                                    />
-                                    <Input
-                                        type="number"
-                                        label="Height (mm)"
-                                        value={formData.productionSpecs.size.height}
-                                        onChange={(e) => updateSpec('size', 'height', Number(e.target.value))}
-                                    />
+                        <div className="p-2 space-y-2">
+                            {/* Dimensions Table */}
+                            {showDimensions && (
+                                <div className="pb-2 border-b border-gray-100">
+                                    <h4 className="text-sm font-semibold text-gray-700 mb-1.5">Dimensions</h4>
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full text-sm border-collapse">
+                                            <thead>
+                                                <tr className="bg-gray-50">
+                                                    <th className="text-left py-1 px-2 font-semibold text-gray-700 border border-gray-200">Type</th>
+                                                    <th className="text-left py-1 px-2 font-semibold text-gray-700 border border-gray-200">Width (mm)</th>
+                                                    <th className="text-left py-1 px-2 font-semibold text-gray-700 border border-gray-200">Length (mm)</th>
+                                                    <th className="text-left py-1 px-2 font-semibold text-gray-700 border border-gray-200">Height (mm)</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <tr>
+                                                    <td className="py-1 px-2 font-medium text-gray-700 border border-gray-200">Product *</td>
+                                                    <td className="py-0.5 px-1 border border-gray-200">
+                                                        <input
+                                                            type="number"
+                                                            value={formData.productionSpecs.size.width || ''}
+                                                            onChange={(e) => updateSpec('size', 'width', Number(e.target.value))}
+                                                            className="w-full px-1.5 py-1.5 text-sm border-0 focus:ring-1 focus:ring-indigo-500 rounded"
+                                                        />
+                                                    </td>
+                                                    <td className="py-0.5 px-1 border border-gray-200">
+                                                        <input
+                                                            type="number"
+                                                            value={formData.productionSpecs.size.length || ''}
+                                                            onChange={(e) => updateSpec('size', 'length', Number(e.target.value))}
+                                                            className="w-full px-1.5 py-1.5 text-sm border-0 focus:ring-1 focus:ring-indigo-500 rounded"
+                                                        />
+                                                    </td>
+                                                    <td className="py-0.5 px-1 border border-gray-200">
+                                                        <input
+                                                            type="number"
+                                                            value={formData.productionSpecs.size.height || ''}
+                                                            onChange={(e) => updateSpec('size', 'height', Number(e.target.value))}
+                                                            className="w-full px-1.5 py-1.5 text-sm border-0 focus:ring-1 focus:ring-indigo-500 rounded"
+                                                        />
+                                                    </td>
+                                                </tr>
+                                                <tr>
+                                                    <td className="py-1 px-2 font-medium text-gray-700 border border-gray-200">Forme</td>
+                                                    <td className="py-0.5 px-1 border border-gray-200">
+                                                        <input
+                                                            type="number"
+                                                            value={formData.productionSpecs.forme.width || ''}
+                                                            onChange={(e) => updateSpec('forme', 'width', Number(e.target.value))}
+                                                            className="w-full px-1.5 py-1.5 text-sm border-0 focus:ring-1 focus:ring-indigo-500 rounded"
+                                                        />
+                                                    </td>
+                                                    <td className="py-0.5 px-1 border border-gray-200">
+                                                        <input
+                                                            type="number"
+                                                            value={formData.productionSpecs.forme.length || ''}
+                                                            onChange={(e) => updateSpec('forme', 'length', Number(e.target.value))}
+                                                            className="w-full px-1.5 py-1.5 text-sm border-0 focus:ring-1 focus:ring-indigo-500 rounded"
+                                                        />
+                                                    </td>
+                                                    <td className="py-0.5 px-1 border border-gray-200 bg-gray-50"></td>
+                                                </tr>
+                                                <tr>
+                                                    <td className="py-1 px-2 font-medium text-gray-700 border border-gray-200">CutTo</td>
+                                                    <td className="py-0.5 px-1 border border-gray-200">
+                                                        <input
+                                                            type="number"
+                                                            value={formData.productionSpecs.cutTo.width || ''}
+                                                            onChange={(e) => updateSpec('cutTo', 'width', Number(e.target.value))}
+                                                            className="w-full px-1.5 py-1.5 text-sm border-0 focus:ring-1 focus:ring-indigo-500 rounded"
+                                                        />
+                                                    </td>
+                                                    <td className="py-0.5 px-1 border border-gray-200">
+                                                        <input
+                                                            type="number"
+                                                            value={formData.productionSpecs.cutTo.length || ''}
+                                                            onChange={(e) => updateSpec('cutTo', 'length', Number(e.target.value))}
+                                                            className="w-full px-1.5 py-1.5 text-sm border-0 focus:ring-1 focus:ring-indigo-500 rounded"
+                                                        />
+                                                    </td>
+                                                    <td className="py-0.5 px-1 border border-gray-200 bg-gray-50"></td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
                                 </div>
-                            </div>
+                            )}
 
-                            {/* Sheet Dimensions */}
-                            <div className="pb-5 border-b-2 border-gray-100">
-                                <h4 className="text-sm font-bold text-gray-900 mb-4 flex items-center gap-2">
-                                    <DocumentTextIcon className="h-5 w-5 text-indigo-500" />
+                            {/* Production Parameters */}
+                            {showDimensions && (
+                                <div className="pb-2 border-b border-gray-100">
+                                    <h4 className="text-sm font-semibold text-gray-700 mb-1.5">Production Parameters</h4>
+                                    <div className="grid grid-cols-2 gap-1.5">
+                                        <Input
+                                            type="number"
+                                            label="Number Up *"
+                                            value={formData.productionSpecs.numberUp}
+                                            onChange={(e) => updateParam('numberUp', Number(e.target.value))}
+                                        />
+                                        <Input
+                                            type="number"
+                                            label="Colors *"
+                                            value={formData.productionSpecs.printedColors}
+                                            onChange={(e) => updateParam('printedColors', Number(e.target.value))}
+                                        />
+                                        <Input
+                                            label="Varnish"
+                                            value={formData.productionSpecs.varnish}
+                                            onChange={(e) => updateParam('varnish', e.target.value)}
+                                        />
+                                        <Input
+                                            label="Board Type"
+                                            value={formData.productionSpecs.board}
+                                            onChange={(e) => updateParam('board', e.target.value)}
+                                        />
+                                        <Input
+                                            type="number"
+                                            label="Overs %"
+                                            value={formData.productionSpecs.oversPct}
+                                            onChange={(e) => updateParam('oversPct', Number(e.target.value))}
+                                        />
+                                        <Input
+                                            label="Style"
+                                            value={formData.productionSpecs.style}
+                                            onChange={(e) => updateParam('style', e.target.value)}
+                                        />
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </Card>
+                </div>
+
+                {/* RIGHT: summary & advanced specifications */}
+                <div className="space-y-2">
+                    {/* Sheet Dimensions - Moved to Right Column */}
+                    {showDimensions && (
+                        <Card className="overflow-visible">
+                            <div className="px-2 py-1.5 bg-gradient-to-r from-indigo-50 to-purple-50 border-b border-indigo-100">
+                                <h3 className="text-base font-semibold text-gray-900 flex items-center gap-1.5">
+                                    <div className="p-1 bg-indigo-500 rounded-lg">
+                                        <DocumentTextIcon className="h-4 w-4 text-white" />
+                                    </div>
                                     Sheet Dimensions
-                                </h4>
-                                <div className="mb-4">
-                                    <label className="block text-sm font-semibold text-gray-700 mb-2">Select Sheet from Inventory</label>
+                                </h3>
+                            </div>
+                            <div className="p-2">
+                                <div className="mb-2">
+                                    <label className="block text-sm font-semibold text-gray-700 mb-1">Select Sheet from Inventory</label>
                                     <div className="relative">
                                         {/* Search and Filter Bar */}
-                                        <div className="mb-3 space-y-3">
+                                        <div className="mb-1.5 space-y-1.5">
                                             <div className="relative">
                                                 <MagnifyingGlassIcon className="absolute left-4 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
                                                 <input
@@ -281,11 +416,11 @@ export const JobSpecsStep: React.FC<JobSpecsStepProps> = ({
                                                         setShowSheetDropdown(true);
                                                     }}
                                                     onFocus={() => setShowSheetDropdown(true)}
-                                                    className="block w-full pl-12 pr-4 py-3 rounded-xl border-2 border-gray-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 bg-white text-base transition-all"
+                                                    className="block w-full pl-11 pr-3 py-2.5 rounded-lg border border-gray-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 bg-white text-sm transition-all"
                                                 />
                                             </div>
                                             {groups.length > 0 && (
-                                                <div className="flex items-center gap-3">
+                                                <div className="flex items-center gap-2.5">
                                                     <FolderIcon className="h-5 w-5 text-gray-400" />
                                                     <select
                                                         value={selectedGroupId}
@@ -293,7 +428,7 @@ export const JobSpecsStep: React.FC<JobSpecsStepProps> = ({
                                                             setSelectedGroupId(e.target.value);
                                                             setShowSheetDropdown(true);
                                                         }}
-                                                        className="flex-1 rounded-xl border-2 border-gray-200 py-3 px-4 text-base focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 bg-white transition-all"
+                                                        className="flex-1 rounded-lg border border-gray-200 py-2.5 px-3 text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 bg-white transition-all"
                                                     >
                                                         <option value="">All Groups</option>
                                                         {groups.map(g => (
@@ -305,26 +440,26 @@ export const JobSpecsStep: React.FC<JobSpecsStepProps> = ({
                                                 </div>
                                             )}
                                         </div>
-                                        
+
                                         {/* Sheet Selection Dropdown */}
                                         <div className="relative" ref={dropdownRef}>
                                             <button
                                                 type="button"
                                                 onClick={() => setShowSheetDropdown(!showSheetDropdown)}
-                                                className="block w-full rounded-xl border-2 border-gray-200 py-3 px-4 text-base focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 bg-white text-left flex items-center justify-between transition-all"
+                                                className="block w-full rounded-xl border border-gray-200 py-2.5 px-3 text-base focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 bg-white text-left flex items-center justify-between transition-all"
                                             >
                                                 <span className={selectedSheet ? 'text-gray-900' : 'text-gray-500'}>
-                                                    {selectedSheet 
+                                                    {selectedSheet
                                                         ? `${selectedSheet.sku} — ${decodeProductName(selectedSheet.name)}${selectedSheet.groupId ? ` (${getGroupPath(selectedSheet.groupId)})` : ''}`
                                                         : '— Select sheet from inventory —'}
                                                 </span>
                                                 <ChevronDownIcon className={`h-5 w-5 text-gray-400 transition-transform ${showSheetDropdown ? 'transform rotate-180' : ''}`} />
                                             </button>
-                                            
+
                                             {showSheetDropdown && (
-                                                <div className="absolute z-50 w-full mt-2 bg-white border-2 border-gray-200 rounded-xl shadow-xl max-h-96 overflow-auto">
+                                                <div className="absolute z-50 w-full mt-2 bg-white border border-gray-200 rounded-xl shadow-xl max-h-80 overflow-auto">
                                                     {filteredSheets.length === 0 ? (
-                                                        <div className="px-4 py-6 text-base text-gray-500 text-center">
+                                                        <div className="px-4 py-5 text-sm text-gray-500 text-center">
                                                             No sheets found
                                                         </div>
                                                     ) : (
@@ -346,32 +481,36 @@ export const JobSpecsStep: React.FC<JobSpecsStepProps> = ({
                                                                                 setShowSheetDropdown(false);
                                                                                 setSheetSearchTerm('');
                                                                                 setSelectedGroupId('');
-                                                                                
+
                                                                                 // Extract dimensions from product name or specs if available
                                                                                 const dimensions = extractDimensions(p);
                                                                                 if (dimensions.width && dimensions.length) {
                                                                                     updateSpec('sheet', 'width', dimensions.width);
                                                                                     updateSpec('sheet', 'length', dimensions.length);
                                                                                 }
-                                                                                
+
                                                                                 // Extract microns and GSM from product
                                                                                 // Microns comes from 'cal' field, GSM from 'gsm' field
-                                                                                if (p.cal !== undefined && p.cal !== null && p.cal !== '') {
-                                                                                    const calValue = typeof p.cal === 'string' ? Number(p.cal) : p.cal;
-                                                                                    if (!isNaN(calValue) && calValue > 0) {
-                                                                                        updateParam('microns', calValue);
+                                                                                const anyP = p as any;
+                                                                                // Try various casing for cal/microns
+                                                                                const calVal = anyP.cal ?? anyP.CAL ?? anyP.Cal ?? anyP.microns ?? anyP.Microns ?? anyP.MICRONS;
+                                                                                if (calVal !== undefined && calVal !== null && calVal !== '') {
+                                                                                    const numCal = Number(calVal);
+                                                                                    if (!isNaN(numCal) && numCal > 0) {
+                                                                                        updateParam('microns', numCal);
                                                                                     }
-                                                                                } else if (p.microns !== undefined && p.microns !== null) {
-                                                                                    updateParam('microns', Number(p.microns));
                                                                                 }
-                                                                                if (p.gsm) {
-                                                                                    updateParam('gsm', String(p.gsm));
+
+                                                                                // Try various casing for gsm
+                                                                                const gsmVal = anyP.gsm ?? anyP.GSM ?? anyP.Gsm;
+                                                                                if (gsmVal !== undefined && gsmVal !== null && gsmVal !== '') {
+                                                                                    updateParam('gsm', String(gsmVal));
                                                                                 }
-                                                                                
+
                                                                                 // Add sheet to BOM automatically with calculated quantity
                                                                                 // Use sheetsNeededWithWastage if available, otherwise use sheetsNeeded
                                                                                 const calculatedQty = sheetsNeededWithWastage || sheetsNeeded || 0;
-                                                                                
+
                                                                                 const sheetBomItem = {
                                                                                     sku: p.sku || '',
                                                                                     name: decodeProductName(p.name) || '',
@@ -381,7 +520,7 @@ export const JobSpecsStep: React.FC<JobSpecsStepProps> = ({
                                                                                     reserved: 0,
                                                                                     consumed: 0
                                                                                 };
-                                                                                
+
                                                                                 // Check if sheet already exists in BOM
                                                                                 const existingSheetIndex = formData.bom.findIndex(
                                                                                     (item: any) => {
@@ -392,7 +531,7 @@ export const JobSpecsStep: React.FC<JobSpecsStepProps> = ({
                                                                                         return itemSku === productSku || itemName === productName;
                                                                                     }
                                                                                 );
-                                                                                
+
                                                                                 if (existingSheetIndex === -1) {
                                                                                     // Add new sheet to BOM
                                                                                     setFormData(prev => ({
@@ -403,11 +542,11 @@ export const JobSpecsStep: React.FC<JobSpecsStepProps> = ({
                                                                                     // Update existing sheet in BOM
                                                                                     setFormData(prev => ({
                                                                                         ...prev,
-                                                                                        bom: prev.bom.map((item: any, idx: number) => 
-                                                                                            idx === existingSheetIndex 
-                                                                                                ? { 
-                                                                                                    ...item, 
-                                                                                                    sku: p.sku || item.sku, 
+                                                                                        bom: prev.bom.map((item: any, idx: number) =>
+                                                                                            idx === existingSheetIndex
+                                                                                                ? {
+                                                                                                    ...item,
+                                                                                                    sku: p.sku || item.sku,
                                                                                                     name: decodeProductName(p.name) || item.name,
                                                                                                     qty: calculatedQty || item.qty
                                                                                                 }
@@ -416,11 +555,10 @@ export const JobSpecsStep: React.FC<JobSpecsStepProps> = ({
                                                                                     }));
                                                                                 }
                                                                             }}
-                                                                            className={`w-full px-4 py-3 text-left hover:bg-indigo-50 transition-colors ${
-                                                                                selectedSheetId === p.id ? 'bg-indigo-100' : ''
-                                                                            }`}
+                                                                            className={`w-full px-4 py-2.5 text-left hover:bg-indigo-50 transition-colors ${selectedSheetId === p.id ? 'bg-indigo-100' : ''
+                                                                                }`}
                                                                         >
-                                                                            <div className="flex items-center gap-3">
+                                                                            <div className="flex items-center gap-2.5">
                                                                                 <DocumentTextIcon className="h-5 w-5 text-gray-400 flex-shrink-0" />
                                                                                 <div className="flex-1 min-w-0">
                                                                                     <div className="font-medium text-gray-900 truncate">{decodeProductName(p.name)}</div>
@@ -437,19 +575,78 @@ export const JobSpecsStep: React.FC<JobSpecsStepProps> = ({
                                             )}
                                         </div>
                                     </div>
-                                    
-                                    {/* Selected Sheet Info */}
-                                    {selectedSheet && (
-                                        <div className="mt-3 p-4 bg-gradient-to-br from-indigo-50 to-purple-50 rounded-xl border-2 border-indigo-200">
-                                            <div className="font-bold text-gray-900">{decodeProductName(selectedSheet.name)}</div>
-                                            <div className="text-gray-600 mt-1">
-                                                SKU: {selectedSheet.sku}
-                                                {selectedSheet.groupId && ` • Group: ${getGroupPath(selectedSheet.groupId)}`}
+
+                                    {/* Selected Sheet Info – show key properties from inventory */}
+                                    <div className="mt-2 p-3 bg-gradient-to-br from-indigo-50 to-purple-50 rounded-lg border border-indigo-200 text-sm sm:text-base space-y-2">
+                                        <div className="font-semibold text-gray-900">
+                                            {selectedSheet ? decodeProductName(selectedSheet.name) : 'No sheet selected yet'}
+                                        </div>
+                                        <div className="text-gray-700">
+                                            <span className="font-medium">SKU:</span>{' '}
+                                            {selectedSheet ? selectedSheet.sku : '-'}
+                                            {selectedSheet?.groupId && (
+                                                <span className="text-gray-600"> • {getGroupPath(selectedSheet.groupId)}</span>
+                                            )}
+                                        </div>
+                                        <div className="text-gray-700">
+                                            <span className="font-medium">Dimensions:</span>{' '}
+                                            {selectedSheet && (selectedSheet as any).dimensionsWxLmm
+                                                ? (selectedSheet as any).dimensionsWxLmm
+                                                : (formData.productionSpecs.sheet.width && formData.productionSpecs.sheet.length
+                                                    ? `${formData.productionSpecs.sheet.width} x ${formData.productionSpecs.sheet.length} mm`
+                                                    : '-')}
+                                        </div>
+
+                                        {/* Editable sheet-related attributes */}
+                                        <div className="grid grid-cols-3 gap-2 pt-1">
+                                            <div>
+                                                <label className="block text-xs font-medium text-gray-700 mb-1">
+                                                    GSM
+                                                </label>
+                                                <input
+                                                    type="text"
+                                                    value={formData.productionSpecs.gsm ?? ((selectedSheet as any)?.gsm ?? '').toString()}
+                                                    onChange={(e) => updateParam('gsm', e.target.value)}
+                                                    className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-200 bg-white"
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className="block text-xs font-medium text-gray-700 mb-1">
+                                                    Microns
+                                                </label>
+                                                <input
+                                                    type="number"
+                                                    value={formData.productionSpecs.microns ?? ((selectedSheet as any)?.cal ?? (selectedSheet as any)?.microns ?? '')}
+                                                    onChange={(e) =>
+                                                        updateParam('microns', e.target.value ? Number(e.target.value) : undefined)
+                                                    }
+                                                    className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-200 bg-white"
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className="block text-xs font-medium text-gray-700 mb-1">
+                                                    Tags
+                                                </label>
+                                                <input
+                                                    type="text"
+                                                    value={formData.productionSpecs.tags?.join(', ') ?? ''}
+                                                    placeholder="e.g. sheet, coated"
+                                                    onChange={(e) =>
+                                                        updateParam(
+                                                            'tags',
+                                                            e.target.value
+                                                                .split(',')
+                                                                .map(s => s.trim())
+                                                                .filter(Boolean)
+                                                        )
+                                                    }
+                                                    className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-200 bg-white"
+                                                />
                                             </div>
                                         </div>
-                                    )}
+                                    </div>
                                 </div>
-                                <div className="grid grid-cols-2 gap-4">
+                                <div className="grid grid-cols-2 gap-3">
                                     <Input
                                         type="number"
                                         label="Sheet Width (mm)"
@@ -464,172 +661,60 @@ export const JobSpecsStep: React.FC<JobSpecsStepProps> = ({
                                     />
                                 </div>
                             </div>
+                        </Card>
+                    )}
 
-                            {/* Forme Dimensions */}
-                            <div className="pb-5 border-b-2 border-gray-100">
-                                <h4 className="text-sm font-bold text-gray-900 mb-4 flex items-center gap-2">
-                                    <WrenchScrewdriverIcon className="h-5 w-5 text-indigo-500" />
-                                    Forme Dimensions
-                                </h4>
-                                <div className="grid grid-cols-2 gap-4">
-                                    <Input
-                                        type="number"
-                                        label="Forme Width (mm)"
-                                        value={formData.productionSpecs.forme.width}
-                                        onChange={(e) => updateSpec('forme', 'width', Number(e.target.value))}
-                                    />
-                                    <Input
-                                        type="number"
-                                        label="Forme Length (mm)"
-                                        value={formData.productionSpecs.forme.length}
-                                        onChange={(e) => updateSpec('forme', 'length', Number(e.target.value))}
-                                    />
-                                </div>
+                    {/* Specifications Summary - 2 Column Layout */}
+                    {showDimensions && (
+                        <Card className="overflow-hidden">
+                            <div className="px-2 py-1.5 bg-gradient-to-r from-cyan-50 to-blue-50 border-b border-cyan-100">
+                                <h3 className="text-base font-semibold text-gray-900">Specifications Summary</h3>
                             </div>
-
-                            {/* Parameters */}
-                            <div>
-                                <h4 className="text-sm font-bold text-gray-900 mb-4">Production Parameters</h4>
-                                <div className="grid grid-cols-2 gap-4">
-                                    <Input
-                                        type="number"
-                                        label="Number Up *"
-                                        value={formData.productionSpecs.numberUp}
-                                        onChange={(e) => updateParam('numberUp', Number(e.target.value))}
-                                    />
-                                    <Input
-                                        type="number"
-                                        label="Colors *"
-                                        value={formData.productionSpecs.printedColors}
-                                        onChange={(e) => updateParam('printedColors', Number(e.target.value))}
-                                    />
-                                </div>
-                                <div className="grid grid-cols-2 gap-4 mt-4">
-                                    <Input
-                                        label="Varnish"
-                                        value={formData.productionSpecs.varnish}
-                                        onChange={(e) => updateParam('varnish', e.target.value)}
-                                    />
-                                    <Input
-                                        label="Board Type"
-                                        value={formData.productionSpecs.board}
-                                        onChange={(e) => updateParam('board', e.target.value)}
-                                    />
-                                </div>
-                                <div className="grid grid-cols-2 gap-4 mt-4">
-                                    <Input
-                                        type="number"
-                                        label="Overs Percentage"
-                                        value={formData.productionSpecs.oversPct}
-                                        onChange={(e) => updateParam('oversPct', Number(e.target.value))}
-                                    />
-                                    <Input
-                                        type="number"
-                                        label="Microns"
-                                        value={formData.productionSpecs.microns}
-                                        onChange={(e) => updateParam('microns', Number(e.target.value))}
-                                    />
-                                </div>
-                                <div className="grid grid-cols-2 gap-4 mt-4">
-                                    <Input
-                                        label="GSM"
-                                        value={formData.productionSpecs.gsm}
-                                        onChange={(e) => updateParam('gsm', e.target.value)}
-                                    />
-                                    <Input
-                                        label="Tags"
-                                        placeholder="tag1, tag2"
-                                        value={formData.productionSpecs.tags?.join(', ')}
-                                        onChange={(e) => updateParam('tags', e.target.value.split(',').map(s => s.trim()).filter(Boolean))}
-                                    />
-                                </div>
-                            </div>
-                        </div>
-                    </Card>
-                </div>
-
-                <div className="space-y-6">
-                    <Card className="overflow-hidden">
-                        <div className="p-5 bg-gradient-to-r from-cyan-50 to-blue-50 border-b border-cyan-100">
-                            <h3 className="text-lg font-bold text-gray-900">Specifications Summary</h3>
-                        </div>
-                        <div className="p-6">
-                            <div className="space-y-3">
-                                <div className="flex justify-between items-center p-4 bg-gray-50 rounded-xl">
-                                    <span className="text-gray-600 font-medium">Quantity (PCS)</span>
-                                    <span className="text-xl font-bold text-gray-900">{quantityInPcs.toLocaleString()}</span>
-                                </div>
-                                <div className="flex justify-between items-center p-4 bg-gray-50 rounded-xl">
-                                    <span className="text-gray-600 font-medium">Theoretical Number Up</span>
-                                    <span className="text-xl font-bold text-gray-900">{theoreticalNumberUp ?? 'N/A'}</span>
-                                </div>
-                                <div className="flex justify-between items-center p-4 bg-gray-50 rounded-xl">
-                                    <span className="text-gray-600 font-medium">Sheets Needed</span>
-                                    <span className="text-xl font-bold text-gray-900">{sheetsNeeded ?? 'N/A'}</span>
-                                </div>
-                                <div className="flex justify-between items-center p-4 bg-gray-50 rounded-xl">
-                                    <span className="text-gray-600 font-medium">Sheets with Overs</span>
-                                    <span className="text-xl font-bold text-gray-900">{sheetsNeededWithOvers ?? 'N/A'}</span>
-                                </div>
-                                <div className="p-4 bg-gray-50 rounded-xl">
-                                    <div className="flex justify-between items-center">
-                                        <label className="text-gray-600 font-medium">Sheet Wastage</label>
+                            <div className="p-2">
+                                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+                                    <div className="flex justify-between py-1 px-2 border-b border-gray-100">
+                                        <span className="font-medium text-gray-600">Quantity (PCS)</span>
+                                        <span className="font-bold text-gray-900">{quantityInPcs.toLocaleString()}</span>
+                                    </div>
+                                    <div className="flex justify-between py-1 px-2 border-b border-gray-100">
+                                        <span className="font-medium text-gray-600">Theoretical Number Up</span>
+                                        <span className="font-bold text-gray-900">{theoreticalNumberUp ?? 'N/A'}</span>
+                                    </div>
+                                    <div className="flex justify-between py-1 px-2 border-b border-gray-100">
+                                        <span className="font-medium text-gray-600">Sheets Needed</span>
+                                        <span className="font-bold text-gray-900">{sheetsNeeded ?? 'N/A'}</span>
+                                    </div>
+                                    <div className="flex justify-between py-1 px-2 border-b border-gray-100">
+                                        <span className="font-medium text-gray-600">Sheets with Overs</span>
+                                        <span className="font-bold text-gray-900">{sheetsNeededWithOvers ?? 'N/A'}</span>
+                                    </div>
+                                    <div className="flex justify-between py-1 px-2 border-b border-gray-100">
+                                        <span className="font-medium text-gray-600">Sheet Wastage</span>
                                         <input
                                             type="number"
                                             min="0"
                                             value={formData.productionSpecs.sheetWastage || ''}
                                             onChange={(e) => updateParam('sheetWastage', Number(e.target.value))}
-                                            className="w-28 rounded-xl border-2 border-gray-200 py-2 px-4 text-right font-bold focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100 transition-all"
+                                            className="w-16 rounded border border-gray-200 py-1 px-1.5 text-right text-sm font-semibold focus:border-cyan-500 focus:ring-1 focus:ring-cyan-100"
                                             placeholder="0"
                                         />
                                     </div>
+                                    <div className="flex justify-between py-1 px-2 bg-gradient-to-r from-cyan-50 to-blue-50 rounded">
+                                        <span className="font-semibold text-gray-900">Sheets with Wastage</span>
+                                        <span className="font-bold text-cyan-700">{sheetsNeededWithWastage ?? 'N/A'}</span>
+                                    </div>
                                 </div>
-                                <div className="flex justify-between items-center p-4 bg-gradient-to-r from-cyan-100 to-blue-100 rounded-xl border-2 border-cyan-200">
-                                    <span className="text-gray-900 font-bold">Sheets with Wastage</span>
-                                    <span className="text-2xl font-bold text-cyan-700">{sheetsNeededWithWastage ?? 'N/A'}</span>
-                                </div>
-                            </div>
 
-                            {theoreticalNumberUp !== undefined && formData.productionSpecs.numberUp && theoreticalNumberUp !== formData.productionSpecs.numberUp && (
-                                <div className="mt-4 rounded-xl border-2 border-amber-300 bg-amber-50 text-amber-800 p-4 font-medium">
-                                    ⚠️ Layout mismatch: theoretical {theoreticalNumberUp} ≠ entered {formData.productionSpecs.numberUp}
-                                </div>
-                            )}
-                        </div>
-                    </Card>
-
-                    <Card className="overflow-hidden">
-                        <div className="p-5 bg-gradient-to-r from-slate-50 to-gray-50 border-b border-slate-100">
-                            <h3 className="text-lg font-bold text-gray-900">Additional Specifications</h3>
-                        </div>
-                        <div className="p-6 space-y-5">
-                            <div className="pb-5 border-b-2 border-gray-100">
-                                <h4 className="text-sm font-bold text-gray-900 mb-4 flex items-center gap-2">
-                                    <WrenchScrewdriverIcon className="h-5 w-5 text-slate-500" />
-                                    CutTo Dimensions
-                                </h4>
-                                <div className="grid grid-cols-2 gap-4">
-                                    <Input
-                                        type="number"
-                                        label="CutTo Width (mm)"
-                                        value={formData.productionSpecs.cutTo.width}
-                                        onChange={(e) => updateSpec('cutTo', 'width', Number(e.target.value))}
-                                    />
-                                    <Input
-                                        type="number"
-                                        label="CutTo Length (mm)"
-                                        value={formData.productionSpecs.cutTo.length}
-                                        onChange={(e) => updateSpec('cutTo', 'length', Number(e.target.value))}
-                                    />
-                                </div>
+                                {theoreticalNumberUp !== undefined && formData.productionSpecs.numberUp && theoreticalNumberUp !== formData.productionSpecs.numberUp && (
+                                    <div className="mt-2 rounded border border-amber-300 bg-amber-50 text-amber-800 p-1.5 text-sm font-medium">
+                                        ⚠️ Layout mismatch: theoretical {theoreticalNumberUp} ≠ entered {formData.productionSpecs.numberUp}
+                                    </div>
+                                )}
                             </div>
-                            <Input
-                                label="Style"
-                                value={formData.productionSpecs.style}
-                                onChange={(e) => updateParam('style', e.target.value)}
-                            />
-                        </div>
-                    </Card>
+                        </Card>
+                    )}
+
+
                 </div>
             </div>
         </div>

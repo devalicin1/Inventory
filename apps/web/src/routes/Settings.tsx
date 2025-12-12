@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSessionStore } from '../state/sessionStore'
 import { 
@@ -11,9 +11,31 @@ import {
   getReportSettings, updateReportSettings
 } from '../api/settings'
 import { listGroups } from '../api/products'
+import {
+  listVendors,
+  createVendor,
+  updateVendor,
+  deleteVendor,
+  type Vendor,
+  type VendorInput,
+} from '../api/vendors'
+import {
+  listAddresses,
+  createAddress,
+  updateAddress,
+  deleteAddress,
+  type Address,
+  type AddressInput,
+} from '../api/addresses'
+import {
+  getCompanyInformation,
+  updateCompanyInformation,
+  type CompanyInformation,
+  type CompanyInformationInput,
+} from '../api/company'
 
 export function Settings() {
-  const [activeTab, setActiveTab] = useState<'uom' | 'categories' | 'subcategories' | 'custom-fields' | 'stock-reasons' | 'report-settings'>('uom')
+  const [activeTab, setActiveTab] = useState<'uom' | 'categories' | 'subcategories' | 'custom-fields' | 'stock-reasons' | 'report-settings' | 'vendors' | 'addresses' | 'company-information'>('uom')
   const [showCreate, setShowCreate] = useState(false)
   const [editingItem, setEditingItem] = useState<any>(null)
   const [formData, setFormData] = useState<any>({})
@@ -69,6 +91,27 @@ export function Settings() {
     enabled: !!workspaceId && activeTab === 'stock-reasons'
   })
 
+  // Vendors queries
+  const { data: vendors = [], isLoading: vendorsLoading } = useQuery({
+    queryKey: ['vendors', workspaceId],
+    queryFn: () => listVendors(workspaceId!),
+    enabled: !!workspaceId && activeTab === 'vendors'
+  })
+
+  // Addresses queries
+  const { data: addresses = [], isLoading: addressesLoading } = useQuery({
+    queryKey: ['addresses', workspaceId],
+    queryFn: () => listAddresses(workspaceId!),
+    enabled: !!workspaceId && (activeTab === 'addresses' || activeTab === 'vendors')
+  })
+
+  // Company information queries
+  const { data: companyInfo, isLoading: companyInfoLoading } = useQuery({
+    queryKey: ['companyInformation', workspaceId],
+    queryFn: () => getCompanyInformation(workspaceId!),
+    enabled: !!workspaceId && activeTab === 'company-information'
+  })
+
   const handleCreate = async () => {
     if (!workspaceId) return
     
@@ -105,6 +148,33 @@ export function Settings() {
             description: formData.description?.trim() || undefined,
             active: formData.active === undefined ? true : Boolean(formData.active),
           })
+          break
+        case 'vendors':
+          await createVendor(workspaceId, {
+            name: String(formData.name || '').trim(),
+            address1: formData.address1?.trim() || undefined,
+            address2: formData.address2?.trim() || undefined,
+            city: formData.city?.trim() || undefined,
+            state: formData.state?.trim() || undefined,
+            zipCode: formData.zipCode?.trim() || undefined,
+            country: formData.country?.trim() || undefined,
+            email: formData.email?.trim() || undefined,
+            phoneNumber: formData.phoneNumber?.trim() || undefined,
+            notes: formData.notes?.trim() || undefined,
+          } as any)
+          break
+        case 'addresses':
+          await createAddress(workspaceId, {
+            name: String(formData.name || '').trim(),
+            address1: String(formData.address1 || '').trim(),
+            address2: formData.address2?.trim() || undefined,
+            city: String(formData.city || '').trim(),
+            state: formData.state?.trim() || undefined,
+            zipCode: String(formData.zipCode || '').trim(),
+            country: String(formData.country || '').trim(),
+            type: formData.type || 'both',
+            notes: formData.notes?.trim() || undefined,
+          } as any)
           break
       }
       
@@ -154,6 +224,50 @@ export function Settings() {
             active: formData.active === undefined ? true : Boolean(formData.active),
           })
           break
+        case 'vendors':
+          await updateVendor(workspaceId, editingItem.id, {
+            name: String(formData.name || '').trim(),
+            address1: formData.address1?.trim() || undefined,
+            address2: formData.address2?.trim() || undefined,
+            city: formData.city?.trim() || undefined,
+            state: formData.state?.trim() || undefined,
+            zipCode: formData.zipCode?.trim() || undefined,
+            country: formData.country?.trim() || undefined,
+            email: formData.email?.trim() || undefined,
+            phoneNumber: formData.phoneNumber?.trim() || undefined,
+            notes: formData.notes?.trim() || undefined,
+          } as any)
+          break
+        case 'addresses':
+          await updateAddress(workspaceId, editingItem.id, {
+            name: String(formData.name || '').trim(),
+            address1: String(formData.address1 || '').trim(),
+            address2: formData.address2?.trim() || undefined,
+            city: String(formData.city || '').trim(),
+            state: formData.state?.trim() || undefined,
+            zipCode: String(formData.zipCode || '').trim(),
+            country: String(formData.country || '').trim(),
+            type: formData.type || 'both',
+            notes: formData.notes?.trim() || undefined,
+          } as any)
+          break
+        case 'company-information':
+          await updateCompanyInformation(workspaceId, {
+            name: String(formData.name || '').trim(),
+            address1: formData.address1?.trim() || undefined,
+            address2: formData.address2?.trim() || undefined,
+            city: formData.city?.trim() || undefined,
+            state: formData.state?.trim() || undefined,
+            zipCode: formData.zipCode?.trim() || undefined,
+            country: formData.country?.trim() || undefined,
+            email: formData.email?.trim() || undefined,
+            phoneNumber: formData.phoneNumber?.trim() || undefined,
+            taxId: formData.taxId?.trim() || undefined,
+            registrationNumber: formData.registrationNumber?.trim() || undefined,
+            website: formData.website?.trim() || undefined,
+            notes: formData.notes?.trim() || undefined,
+          } as any)
+          break
       }
       
       queryClient.invalidateQueries({ queryKey: [activeTab === 'custom-fields' ? 'customFields' : activeTab + 's', workspaceId] })
@@ -185,6 +299,12 @@ export function Settings() {
         case 'stock-reasons':
           await deleteStockReason(workspaceId, id)
           break
+        case 'vendors':
+          await deleteVendor(workspaceId, id)
+          break
+        case 'addresses':
+          await deleteAddress(workspaceId, id)
+          break
       }
       
       queryClient.invalidateQueries({ queryKey: [activeTab === 'custom-fields' ? 'customFields' : activeTab + 's', workspaceId] })
@@ -201,6 +321,8 @@ export function Settings() {
       case 'subcategories': return subcategories
       case 'custom-fields': return customFields
       case 'stock-reasons': return stockReasons
+      case 'vendors': return vendors
+      case 'addresses': return addresses
       default: return []
     }
   }
@@ -212,6 +334,9 @@ export function Settings() {
       case 'subcategories': return subcategoriesLoading
       case 'custom-fields': return customFieldsLoading
       case 'stock-reasons': return stockReasonsLoading
+      case 'vendors': return vendorsLoading
+      case 'addresses': return addressesLoading
+      case 'company-information': return companyInfoLoading
       default: return false
     }
   }
@@ -265,6 +390,35 @@ export function Settings() {
           { name: 'description', label: 'Description', type: 'textarea', placeholder: 'Optional description for this reason' },
           { name: 'active', label: 'Active', type: 'checkbox' }
         ]
+      case 'vendors':
+        return [
+          { name: 'name', label: 'Vendor Name', type: 'text', required: true },
+          { name: 'address1', label: 'Address 1', type: 'text' },
+          { name: 'address2', label: 'Address 2', type: 'text' },
+          { name: 'city', label: 'City', type: 'text' },
+          { name: 'state', label: 'State / Province / Region', type: 'text' },
+          { name: 'zipCode', label: 'Zip / Postal Code', type: 'text' },
+          { name: 'country', label: 'Country', type: 'text' },
+          { name: 'email', label: 'Email', type: 'email' },
+          { name: 'phoneNumber', label: 'Phone Number', type: 'tel' },
+          { name: 'notes', label: 'Notes', type: 'textarea' }
+        ]
+      case 'addresses':
+        return [
+          { name: 'name', label: 'Address Name', type: 'text', required: true },
+          { name: 'address1', label: 'Address 1', type: 'text', required: true },
+          { name: 'address2', label: 'Address 2', type: 'text' },
+          { name: 'city', label: 'City', type: 'text', required: true },
+          { name: 'state', label: 'State / Province / Region', type: 'text' },
+          { name: 'zipCode', label: 'Zip / Postal Code', type: 'text', required: true },
+          { name: 'country', label: 'Country', type: 'text', required: true },
+          { name: 'type', label: 'Address Type', type: 'select', required: true, options: [
+            { id: 'ship', name: 'Ship To' },
+            { id: 'bill', name: 'Bill To' },
+            { id: 'both', name: 'Both' }
+          ]},
+          { name: 'notes', label: 'Notes', type: 'textarea' }
+        ]
       default:
         return []
     }
@@ -297,7 +451,10 @@ export function Settings() {
             { id: 'subcategories', name: 'Subcategories', icon: '📂' },
             { id: 'custom-fields', name: 'Custom Fields', icon: '⚙️' },
             { id: 'stock-reasons', name: 'Stock Reasons', icon: '📋' },
-            { id: 'report-settings', name: 'Report Settings', icon: '📊' }
+            { id: 'report-settings', name: 'Report Settings', icon: '📊' },
+            { id: 'vendors', name: 'Vendors', icon: '🏢' },
+            { id: 'addresses', name: 'Addresses', icon: '📍' },
+            { id: 'company-information', name: 'Company Information', icon: '🏛️' }
           ].map((tab) => (
             <button
               key={tab.id}
@@ -326,8 +483,11 @@ export function Settings() {
               {activeTab === 'custom-fields' && 'Custom Fields'}
               {activeTab === 'stock-reasons' && 'Stock Operation Reasons'}
               {activeTab === 'report-settings' && 'Report Customization'}
+              {activeTab === 'vendors' && 'Vendors'}
+              {activeTab === 'addresses' && 'Addresses'}
+              {activeTab === 'company-information' && 'Company Information'}
             </h2>
-            {activeTab !== 'report-settings' && (
+            {activeTab !== 'report-settings' && activeTab !== 'company-information' && (
               <div className="flex space-x-2">
                 {activeTab === 'stock-reasons' && stockReasons.length === 0 && (
                   <button
@@ -363,7 +523,23 @@ export function Settings() {
         </div>
 
         <div className="p-6">
-          {activeTab === 'report-settings' ? (
+          {activeTab === 'company-information' ? (
+            <CompanyInformationTab
+              companyInfo={companyInfo}
+              isLoading={companyInfoLoading}
+              onSave={async (data) => {
+                if (!workspaceId) return
+                try {
+                  await updateCompanyInformation(workspaceId, data)
+                  queryClient.invalidateQueries({ queryKey: ['companyInformation', workspaceId] })
+                  alert('Company information saved successfully!')
+                } catch (error) {
+                  console.error('Save error:', error)
+                  alert('Error saving company information: ' + (error instanceof Error ? error.message : 'Unknown error'))
+                }
+              }}
+            />
+          ) : activeTab === 'report-settings' ? (
             <ReportSettingsTab 
               groups={groups}
               reportSettings={reportSettings}
@@ -416,8 +592,35 @@ export function Settings() {
                         Group: {groups.find(g => g.id === item.groupId)?.name || 'Unknown'}
                       </p>
                     )}
-                    {!item.groupId && activeTab !== 'stock-reasons' && (
+                    {!item.groupId && activeTab !== 'stock-reasons' && activeTab !== 'vendors' && activeTab !== 'addresses' && (
                       <p className="text-sm text-gray-500 mt-1">Group: All Groups</p>
+                    )}
+                    {activeTab === 'vendors' && (
+                      <>
+                        {item.address1 && (
+                          <p className="text-sm text-gray-500 mt-1">Address: {item.address1}</p>
+                        )}
+                        {item.city && (
+                          <p className="text-sm text-gray-500 mt-1">City: {item.city}</p>
+                        )}
+                        {item.email && (
+                          <p className="text-sm text-gray-500 mt-1">Email: {item.email}</p>
+                        )}
+                        {item.phoneNumber && (
+                          <p className="text-sm text-gray-500 mt-1">Phone: {item.phoneNumber}</p>
+                        )}
+                      </>
+                    )}
+                    {activeTab === 'addresses' && (
+                      <>
+                        <p className="text-sm text-gray-500 mt-1">Address: {item.address1}</p>
+                        {item.city && item.country && (
+                          <p className="text-sm text-gray-500 mt-1">{item.city}, {item.country}</p>
+                        )}
+                        <p className="text-sm text-gray-500 mt-1">
+                          Type: {item.type === 'ship' ? 'Ship To' : item.type === 'bill' ? 'Bill To' : 'Both'}
+                        </p>
+                      </>
                     )}
                   </div>
                   <div className="flex space-x-2">
@@ -463,6 +666,8 @@ export function Settings() {
                       activeTab === 'uom' ? 'Unit of Measure' : 
                       activeTab === 'custom-fields' ? 'Custom Field' : 
                       activeTab === 'stock-reasons' ? 'Stock Reason' :
+                      activeTab === 'vendors' ? 'Vendor' :
+                      activeTab === 'addresses' ? 'Address' :
                       activeTab.slice(0, -1)
                     }
                   </h3>
@@ -688,6 +893,219 @@ function ReportSettingsTab({
           Save Settings
         </button>
       </div>
+    </div>
+  )
+}
+
+// Company Information Tab Component
+function CompanyInformationTab({
+  companyInfo,
+  isLoading,
+  onSave
+}: {
+  companyInfo: CompanyInformation | null | undefined
+  isLoading: boolean
+  onSave: (data: CompanyInformationInput) => void
+}) {
+  const [formData, setFormData] = useState<CompanyInformationInput>({
+    name: '',
+    address1: '',
+    address2: '',
+    city: '',
+    state: '',
+    zipCode: '',
+    country: '',
+    email: '',
+    phoneNumber: '',
+    taxId: '',
+    registrationNumber: '',
+    website: '',
+    notes: '',
+  })
+
+  useEffect(() => {
+    if (companyInfo) {
+      setFormData({
+        name: companyInfo.name || '',
+        address1: companyInfo.address1 || '',
+        address2: companyInfo.address2 || '',
+        city: companyInfo.city || '',
+        state: companyInfo.state || '',
+        zipCode: companyInfo.zipCode || '',
+        country: companyInfo.country || '',
+        email: companyInfo.email || '',
+        phoneNumber: companyInfo.phoneNumber || '',
+        taxId: companyInfo.taxId || '',
+        registrationNumber: companyInfo.registrationNumber || '',
+        website: companyInfo.website || '',
+        notes: companyInfo.notes || '',
+      })
+    }
+  }, [companyInfo])
+
+  if (isLoading) {
+    return (
+      <div className="animate-pulse space-y-4">
+        {[...Array(5)].map((_, i) => (
+          <div key={i} className="h-16 bg-gray-200 rounded"></div>
+        ))}
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-6">
+      <form onSubmit={(e) => {
+        e.preventDefault()
+        onSave(formData)
+      }}>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="md:col-span-2">
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Company Name <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Address 1</label>
+            <input
+              type="text"
+              value={formData.address1}
+              onChange={(e) => setFormData({ ...formData, address1: e.target.value })}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Address 2</label>
+            <input
+              type="text"
+              value={formData.address2}
+              onChange={(e) => setFormData({ ...formData, address2: e.target.value })}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">City</label>
+            <input
+              type="text"
+              value={formData.city}
+              onChange={(e) => setFormData({ ...formData, city: e.target.value })}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">State / Province / Region</label>
+            <input
+              type="text"
+              value={formData.state}
+              onChange={(e) => setFormData({ ...formData, state: e.target.value })}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Zip / Postal Code</label>
+            <input
+              type="text"
+              value={formData.zipCode}
+              onChange={(e) => setFormData({ ...formData, zipCode: e.target.value })}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Country</label>
+            <input
+              type="text"
+              value={formData.country}
+              onChange={(e) => setFormData({ ...formData, country: e.target.value })}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+            <input
+              type="email"
+              value={formData.email}
+              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Phone Number</label>
+            <input
+              type="tel"
+              value={formData.phoneNumber}
+              onChange={(e) => setFormData({ ...formData, phoneNumber: e.target.value })}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Tax ID</label>
+            <input
+              type="text"
+              value={formData.taxId}
+              onChange={(e) => setFormData({ ...formData, taxId: e.target.value })}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Registration Number</label>
+            <input
+              type="text"
+              value={formData.registrationNumber}
+              onChange={(e) => setFormData({ ...formData, registrationNumber: e.target.value })}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Website</label>
+            <input
+              type="url"
+              value={formData.website}
+              onChange={(e) => setFormData({ ...formData, website: e.target.value })}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+          </div>
+
+          <div className="md:col-span-2">
+            <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+            <textarea
+              value={formData.notes}
+              onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+              rows={4}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+          </div>
+        </div>
+
+        <div className="flex justify-end pt-6 border-t border-gray-200 mt-6">
+          <button
+            type="submit"
+            className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium flex items-center"
+          >
+            <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+            Save Company Information
+          </button>
+        </div>
+      </form>
     </div>
   )
 }

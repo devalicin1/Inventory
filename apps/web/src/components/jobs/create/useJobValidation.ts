@@ -7,6 +7,9 @@ export const useJobValidation = () => {
         if (step === 1) {
             if (!data.customer?.name) errs.push('Customer name is required');
             if (!data.customer?.date) errs.push('Date is required');
+        }
+
+        if (step === 2) {
             if (!data.productName) errs.push('Product name is required');
             if (!(data.quantity > 0)) errs.push('Quantity must be > 0');
             if (data.unit === 'pcs' || data.unit === 'units' || data.unit === 'box' || data.unit === 'pallets') {
@@ -17,14 +20,18 @@ export const useJobValidation = () => {
             }
         }
 
-        if (step === 2) {
+        if (step === 3) {
             const s = data.productionSpecs || {};
             if (!(s?.size?.width && s?.size?.width > 0 && s?.size?.length && s?.size?.length > 0)) errs.push('Size (W,L) is required');
+        }
+
+        if (step === 4) {
+            const s = data.productionSpecs || {};
             if (!(s?.numberUp && s?.numberUp > 0)) errs.push('Number Up must be > 0');
             if (s?.printedColors === undefined || s?.printedColors < 0) errs.push('Printed colours is required');
         }
 
-        if (step === 3) {
+        if (step === 5) {
             // Optional validation for outputs
             (data.output || []).forEach((o: any, idx: number) => {
                 if (!(o.qtyPlanned >= 0)) errs.push(`Output row ${idx + 1}: Quantity must be >= 0`);
@@ -33,7 +40,7 @@ export const useJobValidation = () => {
             });
         }
 
-        if (step === 4) {
+        if (step === 6) {
             if (!data.workflowId) errs.push('Workflow is required');
             if (!Array.isArray(data.plannedStageIds) || data.plannedStageIds.length === 0) errs.push('At least one stage is required');
             if (!data.currentStageId || !(data.plannedStageIds || []).includes(data.currentStageId)) errs.push('Starting stage must be among selected stages');
@@ -46,7 +53,7 @@ export const useJobValidation = () => {
             if (e !== undefined && d !== undefined && e > d) errs.push('Planned end must be on/before due date');
         }
 
-        if (step === 5) {
+        if (step === 7) {
             if (!data.outerType) errs.push('Outer type is required');
         }
 

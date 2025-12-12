@@ -7,7 +7,8 @@ import {
     ClipboardDocumentListIcon,
     UserIcon,
     QrCodeIcon,
-    ChartBarIcon
+    ChartBarIcon,
+    ShoppingCartIcon
 } from '@heroicons/react/24/outline';
 
 export const Sidebar: React.FC = () => {
@@ -15,6 +16,7 @@ export const Sidebar: React.FC = () => {
         { name: 'Dashboard', to: '/', icon: HomeIcon },
         { name: 'Inventory', to: '/inventory', icon: CubeIcon },
         { name: 'Production', to: '/production', icon: CogIcon },
+        { name: 'Purchase Orders', to: '/purchase-orders', icon: ShoppingCartIcon },
         { name: 'Scan', to: '/scan', icon: QrCodeIcon },
         { name: 'Work Management', to: '/work', icon: ClipboardDocumentListIcon },
         { name: 'My Work', to: '/my', icon: UserIcon },

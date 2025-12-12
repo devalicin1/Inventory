@@ -357,6 +357,10 @@ export interface WorkflowTransition {
   fromStageId: string
   toStageId: string
   guard?: string
+  requireOutputToAdvance?: boolean
+  minQtyToStartNextStage?: number
+  unit?: string
+  allowPartial?: boolean
 }
 
 export interface Workflow {
@@ -522,7 +526,9 @@ export async function createJob(workspaceId: string, input: JobInput): Promise<J
 
   try {
     const qrData = await generateQRCodeDataURL(input.code || docRef.id)
-    const barcodeData = await generateBarcodeDataURL(input.code || docRef.id)
+    // Use legacy function signature for backward compatibility with jobs
+    const barcodeResult = await generateBarcodeDataURL(input.code || docRef.id, {})
+    const barcodeData = barcodeResult.dataUrl
 
     const qrRef = ref(storage, `workspaces/${workspaceId}/jobs/${docRef.id}/qr.png`)
     const barRef = ref(storage, `workspaces/${workspaceId}/jobs/${docRef.id}/barcode.png`)
@@ -1349,6 +1355,48 @@ export async function recordJobOutput(
   if (!jobSnap.exists()) throw new Error('Job not found')
   const job = jobSnap.data() as any
 
+  // CRITICAL: Validate that we're only posting from the last stage
+  // This prevents posting outputs from intermediate stages (e.g., ETERNA) before they're processed in final stage (e.g., MAX FOLDER GLUER)
+  if (qtyOutput > 0 && stageId) {
+    try {
+      const workflows = await listWorkflows(workspaceId)
+      const workflow = workflows.find(w => w.id === job.workflowId)
+      
+      if (workflow && Array.isArray(workflow.stages) && workflow.stages.length > 0) {
+        // Use plannedStageIds if available, otherwise use all workflow stages
+        const plannedIds: string[] = Array.isArray(job.plannedStageIds) ? job.plannedStageIds : []
+        let lastStageId: string
+        if (plannedIds.length > 0) {
+          // Use the last stage from planned stages
+          lastStageId = plannedIds[plannedIds.length - 1]
+        } else {
+          // Fallback to last stage in workflow
+          lastStageId = workflow.stages[workflow.stages.length - 1].id
+        }
+        
+        if (stageId !== lastStageId) {
+          const lastStage = workflow.stages.find((s: any) => s.id === lastStageId)
+          const lastStageName = lastStage?.name || lastStageId
+          const currentStage = workflow.stages.find((s: any) => s.id === stageId)
+          const currentStageName = currentStage?.name || stageId
+          
+          throw new Error(
+            `Cannot post to inventory from stage "${currentStageName}". ` +
+            `Only the final stage "${lastStageName}" can post to inventory. ` +
+            `Please transfer outputs to the final stage first.`
+          )
+        }
+      }
+    } catch (error: any) {
+      // If it's our validation error, throw it
+      if (error.message && error.message.includes('Cannot post to inventory')) {
+        throw error
+      }
+      // Otherwise, log and continue (workflow might not be found, but we don't want to block posting)
+      console.warn('Could not validate stage for inventory posting:', error)
+    }
+  }
+
   // 2. Create Stock Transaction for Output (Finished Goods)
   // Only do this if we are recording a positive output quantity
   if (qtyOutput > 0) {
@@ -1357,6 +1405,13 @@ export async function recordJobOutput(
     if (!product) {
       throw new Error(`Product not found for SKU: ${job.sku}. Cannot record output.`)
     }
+
+    // Build refs object without undefined values to satisfy Firestore
+    const refs: any = { jobId, jobCode: job.code }
+    if (stageId) refs.stageId = stageId
+    if (workcenterId) refs.workcenterId = workcenterId
+    if (lot) refs.lot = lot
+    if (notes) refs.notes = notes
 
     await createStockTransaction({
       workspaceId,
@@ -1367,7 +1422,7 @@ export async function recordJobOutput(
       reason: `Production output (${job.code})`,
       reference: job.code,
       // @ts-ignore
-      refs: { jobId, jobCode: job.code, stageId, workcenterId, lot, notes },
+      refs,
     })
   }
 
@@ -1385,15 +1440,60 @@ export async function recordJobOutput(
           const proportion = qtyOutput / plannedQty
           const bom = Array.isArray(job.bom) ? job.bom : []
 
+          console.log('[recordJobOutput] Backflushing:', {
+            qtyOutput,
+            plannedQty,
+            proportion,
+            bomItems: bom.length,
+            validStageId
+          })
+
+          let backflushCount = 0
           // Process each BOM item
           for (const item of bom) {
             const required = Number(item.qtyRequired || 0)
             if (required > 0) {
               const qtyToConsume = required * proportion
+              let itemId = (item as any).itemId || (item as any).id
+
+              // If itemId is missing, try to find it by SKU
+              if (!itemId && item.sku) {
+                try {
+                  const product = await getProductByCode(workspaceId, item.sku)
+                  if (product) {
+                    itemId = product.id
+                    console.log('[recordJobOutput] Found itemId from SKU:', {
+                      sku: item.sku,
+                      itemId: product.id
+                    })
+                  } else {
+                    console.warn('[recordJobOutput] Product not found for SKU:', item.sku)
+                  }
+                } catch (e) {
+                  console.error('[recordJobOutput] Error looking up product by SKU:', e)
+                }
+              }
+
+              if (!itemId) {
+                console.warn('[recordJobOutput] Skipping BOM item without itemId:', {
+                  sku: item.sku,
+                  name: item.name,
+                  qtyRequired: required
+                })
+                continue
+              }
+
+              console.log('[recordJobOutput] Creating consumption:', {
+                itemId,
+                sku: item.sku,
+                name: item.name,
+                qtyToConsume,
+                uom: item.uom
+              })
 
               // Create consumption record (which triggers stock deduction)
               await createConsumption(workspaceId, jobId, {
-                itemId: (item as any).itemId || (item as any).id, // Handle different BOM structures
+                itemId,
                 sku: item.sku,
                 name: item.name,
                 qtyUsed: qtyToConsume,
@@ -1404,15 +1504,25 @@ export async function recordJobOutput(
                 lot: '', // Backflushed items usually don't have specific lot tracking unless strict
                 notes: 'Auto-consumed (Backflush)',
               })
+              backflushCount++
             }
           }
+
+          console.log(`[recordJobOutput] Backflushing completed: ${backflushCount} consumption(s) created`)
+        } else {
+          console.warn('[recordJobOutput] Cannot perform backflushing: plannedQty is 0 or invalid')
         }
       }
     } catch (error) {
-      console.error('Backflushing failed:', error)
-      // We don't throw here to avoid rolling back the output recording, but we should probably alert the user
-      // For now, we log it. In a real app, we might want to return a warning.
+      console.error('[recordJobOutput] Backflushing failed:', error)
+      // We don't throw here to avoid rolling back the output recording
+      // The modal will check for new consumptions and show a warning if none were created
     }
+  } else {
+    console.log('[recordJobOutput] Backflushing skipped:', {
+      autoConsumeMaterials,
+      qtyOutput
+    })
   }
 
   // 4. Update Job Status if requested
@@ -1462,6 +1572,38 @@ export async function createProductionRun(
   }
 
   return ref.id
+}
+
+export async function deleteProductionRun(
+  workspaceId: string,
+  jobId: string,
+  runId: string
+): Promise<void> {
+  try {
+    const runRef = doc(db, 'workspaces', workspaceId, 'jobs', jobId, 'productionRuns', runId)
+    await deleteDoc(runRef)
+
+    // Recalculate rolled-up qtyProduced on job.output[0] after deletion
+    try {
+      const jobRef = doc(db, 'workspaces', workspaceId, 'jobs', jobId)
+      const snap = await getDoc(jobRef)
+      if (snap.exists()) {
+        const job = snap.data() as any
+        const runsSnap = await getDocs(collection(db, 'workspaces', workspaceId, 'jobs', jobId, 'productionRuns'))
+        let totalGood = 0
+        runsSnap.docs.forEach(r => { const d: any = r.data(); totalGood += Number(d.qtyGood || 0) })
+        const output = Array.isArray(job.output) && job.output.length > 0
+          ? job.output.map((o: any, idx: number) => idx === 0 ? { ...o, qtyProduced: totalGood } : o)
+          : [{ sku: job.sku, name: job.productName, qtyPlanned: Number(job.quantity || 0), qtyProduced: totalGood, uom: job.unit }]
+        await updateDoc(jobRef, { output, updatedAt: serverTimestamp() })
+      }
+    } catch (e) {
+      console.warn('deleteProductionRun: roll-up failed', e)
+    }
+  } catch (error) {
+    console.error('Error deleting production run:', error)
+    throw error
+  }
 }
 
 // ===== HELPERS =====
@@ -1730,7 +1872,7 @@ export function subscribeToJobProductionRuns(
 export function subscribeToJobHistory(
   workspaceId: string,
   jobId: string,
-  onData: (history: HistoryEntry[]) => void,
+  onData: (history: HistoryEvent[]) => void,
   onError?: (error: Error) => void
 ): () => void {
   const col = collection(db, 'workspaces', workspaceId, 'jobs', jobId, 'history')
@@ -1742,7 +1884,7 @@ export function subscribeToJobHistory(
       const history = snapshot.docs.map(d => ({
         id: d.id,
         ...d.data()
-      })) as HistoryEntry[]
+      })) as HistoryEvent[]
       onData(history)
     },
     (error) => {

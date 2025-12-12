@@ -153,60 +153,68 @@ export const JobCreatePrintFormModal: FC<Props> = ({ formData, onClose, onApply 
 
         <div className="flex-1 overflow-y-auto">
           <div className="p-6 space-y-6">
-            <Section id="order-info" title="Order Information">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                <MemoizedInputField label="ORDER DATE" value={data.date || ''} onChange={(v) => change('date', v)} placeholder="YYYY-MM-DD" />
-                <MemoizedInputField label="ORDER NO" value={data.orderNo || ''} onChange={(v) => change('orderNo', v)} />
-                <MemoizedInputField label="STYLE" value={data.style || ''} onChange={(v) => change('style', v)} />
-                <MemoizedInputField label="WORKING TO" value={data.workingTo || ''} onChange={(v) => change('workingTo', v)} />
-                <MemoizedInputField label="NUMBER UP" type="number" value={data.numberUp || ''} onChange={(v) => change('numberUp', v)} />
-                <MemoizedInputField label="TITLE" value={data.title || ''} onChange={(v) => change('title', v)} />
-              </div>
-            </Section>
-
-            <Section id="specs" title="Specifications">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                <MemoizedInputField label="SIZE (W)" type="number" value={data.sizeW || ''} onChange={(v) => change('sizeW', v)} />
-                <MemoizedInputField label="SIZE (L)" type="number" value={data.sizeL || ''} onChange={(v) => change('sizeL', v)} />
-                <MemoizedInputField label="SIZE (H)" type="number" value={data.sizeH || ''} onChange={(v) => change('sizeH', v)} />
-                <MemoizedInputField label="FORME SIZE (W)" type="number" value={data.formeW || ''} onChange={(v) => change('formeW', v)} />
-                <MemoizedInputField label="FORME SIZE (L)" type="number" value={data.formeL || ''} onChange={(v) => change('formeL', v)} />
-                <MemoizedInputField label="MATERIAL" value={data.material || ''} onChange={(v) => change('material', v)} />
-                <MemoizedInputField label="BOARD SIZE (W)" type="number" value={data.boardW || ''} onChange={(v) => change('boardW', v)} />
-                <MemoizedInputField label="BOARD SIZE (L)" type="number" value={data.boardL || ''} onChange={(v) => change('boardL', v)} />
-              </div>
-            </Section>
-
-            <Section id="process" title="Process">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                <div className="relative group">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">MACHINE</label>
-                  <select
-                    value={String(data.machine || 'Iberica/Eterna')}
-                    onChange={(e) => change('machine', e.target.value)}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2.5 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
-                  >
-                    <option value="Iberica">Iberica</option>
-                    <option value="Eterna">Eterna</option>
-                    <option value="Iberica/Eterna">Iberica/Eterna</option>
-                  </select>
+            {activeSection === 'order-info' && (
+              <Section id="order-info" title="Order Information">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <MemoizedInputField label="ORDER DATE" value={data.date || ''} onChange={(v) => change('date', v)} placeholder="YYYY-MM-DD" />
+                  <MemoizedInputField label="ORDER NO" value={data.orderNo || ''} onChange={(v) => change('orderNo', v)} />
+                  <MemoizedInputField label="STYLE" value={data.style || ''} onChange={(v) => change('style', v)} />
+                  <MemoizedInputField label="WORKING TO" value={data.workingTo || ''} onChange={(v) => change('workingTo', v)} />
+                  <MemoizedInputField label="NUMBER UP" type="number" value={data.numberUp || ''} onChange={(v) => change('numberUp', v)} />
+                  <MemoizedInputField label="TITLE" value={data.title || ''} onChange={(v) => change('title', v)} />
                 </div>
-                <MemoizedInputField label="SCORING RULE HEIGHT" value={data.scoringRuleHeight || ''} onChange={(v) => change('scoringRuleHeight', v)} />
-                <MemoizedInputField label="NICKS" value={data.nicks || ''} onChange={(v) => change('nicks', v)} />
-                <MemoizedInputField label="SPARE RULE" value={data.spareRule || ''} onChange={(v) => change('spareRule', v)} />
-                <MemoizedInputField label="PATCH UP SHEET" value={data.patchUpSheet || ''} onChange={(v) => change('patchUpSheet', v)} />
-                <MemoizedInputField label="COUNTERS" value={data.counters || ''} onChange={(v) => change('counters', v)} />
-                <MemoizedInputField label="STRIPPING TOOLING" value={data.strippingTooling || ''} onChange={(v) => change('strippingTooling', v)} />
-              </div>
-            </Section>
+              </Section>
+            )}
 
-            <Section id="notes" title="Commercials & Notes">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                <MemoizedInputField label="PRICE QUOTED" value={data.priceQuoted || ''} onChange={(v) => change('priceQuoted', v)} />
-                <MemoizedInputField label="REQUIRED" value={data.required || ''} onChange={(v) => change('required', v)} />
-                <MemoizedInputField label="NOTE" value={data.note || ''} onChange={(v) => change('note', v)} />
-              </div>
-            </Section>
+            {activeSection === 'specs' && (
+              <Section id="specs" title="Specifications">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <MemoizedInputField label="SIZE (W)" type="number" value={data.sizeW || ''} onChange={(v) => change('sizeW', v)} />
+                  <MemoizedInputField label="SIZE (L)" type="number" value={data.sizeL || ''} onChange={(v) => change('sizeL', v)} />
+                  <MemoizedInputField label="SIZE (H)" type="number" value={data.sizeH || ''} onChange={(v) => change('sizeH', v)} />
+                  <MemoizedInputField label="FORME SIZE (W)" type="number" value={data.formeW || ''} onChange={(v) => change('formeW', v)} />
+                  <MemoizedInputField label="FORME SIZE (L)" type="number" value={data.formeL || ''} onChange={(v) => change('formeL', v)} />
+                  <MemoizedInputField label="MATERIAL" value={data.material || ''} onChange={(v) => change('material', v)} />
+                  <MemoizedInputField label="BOARD SIZE (W)" type="number" value={data.boardW || ''} onChange={(v) => change('boardW', v)} />
+                  <MemoizedInputField label="BOARD SIZE (L)" type="number" value={data.boardL || ''} onChange={(v) => change('boardL', v)} />
+                </div>
+              </Section>
+            )}
+
+            {activeSection === 'process' && (
+              <Section id="process" title="Process">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <div className="relative group">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">MACHINE</label>
+                    <select
+                      value={String(data.machine || 'Iberica/Eterna')}
+                      onChange={(e) => change('machine', e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2.5 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                    >
+                      <option value="Iberica">Iberica</option>
+                      <option value="Eterna">Eterna</option>
+                      <option value="Iberica/Eterna">Iberica/Eterna</option>
+                    </select>
+                  </div>
+                  <MemoizedInputField label="SCORING RULE HEIGHT" value={data.scoringRuleHeight || ''} onChange={(v) => change('scoringRuleHeight', v)} />
+                  <MemoizedInputField label="NICKS" value={data.nicks || ''} onChange={(v) => change('nicks', v)} />
+                  <MemoizedInputField label="SPARE RULE" value={data.spareRule || ''} onChange={(v) => change('spareRule', v)} />
+                  <MemoizedInputField label="PATCH UP SHEET" value={data.patchUpSheet || ''} onChange={(v) => change('patchUpSheet', v)} />
+                  <MemoizedInputField label="COUNTERS" value={data.counters || ''} onChange={(v) => change('counters', v)} />
+                  <MemoizedInputField label="STRIPPING TOOLING" value={data.strippingTooling || ''} onChange={(v) => change('strippingTooling', v)} />
+                </div>
+              </Section>
+            )}
+
+            {activeSection === 'notes' && (
+              <Section id="notes" title="Commercials & Notes">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <MemoizedInputField label="PRICE QUOTED" value={data.priceQuoted || ''} onChange={(v) => change('priceQuoted', v)} />
+                  <MemoizedInputField label="REQUIRED" value={data.required || ''} onChange={(v) => change('required', v)} />
+                  <MemoizedInputField label="NOTE" value={data.note || ''} onChange={(v) => change('note', v)} />
+                </div>
+              </Section>
+            )}
           </div>
         </div>
 

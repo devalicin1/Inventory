@@ -1,8 +1,16 @@
 import type { FC } from 'react'
 import { useEffect, useState } from 'react'
 import { XMarkIcon, CheckBadgeIcon, QuestionMarkCircleIcon } from '@heroicons/react/24/outline'
-import { type Job, listJobProductionRuns, type ProductionRun, listWorkflows, recordJobOutput } from '../api/production-jobs'
-import { type ListedProduct } from '../api/inventory'
+import {
+  type Job,
+  listJobProductionRuns,
+  type ProductionRun,
+  listWorkflows,
+  recordJobOutput,
+  listJobConsumptions,
+  type Consumption
+} from '../api/production-jobs'
+import { type ListedProduct, getProductOnHand } from '../api/inventory'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 
 interface Props {
@@ -46,24 +54,151 @@ export const ConfirmInventoryPostingModal: FC<Props> = ({ job, workspaceId, prod
     enabled: !!workspaceId,
   })
 
-  // When runs change, sync posting quantity from the latest stage only
-  // We take the most recent stageId and sum qtyGood of that stage.
-  // This ensures we only post outputs from the last added stage, as requested.
+  // When runs change, sync posting quantity from the LAST STAGE only
+  // CRITICAL: Only allow posting from the final stage in the workflow
+  // Exclude:
+  // 1. Transfer runs (runs with transferSourceRunIds) - these are WIP transfers, not actual production
+  // 2. Outputs that have been transferred to next stage (check by lot number)
+  // 3. Outputs from non-final stages
   useEffect(() => {
-    if (!Array.isArray(runs) || runs.length === 0) return
-    const latestStageId = runs[0].stageId
-    const totalGoodInLatestStage = runs
-      .filter(r => r.stageId === latestStageId)
-      .reduce((sum, r) => sum + Number(r.qtyGood || 0), 0)
+    console.log('[ConfirmInventoryPostingModal] useEffect triggered:', {
+      runsLength: runs?.length || 0,
+      workflowsLength: workflows?.length || 0,
+      jobId: job?.id,
+      jobCurrentStageId: (job as any)?.currentStageId
+    })
+    
+    if (!Array.isArray(runs) || runs.length === 0) {
+      console.log('[ConfirmInventoryPostingModal] No runs available')
+      setRows(prev => prev.map(r => ({ ...r, qty: 0, selected: false })))
+      return
+    }
+    
+    // Find the workflow and determine the last stage
+    const wf = (workflows as any[]).find(w => w.id === (job as any).workflowId)
+    if (!wf || !Array.isArray(wf.stages) || wf.stages.length === 0) {
+      console.log('[ConfirmInventoryPostingModal] No workflow or stages found')
+      setRows(prev => prev.map(r => ({ ...r, qty: 0, selected: false })))
+      return
+    }
+    
+    // Use plannedStageIds if available, otherwise use all workflow stages
+    const plannedIds: string[] = Array.isArray((job as any).plannedStageIds) ? (job as any).plannedStageIds : []
+    const jobCurrentStageId = (job as any).currentStageId
+    
+    let lastStageId: string
+    if (plannedIds.length > 0) {
+      // Use the last stage from planned stages
+      lastStageId = plannedIds[plannedIds.length - 1]
+    } else {
+      // Fallback to last stage in workflow
+      lastStageId = wf.stages[wf.stages.length - 1].id
+    }
+    
+    console.log('[ConfirmInventoryPostingModal] Stage check:', {
+      lastStageId,
+      jobCurrentStageId,
+      plannedIds,
+      match: jobCurrentStageId === lastStageId,
+      wfStages: wf.stages.map((s: any) => ({ id: s.id, name: s.name }))
+    })
+    
+    // Use jobCurrentStageId if it matches lastStageId, otherwise use lastStageId
+    // This handles cases where job might be at last stage but currentStageId might not match exactly
+    const targetStageId = (jobCurrentStageId === lastStageId) ? jobCurrentStageId : lastStageId
+    console.log('[ConfirmInventoryPostingModal] Using targetStageId:', targetStageId)
+    
+    // Check which runs have been transferred to next stage (by lot number)
+    const isRunTransferred = (run: ProductionRun) => {
+      if (!run.lot) return false
+      // Check if this lot exists in any later stage (shouldn't happen if we're at last stage, but check anyway)
+      const runStageIndex = wf.stages.findIndex((s: any) => s.id === run.stageId)
+      if (runStageIndex === -1) return false
+      
+      // Check all stages after this one
+      for (let i = runStageIndex + 1; i < wf.stages.length; i++) {
+        const laterStageId = wf.stages[i].id
+        const laterStageRuns = runs.filter(r => r.stageId === laterStageId)
+        if (laterStageRuns.some(r => r.lot === run.lot)) {
+          return true
+        }
+      }
+      return false
+    }
+    
+    const lastStageRuns = runs.filter(r => {
+      if (r.stageId !== targetStageId) return false
+      // Exclude transfer runs (these are WIP transfers, not actual production)
+      if ((r as any).transferSourceRunIds && Array.isArray((r as any).transferSourceRunIds) && (r as any).transferSourceRunIds.length > 0) {
+        return false
+      }
+      // Exclude runs that have been transferred to next stage (shouldn't happen at last stage, but safety check)
+      if (isRunTransferred(r)) {
+        return false
+      }
+      return true
+    })
+    
+    const totalGoodInLastStage = lastStageRuns.reduce((sum, r) => sum + Number(r.qtyGood || 0), 0)
+    
+    // Debug log for modal quantity calculation
+    console.log('[ConfirmInventoryPostingModal] Quantity calculation:', {
+      lastStageId,
+      targetStageId,
+      jobCurrentStageId: jobCurrentStageId,
+      totalRuns: runs.length,
+      lastStageRunsCount: lastStageRuns.length,
+      lastStageRuns: lastStageRuns.map((r: any) => ({
+        id: r.id,
+        stageId: r.stageId,
+        qtyGood: r.qtyGood,
+        lot: r.lot,
+        hasTransferSource: !!(r.transferSourceRunIds && Array.isArray(r.transferSourceRunIds) && r.transferSourceRunIds.length > 0)
+      })),
+      totalGoodInLastStage
+    })
+    
     // Determine stage UOM from workflow config (prefer outputUOM, fallback inputUOM)
     let stageUom: string = ''
     try {
-      const wf = (workflows as any[]).find(w => w.id === (job as any).workflowId)
-      const stage = wf?.stages?.find((s: any) => s.id === latestStageId)
+      const stage = wf.stages.find((s: any) => s.id === targetStageId)
       stageUom = stage?.outputUOM || stage?.inputUOM || ''
     } catch { }
-    setRows(prev => prev.map(r => ({ ...r, qty: totalGoodInLatestStage, uom: stageUom || r.uom, selected: totalGoodInLatestStage > 0 })))
-  }, [runs, workflows])
+    
+    // If rows array is empty, create a new row from job output or use a default
+    setRows(prev => {
+      if (prev.length === 0) {
+        // Create a row if none exists
+        const outs: any[] = Array.isArray(job.output) ? job.output : []
+        if (outs.length > 0) {
+          return outs.map((o: any, idx: number) => ({
+            selected: totalGoodInLastStage > 0,
+            sku: o.sku || '',
+            name: o.name || '',
+            uom: stageUom || o.uom || '',
+            qty: totalGoodInLastStage,
+            toLoc: '',
+            lot: '',
+            productId: '' as string,
+          }))
+        } else {
+          // Create a default row if no output exists
+          return [{
+            selected: totalGoodInLastStage > 0,
+            sku: '',
+            name: '',
+            uom: stageUom || '',
+            qty: totalGoodInLastStage,
+            toLoc: '',
+            lot: '',
+            productId: '' as string,
+          }]
+        }
+      }
+      // Update existing rows
+      return prev.map(r => ({ ...r, qty: totalGoodInLastStage, uom: stageUom || r.uom, selected: totalGoodInLastStage > 0 }))
+    })
+  }, [runs, workflows, job])
 
   // Conversion helpers
   const pcsPerBox = Number((job as any)?.packaging?.pcsPerBox || 0)
@@ -90,6 +225,33 @@ export const ConfirmInventoryPostingModal: FC<Props> = ({ job, workspaceId, prod
   const handleConfirm = async () => {
     setIsSubmitting(true)
     try {
+      // Capture initial stock levels for selected products (for user feedback)
+      const selectedRows = rows.filter(r => r.selected)
+      const distinctProductIds = Array.from(
+        new Set(
+          selectedRows
+            .map(r => (r.productId ? r.productId : products.find(p => p.sku === r.sku)?.id))
+            .filter((id): id is string => Boolean(id))
+        )
+      )
+
+      const stockBefore: Record<string, number> = {}
+      await Promise.all(
+        distinctProductIds.map(async (pid) => {
+          stockBefore[pid] = await getProductOnHand(workspaceId, pid)
+        })
+      )
+
+      // Capture existing consumptions (for backflush delta)
+      let consumptionsBefore: Consumption[] = []
+      if (autoConsume) {
+        try {
+          consumptionsBefore = await listJobConsumptions(workspaceId, job.id)
+        } catch (e) {
+          console.warn('Failed to read consumptions before posting (backflush check):', e)
+        }
+      }
+
       for (const r of rows) {
         if (!r.selected) continue
         const product = (r.productId ? products.find(p => p.id === r.productId) : undefined) || products.find(p => p.sku === r.sku)
@@ -97,14 +259,57 @@ export const ConfirmInventoryPostingModal: FC<Props> = ({ job, workspaceId, prod
         const qtyToPost = convertToProductUom(r.uom, Number(r.qty || 0), product.uom)
         if (qtyToPost <= 0) continue
 
+        // CRITICAL: Validate that we're only posting from the last stage
+        const wf = (workflows as any[]).find(w => w.id === (job as any).workflowId)
+        if (!wf || !Array.isArray(wf.stages) || wf.stages.length === 0) {
+          throw new Error('Workflow configuration not found. Cannot post to inventory.')
+        }
+        
+        // Use plannedStageIds if available, otherwise use all workflow stages
+        const plannedIds: string[] = Array.isArray((job as any).plannedStageIds) ? (job as any).plannedStageIds : []
+        let lastStageId: string
+        if (plannedIds.length > 0) {
+          // Use the last stage from planned stages
+          lastStageId = plannedIds[plannedIds.length - 1]
+        } else {
+          // Fallback to last stage in workflow
+          lastStageId = wf.stages[wf.stages.length - 1].id
+        }
+        
+        // Use job.currentStageId instead of runs[0].stageId (more reliable)
+        const postingStageId = (job as any).currentStageId || (runs.length > 0 ? runs[0].stageId : undefined)
+        
+        console.log('[ConfirmInventoryPostingModal] handleConfirm stage check:', {
+          lastStageId,
+          postingStageId,
+          jobCurrentStageId: (job as any).currentStageId,
+          plannedIds,
+          match: postingStageId === lastStageId
+        })
+        
+        if (postingStageId && postingStageId !== lastStageId) {
+          throw new Error(`Cannot post to inventory from stage ${postingStageId}. Only the final stage (${lastStageId}) can post to inventory.`)
+        }
+        
+        // Additional validation: Check if any runs have been transferred (shouldn't happen at last stage, but safety check)
+        const runsInLastStage = runs.filter(r => r.stageId === lastStageId)
+        const transferredRuns = runsInLastStage.filter(r => 
+          (r as any).transferSourceRunIds && Array.isArray((r as any).transferSourceRunIds) && (r as any).transferSourceRunIds.length > 0
+        )
+        
+        if (transferredRuns.length > 0) {
+          // This shouldn't happen, but if it does, we should only post actual production runs, not transfer runs
+          console.warn('Warning: Found transfer runs in last stage. These will be excluded from inventory posting.')
+        }
+        
         // Use the new recordJobOutput API
         await recordJobOutput(workspaceId, job.id, {
           qtyOutput: qtyToPost,
           autoConsumeMaterials: autoConsume,
           completeJob: false, // We'll let the parent handle completion or do it here if needed. The original code didn't complete it here, but onSuccess did.
-          // We can pass stageId if we want to link it to the latest stage
-          stageId: runs.length > 0 ? runs[0].stageId : undefined,
-          notes: `Production output posted (${job.code})`
+          // Only post from the last stage
+          stageId: lastStageId,
+          notes: `Production output posted from final stage (${job.code})`
         })
       }
 
@@ -139,14 +344,79 @@ export const ConfirmInventoryPostingModal: FC<Props> = ({ job, workspaceId, prod
         }
       }
 
+      // Fetch updated stock levels for feedback
+      const stockAfter: Record<string, number> = {}
+      await Promise.all(
+        distinctProductIds.map(async (pid) => {
+          stockAfter[pid] = await getProductOnHand(workspaceId, pid)
+        })
+      )
+
+      // Fetch new consumptions to detect backflushed lines
+      let backflushLines: Consumption[] = []
+      if (autoConsume) {
+        try {
+          const consumptionsAfter = await listJobConsumptions(workspaceId, job.id)
+          const beforeIds = new Set(consumptionsBefore.map(c => c.id))
+          backflushLines = consumptionsAfter.filter(
+            c => !beforeIds.has(c.id) && String(c.notes || '').includes('Auto-consumed (Backflush)')
+          )
+        } catch (e) {
+          console.warn('Failed to read consumptions after posting (backflush check):', e)
+        }
+      }
+
+      // Build human-readable feedback message
+      try {
+        const lines: string[] = []
+        lines.push(`Inventory posting completed for Job ${job.code}.`)
+        if (distinctProductIds.length > 0) {
+          lines.push('')
+          lines.push('Stock changes:')
+          distinctProductIds.forEach(pid => {
+            const product = products.find(p => p.id === pid)
+            const name = product ? `${product.sku} — ${product.name}` : pid
+            const before = stockBefore[pid] ?? 0
+            const after = stockAfter[pid] ?? before
+            const uom = product?.uom || ''
+            lines.push(`• ${name}: ${before.toLocaleString()} → ${after.toLocaleString()} ${uom}`)
+          })
+        }
+
+        if (autoConsume) {
+          lines.push('')
+          if (backflushLines.length > 0) {
+            const totalSheets = backflushLines
+              .filter(c => ['sht', 'sheet', 'sheets'].includes(String(c.uom || '').toLowerCase()))
+              .reduce((sum, c) => sum + Number(c.qtyUsed || 0), 0)
+
+            lines.push(`Backflushing:`)
+            lines.push(`• ${backflushLines.length} material consumption line(s) auto-created.`)
+            if (totalSheets > 0) {
+              lines.push(`• Approx. ${totalSheets.toLocaleString()} sheets consumed automatically (see Consumptions tab for details).`)
+            } else {
+              lines.push('• Raw materials were auto-consumed based on the BOM (see Consumptions tab for exact lines).')
+            }
+          } else {
+            lines.push('')
+            lines.push('Backflushing attempted, but no new auto-consumption lines were detected. Please review the Consumptions tab.')
+          }
+        }
+
+        alert(lines.join('\n'))
+      } catch (e) {
+        console.warn('Failed to build inventory posting feedback message:', e)
+      }
+
       onClose()
       // Call onSuccess callback if provided (for completing job after successful posting)
       if (onSuccess) {
         onSuccess()
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error confirming inventory posting:', error)
-      alert('Failed to post inventory. Please try again.')
+      const errorMessage = error?.message || 'Unknown error occurred'
+      alert(`Failed to post inventory: ${errorMessage}\n\nPlease try again.`)
     } finally {
       setIsSubmitting(false)
     }
@@ -156,6 +426,39 @@ export const ConfirmInventoryPostingModal: FC<Props> = ({ job, workspaceId, prod
   const allSelected = rows.length > 0 && rows.every(r => r.selected)
   const someSelected = selectedCount > 0 && !allSelected
   const invalid = rows.some(r => r.selected && (!((r.productId || products.find(p => p.sku === r.sku)?.id)) || Number(r.qty) <= 0))
+  
+  // Calculate total quantity for conditional rendering
+  const totalQty = rows.reduce((sum, r) => sum + Number(r.qty || 0), 0)
+  
+  // Debug log for modal rendering decision
+  console.log('[ConfirmInventoryPostingModal] Rendering decision:', {
+    totalQty,
+    runsLength: runs.length,
+    rowsLength: rows.length,
+    rows: rows.map(r => ({ sku: r.sku, qty: r.qty, selected: r.selected })),
+    willRender: !(totalQty <= 0 && runs.length > 0),
+    jobOutput: job.output,
+    lastStageRuns: runs.filter((r: any) => {
+      const wf = (workflows as any[]).find(w => w.id === (job as any).workflowId)
+      if (!wf || !Array.isArray(wf.stages) || wf.stages.length === 0) return false
+      const lastStageId = wf.stages[wf.stages.length - 1].id
+      return r.stageId === lastStageId && !((r as any).transferSourceRunIds && Array.isArray((r as any).transferSourceRunIds) && (r as any).transferSourceRunIds.length > 0)
+    }).map((r: any) => ({ id: r.id, qtyGood: r.qtyGood, stageId: r.stageId }))
+  })
+  
+  // Don't render modal if there's nothing to post (after runs have loaded and processed)
+  // But only check this if runs have been loaded (runs.length > 0)
+  // If rows are empty but runs exist, wait for useEffect to populate rows
+  if (totalQty <= 0 && runs.length > 0 && rows.length > 0) {
+    console.log('[ConfirmInventoryPostingModal] Not rendering - totalQty is 0 but runs and rows exist')
+    return null
+  }
+  
+  // If runs are loaded but rows are still empty, don't render yet (wait for useEffect)
+  if (runs.length > 0 && rows.length === 0) {
+    console.log('[ConfirmInventoryPostingModal] Waiting for rows to be populated from runs')
+    return null
+  }
 
   return (
     <div className="fixed inset-0 z-[60] bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
