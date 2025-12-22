@@ -53,7 +53,7 @@ export function QRCodeTab({ job, workspaceId }: QRCodeTabProps) {
       if (!code) {
         throw new Error('Job code or ID is required to generate QR code')
       }
-      const res = await generateQRCodeDataURL(code)
+      const res = await generateQRCodeDataURL(`JOB:${code}`)
       return res
     },
     onSuccess: (result) => {
@@ -92,7 +92,7 @@ export function QRCodeTab({ job, workspaceId }: QRCodeTabProps) {
       }))
       queryClient.invalidateQueries({ queryKey: ['job', workspaceId, job.id] })
       queryClient.invalidateQueries({ queryKey: ['jobs', workspaceId] })
-      
+
       // Clear success message after 3 seconds
       setTimeout(() => {
         setQrData(prev => ({
@@ -145,7 +145,7 @@ export function QRCodeTab({ job, workspaceId }: QRCodeTabProps) {
       }))
       return
     }
-    
+
     // Save directly without confirmation modal
     // Old QR code will be automatically replaced in saveJobQr function
     setQrData(prev => ({ ...prev, busy: true, error: null, success: false }))

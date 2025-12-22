@@ -1,7 +1,8 @@
 import jsPDF from 'jspdf'
 import type { Job } from '../api/production-jobs'
 
-const COMPANY_LOGO = '/logo.png'
+import { LOGO_PDF_URL } from './logo'
+const COMPANY_LOGO = LOGO_PDF_URL
 
 export type PrintFormOverrides = {
   date?: string

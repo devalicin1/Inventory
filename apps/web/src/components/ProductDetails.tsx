@@ -20,12 +20,16 @@ import {
   CheckCircleIcon,
   ArchiveBoxIcon,
   PencilIcon,
-  TrashIcon
+  TrashIcon,
+  ExclamationCircleIcon
 } from '@heroicons/react/24/outline'
 import { listStockReasons, type StockReason } from '../api/settings'
 
 import { useSessionStore } from '../state/sessionStore'
 import { createStockTransaction, listProductStockTxns, type UiTxnType, getProductOnHand, recalculateProductStock } from '../api/inventory'
+import { showToast } from './ui/Toast'
+import { db } from '../lib/firebase'
+import { doc, getDoc } from 'firebase/firestore'
 import { listGroups, type Group, updateProduct, saveProductQr, deleteProductQr, saveProductBarcode, deleteProductBarcode, listProductTickets, createProductTicket, updateProductTicket, deleteProductTicket, type Ticket } from '../api/products'
 import { listUOMs, listCategories, listSubcategories, listCustomFields } from '../api/settings'
 import { generateQRCodeDataURL, downloadQRCode, type QRCodeResult } from '../utils/qrcode'
@@ -84,6 +88,7 @@ interface Props {
   product: Product
   onClose: () => void
   onSaved?: () => void
+  canManage?: boolean // Permission to manage inventory
 }
 
 // --- UI Helper Components ---
@@ -393,7 +398,7 @@ function StockTrendChart({ history }: { history: StockAdjustment[] }) {
   )
 }
 
-export function ProductDetails({ product, onClose, onSaved }: Props) {
+export function ProductDetails({ product, onClose, onSaved, canManage = false }: Props) {
   const [activeTab, setActiveTab] = useState<'overview' | 'history' | 'tickets' | 'settings' | 'qr' | 'barcode'>('overview')
   // Consolidate adjustment state
   const [adjState, setAdjState] = useState({
@@ -438,6 +443,39 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
     type: 'all' as 'all' | 'in' | 'out' | 'transfer',
     dateFrom: '',
     dateTo: '',
+  })
+
+  // Fetch user names for history
+  const userIds = useMemo(() => {
+    const uniqueUserIds = [...new Set(stockTxns.map(t => t.userId).filter(Boolean))]
+    return uniqueUserIds
+  }, [stockTxns])
+
+  const { data: userNames = {} } = useQuery({
+    queryKey: ['userNames', workspaceId, userIds],
+    queryFn: async () => {
+      const names: Record<string, string> = {}
+      for (const userId of userIds) {
+        if (!userId || userId === 'system' || userId === 'anonymous') {
+          names[userId] = userId === 'system' ? 'System' : 'Anonymous'
+          continue
+        }
+        try {
+          const userDoc = await getDoc(doc(db, 'users', userId))
+          if (userDoc.exists()) {
+            const userData = userDoc.data()
+            names[userId] = userData.displayName || userData.email || userId
+          } else {
+            names[userId] = userId
+          }
+        } catch (error) {
+          console.error(`Error fetching user ${userId}:`, error)
+          names[userId] = userId
+        }
+      }
+      return names
+    },
+    enabled: userIds.length > 0 && !!workspaceId,
   })
 
   // Process History from stockTxns
@@ -492,6 +530,9 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
   const [subcategories, setSubcategories] = useState<any[]>([])
   const [customFields, setCustomFields] = useState<any[]>([])
   const [stockReasons, setStockReasons] = useState<StockReason[]>([])
+
+  // Inline feedback for settings saves
+  const [sectionMessage, setSectionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
   // Tickets State
   const [showCreateTicket, setShowCreateTicket] = useState(false)
@@ -636,6 +677,7 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
   const [uploadingImages, setUploadingImages] = useState(false)
   const [mainImageFile, setMainImageFile] = useState<File | null>(null)
   const [galleryImageFiles, setGalleryImageFiles] = useState<File[]>([])
+  const [showImageTip, setShowImageTip] = useState(false)
 
   const allImages = useMemo(() => [
     ...(product.imageUrl ? [product.imageUrl] : []),
@@ -668,6 +710,36 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
     }
     loadData()
   }, [workspaceId, product.id, product.groupId])
+
+  // Image quick-tip: show only until the user interacts once
+  useEffect(() => {
+    try {
+      const key = `productImageTipDismissed_${product.id}`
+      const dismissed = localStorage.getItem(key) === '1'
+      if (!dismissed && !product.imageUrl && (!Array.isArray(product.galleryUrls) || product.galleryUrls.length === 0)) {
+        setShowImageTip(true)
+      }
+    } catch {
+      // Ignore storage issues, tip is optional UX sugar
+    }
+  }, [product.id, product.imageUrl, product.galleryUrls])
+
+  const handleAddImageClick = () => {
+    // Navigate user to the images section in Settings tab
+    setActiveTab('settings')
+    try {
+      const key = `productImageTipDismissed_${product.id}`
+      localStorage.setItem(key, '1')
+    } catch {
+      // ignore
+    }
+    setShowImageTip(false)
+    // Best-effort scroll to image upload section if it exists
+    setTimeout(() => {
+      const el = document.getElementById('product-image-upload')
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 50)
+  }
 
   // Listen for window focus to refresh data when user returns to tab
   useEffect(() => {
@@ -729,9 +801,24 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
       queryClient.invalidateQueries({ queryKey: ['productOnHand', workspaceId, product.id] })
       queryClient.invalidateQueries({ queryKey: ['products', workspaceId] })
 
+      window.dispatchEvent(new Event('stockTransactionCreated'))
+
+      const typeLabel = adjState.type === 'in' ? 'added' : adjState.type === 'out' ? 'removed' : 'adjusted'
+      const sign = adjState.type === 'in' ? '+' : adjState.type === 'out' ? '-' : ''
+      showToast(
+        `Stock ${typeLabel}: ${sign}${qtyNum} ${product.uom || 'units'} for ${product.sku || product.name}`,
+        'success',
+        3000
+      )
+
       onSaved?.()
     } catch (err) {
       console.error(err)
+      showToast(
+        `Failed to adjust stock: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        'error',
+        5000
+      )
     } finally {
       setIsSubmitting(false)
     }
@@ -750,7 +837,7 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
         if (!sku) {
           throw new Error('Product SKU or ID is required to generate QR code')
         }
-        const res = await generateQRCodeDataURL(sku)
+        const res = await generateQRCodeDataURL(`PRO:${sku}`)
         setQrData(prev => ({ ...prev, localUrl: res.dataUrl, info: res }))
       } else if (action === 'save') {
         const localUrl = qrData.localUrl
@@ -914,8 +1001,21 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
 
     // Map form data based on type
     if (type === 'basic') {
-      payload.name = formData.get('name')
-      payload.sku = formData.get('sku')
+      const name = formData.get('name') as string
+      const sku = formData.get('sku') as string
+      
+      // Validate required fields
+      if (!name || !name.trim()) {
+        setSectionMessage({ type: 'error', text: 'Product name is required' })
+        return
+      }
+      if (!sku || !sku.trim()) {
+        setSectionMessage({ type: 'error', text: 'SKU is required' })
+        return
+      }
+      
+      payload.name = name.trim()
+      payload.sku = sku.trim()
       payload.uom = formData.get('uom')
       payload.status = formData.get('status')
       payload.groupId = formData.get('groupId') || null
@@ -948,10 +1048,31 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
     }
 
     try {
+      setSectionMessage(null)
       await updateProduct(workspaceId, product.id, payload)
+      let label = 'Changes saved'
+      if (type === 'basic') label = 'Basic information saved'
+      else if (type === 'stock') label = 'Inventory settings saved'
+      else if (type === 'class') label = 'Classification saved'
+      else if (type === 'tech') label = 'Technical specs saved'
+      else if (type === 'tags') label = 'Tags and notes saved'
+      else if (type === 'custom') label = 'Custom fields saved'
+
+      setSectionMessage({ type: 'success', text: label })
       onSaved?.()
+      
+      // Auto-hide success message after 3 seconds
+      setTimeout(() => {
+        setSectionMessage(null)
+      }, 3000)
     } catch (e) {
-      alert('Update failed: ' + (e instanceof Error ? e.message : 'Unknown error'))
+      const msg = e instanceof Error ? e.message : 'Unknown error'
+      setSectionMessage({ type: 'error', text: `Failed to save changes: ${msg}` })
+      
+      // Auto-hide error message after 5 seconds
+      setTimeout(() => {
+        setSectionMessage(null)
+      }, 5000)
     }
   }
 
@@ -973,11 +1094,41 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
   }
 
   const AdjustmentTab = ({ id, label, icon: Icon, color }: any) => {
-    const colorClasses: Record<string, { active: string; icon: string }> = {
-      emerald: { active: 'bg-emerald-50 border-emerald-300 text-emerald-700 ring-emerald-200 shadow-sm', icon: 'text-emerald-600' },
-      red: { active: 'bg-red-50 border-red-300 text-red-700 ring-red-200 shadow-sm', icon: 'text-red-600' },
-      blue: { active: 'bg-blue-50 border-blue-300 text-blue-700 ring-blue-200 shadow-sm', icon: 'text-blue-600' },
-      amber: { active: 'bg-amber-50 border-amber-300 text-amber-700 ring-amber-200 shadow-sm', icon: 'text-amber-600' },
+    const colorClasses: Record<string, { 
+      active: string
+      icon: string
+      bg: string
+      border: string
+      text: string
+    }> = {
+      emerald: { 
+        active: 'bg-gradient-to-br from-emerald-50 to-green-50 border-emerald-400 text-emerald-800 shadow-lg ring-4 ring-emerald-200/50', 
+        icon: 'text-emerald-600',
+        bg: 'bg-emerald-500',
+        border: 'border-emerald-300',
+        text: 'text-emerald-700'
+      },
+      red: { 
+        active: 'bg-gradient-to-br from-red-50 to-rose-50 border-red-400 text-red-800 shadow-lg ring-4 ring-red-200/50', 
+        icon: 'text-red-600',
+        bg: 'bg-red-500',
+        border: 'border-red-300',
+        text: 'text-red-700'
+      },
+      blue: { 
+        active: 'bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-400 text-blue-800 shadow-lg ring-4 ring-blue-200/50', 
+        icon: 'text-blue-600',
+        bg: 'bg-blue-500',
+        border: 'border-blue-300',
+        text: 'text-blue-700'
+      },
+      amber: { 
+        active: 'bg-gradient-to-br from-amber-50 to-yellow-50 border-amber-400 text-amber-800 shadow-lg ring-4 ring-amber-200/50', 
+        icon: 'text-amber-600',
+        bg: 'bg-amber-500',
+        border: 'border-amber-300',
+        text: 'text-amber-700'
+      },
     }
 
     const colors = colorClasses[color] || colorClasses.emerald
@@ -987,14 +1138,21 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
       <button
         type="button"
         onClick={() => setAdjState(p => ({ ...p, type: id }))}
-        className={`flex-1 flex flex-col items-center justify-center p-2.5 sm:p-3 rounded-xl border-2 transition-all duration-200 active:scale-95 ${
+        className={`relative flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all duration-200 active:scale-95 overflow-hidden ${
           isActive
-            ? `${colors.active} ring-2`
-            : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50 hover:border-gray-300'
+            ? `${colors.active}`
+            : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50 hover:border-gray-300 hover:shadow-md'
         }`}
       >
-        <Icon className={`w-4 h-4 sm:w-5 sm:h-5 mb-1 ${isActive ? colors.icon : 'text-gray-400'}`} />
-        <span className="text-[10px] sm:text-xs font-semibold leading-tight text-center">{label}</span>
+        {isActive && (
+          <div className={`absolute inset-0 ${colors.bg} opacity-5`} />
+        )}
+        <div className={`p-2.5 rounded-lg mb-2 ${isActive ? 'bg-white/80' : 'bg-gray-100'}`}>
+          <Icon className={`w-5 h-5 ${isActive ? colors.icon : 'text-gray-400'}`} />
+        </div>
+        <span className={`text-xs font-bold leading-tight text-center ${isActive ? colors.text : 'text-gray-600'}`}>
+          {label}
+        </span>
       </button>
     )
   }
@@ -1006,7 +1164,7 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
       .replace(/\uFFFD/g, '') // Remove replacement characters
       .replace(/\u0000/g, '') // Remove null characters
       .trim()
-    
+
     try {
       const textarea = document.createElement('textarea')
       textarea.innerHTML = cleaned
@@ -1014,7 +1172,7 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
     } catch (e) {
       // If decoding fails, use original
     }
-    
+
     return cleaned || name
   }
 
@@ -1031,14 +1189,38 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
           <div className="hidden lg:block p-6">
             {/* Main Image - Desktop Full */}
             <div className="aspect-square bg-white rounded-2xl border-2 border-gray-200 shadow-md p-4 flex items-center justify-center mb-4 relative group overflow-hidden">
-              <img
-                src={selectedImage || allImages[0] || 'https://placehold.co/400x400?text=No+Image'}
-                className="max-w-full max-h-full object-contain transition-transform duration-300 group-hover:scale-105 cursor-pointer"
-                onClick={() => setImageModal(selectedImage || allImages[0])}
-                alt={product.name}
-              />
-              {allImages.length === 0 && <PhotoIcon className="w-16 h-16 text-gray-300" />}
-              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/5 transition-colors pointer-events-none rounded-2xl" />
+              {allImages.length > 0 ? (
+                <>
+                  <img
+                    src={selectedImage || allImages[0]}
+                    className="max-w-full max-h-full object-contain transition-transform duration-300 group-hover:scale-105 cursor-pointer"
+                    onClick={() => setImageModal(selectedImage || allImages[0])}
+                    alt={product.name}
+                  />
+                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/5 transition-colors pointer-events-none rounded-2xl" />
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleAddImageClick}
+                  className="w-full h-full rounded-2xl border-2 border-dashed border-gray-300 bg-gradient-to-br from-gray-50 to-gray-100 flex flex-col items-center justify-center gap-3 text-gray-500 hover:border-blue-400 hover:from-blue-50 hover:to-blue-100 transition-all group/image relative"
+                >
+                  <PhotoIcon className="w-12 h-12 text-gray-300 group-hover/image:text-blue-500 transition-colors" />
+                  <div className="flex flex-col items-center gap-1">
+                    <span className="text-sm font-semibold text-gray-800">Add product photo</span>
+                    {showImageTip && (
+                      <span className="text-xs text-gray-500 max-w-[220px] text-center">
+                        Photos help operators identify products faster and reduce picking mistakes.
+                      </span>
+                    )}
+                  </div>
+                  <div className="absolute bottom-4 inset-x-6 opacity-0 group-hover/image:opacity-100 transition-opacity">
+                    <span className="inline-flex items-center justify-center px-3 py-1.5 rounded-full bg-blue-600 text-white text-xs font-medium shadow">
+                      Upload image
+                    </span>
+                  </div>
+                </button>
+              )}
             </div>
 
             {/* Gallery Thumbs - Desktop */}
@@ -1059,24 +1241,22 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
             {/* Quick Stats Cards - Premium Desktop Design */}
             <div className="hidden lg:block space-y-4">
               {/* Stock Card - Premium */}
-              <div className={`relative overflow-hidden rounded-2xl border-2 shadow-lg transition-all duration-300 hover:shadow-xl ${
-                onHand <= 0 
-                  ? 'bg-gradient-to-br from-red-50 via-rose-50 to-red-100 border-red-300' 
-                  : onHand <= (product.minLevelBox || 0) 
-                    ? 'bg-gradient-to-br from-amber-50 via-orange-50 to-amber-100 border-amber-300' 
+              <div className={`relative overflow-hidden rounded-2xl border-2 shadow-lg transition-all duration-300 hover:shadow-xl ${onHand <= 0
+                  ? 'bg-gradient-to-br from-red-50 via-rose-50 to-red-100 border-red-300'
+                  : onHand <= (product.minLevelBox || 0)
+                    ? 'bg-gradient-to-br from-amber-50 via-orange-50 to-amber-100 border-amber-300'
                     : 'bg-gradient-to-br from-emerald-50 via-green-50 to-emerald-100 border-emerald-300'
-              }`}>
+                }`}>
                 {/* Background pattern */}
                 <div className="absolute inset-0 opacity-10">
                   <div className="absolute inset-0" style={{ backgroundImage: 'radial-gradient(circle, currentColor 1px, transparent 1px)', backgroundSize: '16px 16px' }} />
                 </div>
-                
+
                 <div className="relative p-5">
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
-                      <div className={`p-2 rounded-xl ${
-                        onHand <= 0 ? 'bg-red-500' : onHand <= (product.minLevelBox || 0) ? 'bg-amber-500' : 'bg-emerald-500'
-                      } shadow-lg`}>
+                      <div className={`p-2 rounded-xl ${onHand <= 0 ? 'bg-red-500' : onHand <= (product.minLevelBox || 0) ? 'bg-amber-500' : 'bg-emerald-500'
+                        } shadow-lg`}>
                         <CubeIcon className="w-5 h-5 text-white" />
                       </div>
                       <span className="text-xs font-bold text-gray-600 uppercase tracking-widest">In Stock</span>
@@ -1100,11 +1280,10 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
                       <ArrowPathIcon className="w-5 h-5 text-gray-500 hover:text-blue-600 transition-colors" />
                     </button>
                   </div>
-                  
+
                   <div className="flex items-baseline gap-2 mb-4">
-                    <span className={`text-5xl font-black tracking-tight ${
-                      onHand <= 0 ? 'text-red-600' : onHand <= (product.minLevelBox || 0) ? 'text-amber-600' : 'text-emerald-600'
-                    }`}>{onHand.toLocaleString('en-GB')}</span>
+                    <span className={`text-5xl font-black tracking-tight ${onHand <= 0 ? 'text-red-600' : onHand <= (product.minLevelBox || 0) ? 'text-amber-600' : 'text-emerald-600'
+                      }`}>{onHand.toLocaleString('en-GB')}</span>
                     <span className="text-lg text-gray-500 font-semibold">{product.uom || 'Units'}</span>
                   </div>
 
@@ -1112,11 +1291,10 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
                   <div className="relative mb-3">
                     <div className="h-3 bg-white/60 rounded-full overflow-hidden shadow-inner backdrop-blur-sm">
                       <div
-                        className={`h-full rounded-full transition-all duration-700 ease-out relative ${
-                          onHand <= 0 ? 'bg-gradient-to-r from-red-400 to-red-600' : 
-                          onHand <= (product.minLevelBox || 0) ? 'bg-gradient-to-r from-amber-400 to-orange-500' : 
-                          'bg-gradient-to-r from-emerald-400 to-green-500'
-                        }`}
+                        className={`h-full rounded-full transition-all duration-700 ease-out relative ${onHand <= 0 ? 'bg-gradient-to-r from-red-400 to-red-600' :
+                            onHand <= (product.minLevelBox || 0) ? 'bg-gradient-to-r from-amber-400 to-orange-500' :
+                              'bg-gradient-to-r from-emerald-400 to-green-500'
+                          }`}
                         style={{ width: `${Math.min(onHand / ((product.minLevelBox || 1) * 2) * 100, 100)}%` }}
                       >
                         <div className="absolute inset-0 bg-gradient-to-b from-white/40 to-transparent" />
@@ -1124,13 +1302,13 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
                     </div>
                     {/* Min stock marker */}
                     {(product.minLevelBox || 0) > 0 && (
-                      <div 
+                      <div
                         className="absolute top-0 bottom-0 w-0.5 bg-gray-600 rounded-full"
                         style={{ left: '50%' }}
                       />
                     )}
                   </div>
-                  
+
                   <div className="flex justify-between items-center">
                     <span className="text-xs text-gray-600 font-semibold bg-white/50 px-2 py-1 rounded-lg">Min: {product.minLevelBox || 0}</span>
                     {onHand <= 0 ? (
@@ -1154,7 +1332,7 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
               <div className="relative overflow-hidden bg-gradient-to-br from-slate-800 via-slate-900 to-gray-900 rounded-2xl border-2 border-slate-700 shadow-xl">
                 {/* Shine effect */}
                 <div className="absolute inset-0 bg-gradient-to-br from-white/10 via-transparent to-transparent" />
-                
+
                 <div className="relative p-5">
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
@@ -1164,13 +1342,13 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
                       <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Est. Value</span>
                     </div>
                   </div>
-                  
+
                   <div className="mb-2">
                     <span className="text-4xl font-black text-white tracking-tight">
                       £{(onHand * (product.pricePerBox || 0)).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                   </div>
-                  
+
                   <div className="flex items-center gap-2">
                     <span className="text-sm text-slate-400 font-medium">@ £{(product.pricePerBox || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/unit</span>
                     <span className="text-xs text-slate-500">•</span>
@@ -1190,13 +1368,13 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
                 </button>
                 {/* Barcode button temporarily hidden */}
                 {false && (
-                <button
-                  onClick={() => setActiveTab('barcode')}
-                  className="flex flex-col items-center justify-center gap-2 p-4 rounded-xl border-2 border-gray-200 bg-white text-gray-700 hover:bg-teal-50 hover:border-teal-300 hover:text-teal-600 transition-all shadow-sm hover:shadow-md active:scale-95"
-                >
-                  <DocumentTextIcon className="w-6 h-6" />
-                  <span className="text-xs font-semibold">Barcode</span>
-                </button>
+                  <button
+                    onClick={() => setActiveTab('barcode')}
+                    className="flex flex-col items-center justify-center gap-2 p-4 rounded-xl border-2 border-gray-200 bg-white text-gray-700 hover:bg-teal-50 hover:border-teal-300 hover:text-teal-600 transition-all shadow-sm hover:shadow-md active:scale-95"
+                  >
+                    <DocumentTextIcon className="w-6 h-6" />
+                    <span className="text-xs font-semibold">Barcode</span>
+                  </button>
                 )}
                 <button
                   onClick={() => setActiveTab('history')}
@@ -1219,47 +1397,53 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
               {/* Mobile: Image + Stats in Header - Premium */}
               <div className="flex items-center gap-3 mb-3 lg:hidden">
                 {/* Image - Premium Compact */}
-                <div className={`relative w-18 h-18 bg-white rounded-2xl border-2 shadow-md flex items-center justify-center shrink-0 overflow-hidden ${
-                  onHand <= 0 ? 'border-red-300 ring-2 ring-red-100' : 
-                  onHand <= (product.minLevelBox || 0) ? 'border-amber-300 ring-2 ring-amber-100' : 
-                  'border-gray-200'
-                }`}>
-                  <img
-                    src={selectedImage || allImages[0] || 'https://placehold.co/400x400?text=No+Image'}
-                    className="max-w-full max-h-full object-contain transition-transform duration-300 active:scale-105 cursor-pointer"
-                    onClick={() => setImageModal(selectedImage || allImages[0])}
-                    alt={product.name}
-                  />
-                  {allImages.length === 0 && <PhotoIcon className="w-8 h-8 text-gray-300" />}
-                  
+                <div className={`relative w-18 h-18 bg-white rounded-2xl border-2 shadow-md flex items-center justify-center shrink-0 overflow-hidden ${onHand <= 0 ? 'border-red-300 ring-2 ring-red-100' :
+                    onHand <= (product.minLevelBox || 0) ? 'border-amber-300 ring-2 ring-amber-100' :
+                      'border-gray-200'
+                  }`}>
+                  {allImages.length > 0 ? (
+                    <img
+                      src={selectedImage || allImages[0]}
+                      className="max-w-full max-h-full object-contain transition-transform duration-300 active:scale-105 cursor-pointer"
+                      onClick={() => setImageModal(selectedImage || allImages[0])}
+                      alt={product.name}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleAddImageClick}
+                      className="w-full h-full flex flex-col items-center justify-center gap-1 text-gray-500 hover:text-blue-600 transition-colors"
+                    >
+                      <PhotoIcon className="w-8 h-8 text-gray-300" />
+                      <span className="text-[10px] font-semibold">Add photo</span>
+                    </button>
+                  )}
+
                   {/* Status indicator */}
-                  <div className={`absolute top-1 right-1 w-3 h-3 rounded-full border-2 border-white shadow ${
-                    onHand <= 0 ? 'bg-red-500 animate-pulse' : 
-                    onHand <= (product.minLevelBox || 0) ? 'bg-amber-500' : 
-                    'bg-emerald-500'
-                  }`} />
+                  <div className={`absolute top-1 right-1 w-3 h-3 rounded-full border-2 border-white shadow ${onHand <= 0 ? 'bg-red-500 animate-pulse' :
+                      onHand <= (product.minLevelBox || 0) ? 'bg-amber-500' :
+                        'bg-emerald-500'
+                    }`} />
                 </div>
-                
+
                 {/* Stats - Premium Compact */}
                 <div className="flex-1 grid grid-cols-2 gap-2">
-                  <div className={`p-2.5 rounded-xl border-2 ${
-                    onHand <= 0 ? 'bg-gradient-to-br from-red-50 to-rose-50 border-red-200' : 
-                    onHand <= (product.minLevelBox || 0) ? 'bg-gradient-to-br from-amber-50 to-orange-50 border-amber-200' : 
-                    'bg-gradient-to-br from-emerald-50 to-green-50 border-emerald-200'
-                  }`}>
+                  <div className={`p-2.5 rounded-xl border-2 ${onHand <= 0 ? 'bg-gradient-to-br from-red-50 to-rose-50 border-red-200' :
+                      onHand <= (product.minLevelBox || 0) ? 'bg-gradient-to-br from-amber-50 to-orange-50 border-amber-200' :
+                        'bg-gradient-to-br from-emerald-50 to-green-50 border-emerald-200'
+                    }`}>
                     <div className="text-[9px] text-gray-600 uppercase font-bold tracking-wider mb-0.5">Stock</div>
-                    <div className={`text-xl font-black ${
-                      onHand <= 0 ? 'text-red-600' : 
-                      onHand <= (product.minLevelBox || 0) ? 'text-amber-600' : 
-                      'text-emerald-600'
-                    }`}>{onHand.toLocaleString()}</div>
+                    <div className={`text-xl font-black ${onHand <= 0 ? 'text-red-600' :
+                        onHand <= (product.minLevelBox || 0) ? 'text-amber-600' :
+                          'text-emerald-600'
+                      }`}>{onHand.toLocaleString()}</div>
                     <div className="text-[9px] text-gray-500 font-medium">{product.uom || 'Units'}</div>
                   </div>
                   <div className="bg-gradient-to-br from-slate-700 to-slate-900 p-2.5 rounded-xl border-2 border-slate-600">
                     <div className="text-[9px] text-slate-400 uppercase font-bold tracking-wider mb-0.5">Value</div>
                     <div className="text-lg font-black text-white">
-                      £{(onHand * (product.pricePerBox || 0)) >= 1000 
-                        ? `${((onHand * (product.pricePerBox || 0))/1000).toFixed(1)}k` 
+                      £{(onHand * (product.pricePerBox || 0)) >= 1000
+                        ? `${((onHand * (product.pricePerBox || 0)) / 1000).toFixed(1)}k`
                         : (onHand * (product.pricePerBox || 0)).toFixed(0)}
                     </div>
                     <div className="text-[9px] text-slate-400 font-medium">total</div>
@@ -1278,8 +1462,8 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
                 <span className="truncate">{groups.find(g => g.id === product.groupId)?.name || 'Unassigned Group'}</span>
               </div>
             </div>
-            <button 
-              onClick={onClose} 
+            <button
+              onClick={onClose}
               className="p-2 rounded-full hover:bg-gray-100 active:bg-gray-200 text-gray-400 hover:text-gray-600 transition-colors shrink-0"
             >
               <XMarkIcon className="w-5 h-5 sm:w-6 sm:h-6" />
@@ -1309,7 +1493,7 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
                 { id: 'history', label: 'History' },
                 { id: 'tickets', label: 'Tickets' },
                 { id: 'qr', label: 'QR & Media' },
-                { id: 'settings', label: 'Edit' }
+                ...(canManage ? [{ id: 'settings', label: 'Edit' }] : [])
               ].map(tab => (
                 <button
                   key={tab.id}
@@ -1332,104 +1516,188 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
             {activeTab === 'overview' && (
               <div className="space-y-4 sm:space-y-6 lg:space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-300">
 
-                {/* Stock Adjustment Card - "Hero" Action */}
-                <div className="bg-white rounded-xl sm:rounded-2xl border-2 border-gray-200 shadow-md overflow-hidden">
-                  <div className="p-3 sm:p-4 bg-gradient-to-r from-gray-50 to-gray-100 border-b border-gray-200">
-                    <h3 className="font-semibold text-gray-900 flex items-center gap-2 text-sm sm:text-base">
-                      <AdjustmentsHorizontalIcon className="w-4 h-4 sm:w-5 sm:h-5 text-blue-600" />
-                      <span className="hidden sm:inline">Quick Stock Action</span>
-                      <span className="sm:hidden">Stock Action</span>
-                    </h3>
-                  </div>
-                  <div className="p-3 sm:p-4 lg:p-6">
-                    <form onSubmit={handleAdjustment}>
-                      <div className="grid grid-cols-4 gap-2 sm:gap-3 mb-4 sm:mb-6">
-                        <AdjustmentTab id="in" label="Stock In" icon={PlusIcon} color="emerald" />
-                        <AdjustmentTab id="out" label="Stock Out" icon={MinusIcon} color="red" />
-                        <AdjustmentTab id="transfer" label="Transfer" icon={ArrowPathIcon} color="blue" />
-                        <AdjustmentTab id="adjustment" label="Audit" icon={DocumentTextIcon} color="amber" />
-                      </div>
-                      <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 sm:gap-4 lg:gap-6 items-start">
-                        {/* QTY Input - Large */}
-                        <div className="lg:col-span-3 order-1">
-                          <label className="block text-xs font-medium text-gray-500 uppercase mb-2">Quantity</label>
-                          <input
-                            type="number"
-                            value={adjState.qty}
-                            onChange={e => setAdjState(p => ({ ...p, qty: e.target.value }))}
-                            placeholder="0"
-                            className="block w-full rounded-lg sm:rounded-xl border-2 border-gray-200 text-xl sm:text-2xl lg:text-3xl font-bold py-2.5 sm:py-3 lg:py-4 px-3 sm:px-4 text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
-                            autoFocus
-                          />
+                {/* Stock Adjustment Card - Premium Design */}
+                <div className="bg-gradient-to-br from-white to-gray-50 rounded-2xl border border-gray-200 shadow-xl overflow-hidden">
+                  {/* Header with Icon */}
+                  <div className="bg-gradient-to-r from-blue-600 to-blue-700 px-6 py-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 bg-white/20 rounded-lg backdrop-blur-sm">
+                          <AdjustmentsHorizontalIcon className="w-6 h-6 text-white" />
                         </div>
-                        {/* Context Fields */}
-                        <div className="lg:col-span-9 grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 order-2">
-                          <div className="space-y-1.5">
-                            <label className="block text-xs font-medium text-gray-500 uppercase">Reason</label>
-                            <StyledSelect
-                              value={adjState.reason}
-                              onChange={e => setAdjState(p => ({ ...p, reason: e.target.value }))}
-                              required
-                            >
-                              <option value="">Select Reason...</option>
-                              {stockReasons
-                                .filter(r => {
-                                  if (adjState.type === 'in') return r.operationType === 'stock_in'
-                                  if (adjState.type === 'out') return r.operationType === 'stock_out'
-                                  if (adjState.type === 'transfer') return r.operationType === 'transfer'
-                                  return r.operationType === 'adjustment'
-                                })
-                                .map(r => <option key={r.id} value={r.name}>{r.name}</option>)
-                              }
-                            </StyledSelect>
+                        <div>
+                          <h3 className="text-lg font-bold text-white">Quick Stock Action</h3>
+                          <p className="text-sm text-blue-100">Adjust inventory levels quickly</p>
+                        </div>
+                      </div>
+                      {!canManage && (
+                        <span className="px-3 py-1 bg-white/20 text-white text-xs font-medium rounded-full backdrop-blur-sm">
+                          Read Only
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {canManage && (
+                    <div className="p-6">
+                      <form onSubmit={handleAdjustment} className="space-y-6">
+                        {/* Action Type Tabs - Modern Design */}
+                        <div>
+                          <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-3">
+                            Action Type
+                          </label>
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                            <AdjustmentTab id="in" label="Stock In" icon={PlusIcon} color="emerald" />
+                            <AdjustmentTab id="out" label="Stock Out" icon={MinusIcon} color="red" />
+                            <AdjustmentTab id="transfer" label="Transfer" icon={ArrowPathIcon} color="blue" />
+                            <AdjustmentTab id="adjustment" label="Audit" icon={DocumentTextIcon} color="amber" />
                           </div>
-                          {adjState.type === 'transfer' && (
-                            <div className="space-y-1.5">
-                              <label className="block text-xs font-medium text-gray-500 uppercase">Transfer To</label>
-                              <StyledSelect
-                                value={adjState.transferTo}
-                                onChange={e => setAdjState(p => ({ ...p, transferTo: e.target.value }))}
-                                required
-                              >
-                                <option value="">Select Group...</option>
-                                {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
-                              </StyledSelect>
+                        </div>
+
+                        {/* Main Input Section */}
+                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                          {/* Quantity Input - Prominent */}
+                          <div className="lg:col-span-4">
+                            <label className="block text-sm font-semibold text-gray-700 mb-3">
+                              Quantity <span className="text-red-500">*</span>
+                            </label>
+                            <div className="relative">
+                              <input
+                                type="number"
+                                step="0.01"
+                                value={adjState.qty}
+                                onChange={e => setAdjState(p => ({ ...p, qty: e.target.value }))}
+                                placeholder="0.00"
+                                className="block w-full rounded-xl border-2 border-gray-300 text-3xl font-bold py-5 px-6 text-gray-900 bg-white focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 transition-all shadow-sm hover:shadow-md"
+                                autoFocus
+                              />
+                              <div className="absolute right-4 top-1/2 -translate-y-1/2 text-sm font-medium text-gray-400">
+                                {product.uom || 'units'}
+                              </div>
                             </div>
-                          )}
-                          <div className={`${adjState.type === 'transfer' ? 'md:col-span-2' : 'md:col-span-1'} space-y-1.5`}>
-                            <label className="block text-xs font-medium text-gray-500 uppercase">Notes</label>
-                            <input
-                              type="text"
-                              value={adjState.notes}
-                              onChange={e => setAdjState(p => ({ ...p, notes: e.target.value }))}
-                              className="block w-full rounded-md border-0 py-1.5 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-200 focus:ring-2 focus:ring-inset focus:ring-blue-600 sm:text-sm sm:leading-6"
-                              placeholder="Optional reference..."
-                            />
+                          </div>
+
+                          {/* Form Fields */}
+                          <div className="lg:col-span-8 space-y-4">
+                            {/* Reason */}
+                            <div>
+                              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                Reason <span className="text-red-500">*</span>
+                              </label>
+                              <select
+                                value={adjState.reason}
+                                onChange={e => setAdjState(p => ({ ...p, reason: e.target.value }))}
+                                required
+                                className="block w-full rounded-lg border-2 border-gray-300 bg-white py-3 px-4 text-sm font-medium text-gray-900 shadow-sm focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                              >
+                                <option value="">Select a reason...</option>
+                                {stockReasons
+                                  .filter(r => {
+                                    if (adjState.type === 'in') return r.operationType === 'stock_in'
+                                    if (adjState.type === 'out') return r.operationType === 'stock_out'
+                                    if (adjState.type === 'transfer') return r.operationType === 'transfer'
+                                    return r.operationType === 'adjustment'
+                                  })
+                                  .map(r => <option key={r.id} value={r.name}>{r.name}</option>)
+                                }
+                              </select>
+                            </div>
+
+                            {/* Transfer To - Conditional */}
+                            {adjState.type === 'transfer' && (
+                              <div>
+                                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                  Transfer To <span className="text-red-500">*</span>
+                                </label>
+                                <select
+                                  value={adjState.transferTo}
+                                  onChange={e => setAdjState(p => ({ ...p, transferTo: e.target.value }))}
+                                  required
+                                  className="block w-full rounded-lg border-2 border-gray-300 bg-white py-3 px-4 text-sm font-medium text-gray-900 shadow-sm focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
+                                >
+                                  <option value="">Select destination group...</option>
+                                  {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                                </select>
+                              </div>
+                            )}
+
+                            {/* Notes */}
+                            <div>
+                              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                                Notes <span className="text-gray-400 text-xs font-normal">(Optional)</span>
+                              </label>
+                              <input
+                                type="text"
+                                value={adjState.notes}
+                                onChange={e => setAdjState(p => ({ ...p, notes: e.target.value }))}
+                                className="block w-full rounded-lg border-2 border-gray-300 bg-white py-3 px-4 text-sm text-gray-900 shadow-sm focus:ring-4 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-gray-400"
+                                placeholder="Add reference or notes..."
+                              />
+                            </div>
                           </div>
                         </div>
-                      </div>
-                      <div className="mt-4 sm:mt-6 flex justify-end">
-                        <button
-                          type="submit"
-                          disabled={!adjState.qty || !adjState.reason || isSubmitting}
-                          className="w-full sm:w-auto px-4 sm:px-6 py-2.5 sm:py-3 bg-slate-900 text-white text-sm font-semibold rounded-lg sm:rounded-xl hover:bg-slate-800 focus:ring-4 focus:ring-slate-200 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2 shadow-md hover:shadow-lg active:scale-95"
-                        >
-                          {isSubmitting ? (
-                            <>
-                              <ArrowPathIcon className="w-4 h-4 animate-spin" />
-                              <span className="hidden sm:inline">Processing...</span>
-                              <span className="sm:hidden">Processing</span>
-                            </>
-                          ) : (
-                            <>
-                              <span className="hidden sm:inline">Confirm Transaction</span>
-                              <span className="sm:hidden">Confirm</span>
-                            </>
-                          )}
-                        </button>
-                      </div>
-                    </form>
-                  </div>
+
+                        {/* Submit Button */}
+                        <div className="flex items-center justify-between pt-4 border-t border-gray-200">
+                          <div className="flex flex-col gap-1">
+                            {!adjState.qty && (
+                              <span className="flex items-center gap-2 text-sm text-amber-600">
+                                <ExclamationCircleIcon className="w-4 h-4" />
+                                Enter quantity to continue
+                              </span>
+                            )}
+                            {adjState.qty && !adjState.reason && (
+                              <span className="flex items-center gap-2 text-sm text-amber-600">
+                                <ExclamationCircleIcon className="w-4 h-4" />
+                                Select a reason to continue
+                              </span>
+                            )}
+                            {adjState.type === 'transfer' && adjState.qty && adjState.reason && !adjState.transferTo && (
+                              <span className="flex items-center gap-2 text-sm text-amber-600">
+                                <ExclamationCircleIcon className="w-4 h-4" />
+                                Select destination group to continue
+                              </span>
+                            )}
+                            {adjState.qty && adjState.reason && (adjState.type !== 'transfer' || adjState.transferTo) && (
+                              <span className="flex items-center gap-2 text-sm text-green-600 font-medium">
+                                <CheckCircleIcon className="w-4 h-4" />
+                                Ready to submit
+                              </span>
+                            )}
+                          </div>
+                          <button
+                            type="submit"
+                            disabled={!adjState.qty || !adjState.reason || (adjState.type === 'transfer' && !adjState.transferTo) || isSubmitting}
+                            className="inline-flex items-center gap-2 px-8 py-3.5 bg-gradient-to-r from-blue-600 to-blue-700 text-white text-sm font-bold rounded-xl hover:from-blue-700 hover:to-blue-800 focus:ring-4 focus:ring-blue-500/30 disabled:opacity-50 disabled:cursor-not-allowed disabled:from-gray-400 disabled:to-gray-500 transition-all shadow-lg hover:shadow-xl active:scale-95"
+                            title={
+                              !adjState.qty ? 'Enter quantity first' :
+                              !adjState.reason ? 'Select a reason first' :
+                              (adjState.type === 'transfer' && !adjState.transferTo) ? 'Select destination group first' :
+                              'Confirm transaction'
+                            }
+                          >
+                            {isSubmitting ? (
+                              <>
+                                <ArrowPathIcon className="w-5 h-5 animate-spin" />
+                                <span>Processing...</span>
+                              </>
+                            ) : (
+                              <>
+                                <CheckCircleIcon className="w-5 h-5" />
+                                <span>Confirm Transaction</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+                  )}
+
+                  {!canManage && (
+                    <div className="p-6 text-center">
+                      <p className="text-sm text-gray-500">You don't have permission to adjust stock levels.</p>
+                    </div>
+                  )}
                 </div>
 
                 {/* Analytics Preview */}
@@ -1493,7 +1761,7 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
                   const totalOut = history.filter(h => h.type === 'out').reduce((sum, h) => sum + h.quantity, 0)
                   const totalTransfers = history.filter(h => h.type === 'transfer').length
                   const netMovement = totalIn - totalOut
-                  
+
                   return (
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                       <div className="bg-gradient-to-br from-emerald-50 to-green-100 rounded-xl p-4 border border-emerald-200">
@@ -1505,7 +1773,7 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
                         </div>
                         <div className="text-2xl font-black text-emerald-600">+{totalIn.toLocaleString()}</div>
                       </div>
-                      
+
                       <div className="bg-gradient-to-br from-red-50 to-rose-100 rounded-xl p-4 border border-red-200">
                         <div className="flex items-center gap-2 mb-2">
                           <div className="p-1.5 bg-red-500 rounded-lg">
@@ -1515,7 +1783,7 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
                         </div>
                         <div className="text-2xl font-black text-red-600">-{totalOut.toLocaleString()}</div>
                       </div>
-                      
+
                       <div className="bg-gradient-to-br from-blue-50 to-indigo-100 rounded-xl p-4 border border-blue-200">
                         <div className="flex items-center gap-2 mb-2">
                           <div className="p-1.5 bg-blue-500 rounded-lg">
@@ -1525,7 +1793,7 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
                         </div>
                         <div className="text-2xl font-black text-blue-600">{totalTransfers}</div>
                       </div>
-                      
+
                       <div className={`rounded-xl p-4 border ${netMovement >= 0 ? 'bg-gradient-to-br from-slate-50 to-gray-100 border-slate-200' : 'bg-gradient-to-br from-orange-50 to-amber-100 border-orange-200'}`}>
                         <div className="flex items-center gap-2 mb-2">
                           <div className={`p-1.5 rounded-lg ${netMovement >= 0 ? 'bg-slate-600' : 'bg-orange-500'}`}>
@@ -1542,32 +1810,43 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
                 })()}
 
                 {/* Header with Export */}
-                <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                    <ClockIcon className="w-5 h-5 text-gray-400" />
-                    Transaction Log
-                    <span className="text-sm font-normal text-gray-500">({history.length} records)</span>
-                  </h3>
-                  <button
-                    onClick={() => {
-                      const exportData = history.map(h => ({
-                        Type: h.type,
-                        Quantity: h.quantity,
-                        Balance: h.newQuantity,
-                        Reason: h.reason,
-                        Reference: h.reference || '',
-                        Location: h.fromLoc && h.toLoc ? `${h.fromLoc} → ${h.toLoc}` : h.fromLoc || h.toLoc || '',
+                {/* Header Section */}
+                <div className="bg-gradient-to-r from-blue-600 to-blue-700 rounded-2xl p-5 shadow-lg">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2.5 bg-white/20 rounded-xl backdrop-blur-sm">
+                        <ClockIcon className="w-6 h-6 text-white" />
+                      </div>
+                      <div>
+                        <h3 className="text-xl font-bold text-white flex items-center gap-3">
+                          Transaction Log
+                        </h3>
+                        <p className="text-sm text-blue-100 mt-0.5">
+                          {history.length} {history.length === 1 ? 'record' : 'records'} found
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => {
+                        const exportData = history.map(h => ({
+                          Type: h.type,
+                          Quantity: h.quantity,
+                          Balance: h.newQuantity,
+                          Reason: h.reason,
+                          Reference: h.reference || '',
                         'Unit Cost': h.unitCost || '',
-                        Date: new Date(h.createdAt).toLocaleString('en-GB'),
-                        User: h.createdBy,
-                      }))
-                      downloadCSV(`product-${product.sku || product.id}-transactions.csv`, toCSV(exportData))
-                    }}
-                    className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 rounded-xl transition-all active:scale-95 border border-blue-200"
-                  >
-                    <ArrowDownTrayIcon className="w-4 h-4" />
-                    <span className="hidden sm:inline">Export CSV</span>
-                  </button>
+                          Date: new Date(h.createdAt).toLocaleString('en-GB'),
+                          User: h.createdBy,
+                        }))
+                        downloadCSV(`product-${product.sku || product.id}-transactions.csv`, toCSV(exportData))
+                      }}
+                      className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-blue-700 bg-white hover:bg-blue-50 rounded-xl transition-all active:scale-95 shadow-md hover:shadow-lg"
+                    >
+                      <ArrowDownTrayIcon className="w-5 h-5" />
+                      <span className="hidden sm:inline">Export CSV</span>
+                      <span className="sm:hidden">Export</span>
+                    </button>
+                  </div>
                 </div>
 
                 {/* Filters - Modern Card */}
@@ -1623,37 +1902,27 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
                   ) : (
                     history.map((h) => {
                       const date = new Date(h.createdAt)
-                      const locationText = h.fromLoc && h.toLoc
-                        ? `${groups.find(g => g.id === h.fromLoc)?.name || h.fromLoc} → ${groups.find(g => g.id === h.toLoc)?.name || h.toLoc}`
-                        : h.fromLoc
-                          ? `From: ${groups.find(g => g.id === h.fromLoc)?.name || h.fromLoc}`
-                          : h.toLoc
-                            ? `To: ${groups.find(g => g.id === h.toLoc)?.name || h.toLoc}`
-                            : ''
                       return (
-                        <div 
-                          key={h.id} 
-                          className={`bg-white rounded-xl border-2 overflow-hidden shadow-sm ${
-                            h.type === 'in' ? 'border-l-4 border-l-emerald-500 border-gray-100' :
-                            h.type === 'out' ? 'border-l-4 border-l-red-500 border-gray-100' :
-                            'border-l-4 border-l-blue-500 border-gray-100'
-                          }`}
+                        <div
+                          key={h.id}
+                          className={`bg-white rounded-xl border-2 overflow-hidden shadow-sm ${h.type === 'in' ? 'border-l-4 border-l-emerald-500 border-gray-100' :
+                              h.type === 'out' ? 'border-l-4 border-l-red-500 border-gray-100' :
+                                'border-l-4 border-l-blue-500 border-gray-100'
+                            }`}
                         >
                           <div className="p-4">
                             <div className="flex items-start justify-between mb-3">
                               <div className="flex items-center gap-3">
-                                <div className={`p-2 rounded-xl ${
-                                  h.type === 'in' ? 'bg-emerald-100' :
-                                  h.type === 'out' ? 'bg-red-100' : 'bg-blue-100'
-                                }`}>
+                                <div className={`p-2 rounded-xl ${h.type === 'in' ? 'bg-emerald-100' :
+                                    h.type === 'out' ? 'bg-red-100' : 'bg-blue-100'
+                                  }`}>
                                   {h.type === 'in' ? <PlusIcon className="w-5 h-5 text-emerald-600" /> :
-                                   h.type === 'out' ? <MinusIcon className="w-5 h-5 text-red-600" /> :
-                                   <ArrowPathIcon className="w-5 h-5 text-blue-600" />}
+                                    h.type === 'out' ? <MinusIcon className="w-5 h-5 text-red-600" /> :
+                                      <ArrowPathIcon className="w-5 h-5 text-blue-600" />}
                                 </div>
                                 <div>
-                                  <span className={`text-2xl font-black ${
-                                    h.type === 'in' ? 'text-emerald-600' : 'text-red-600'
-                                  }`}>
+                                  <span className={`text-2xl font-black ${h.type === 'in' ? 'text-emerald-600' : 'text-red-600'
+                                    }`}>
                                     {h.type === 'in' ? '+' : '-'}{h.quantity}
                                   </span>
                                   <span className="text-sm text-gray-500 ml-1">{product.uom || 'units'}</span>
@@ -1668,7 +1937,7 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
                                 </div>
                               </div>
                             </div>
-                            
+
                             <div className="space-y-2">
                               <div className="flex items-center justify-between">
                                 <span className="text-xs text-gray-500 font-medium">Reason</span>
@@ -1684,12 +1953,10 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
                                   <span className="text-xs font-mono bg-gray-100 px-2 py-0.5 rounded text-gray-700">{h.reference}</span>
                                 </div>
                               )}
-                              {locationText && (
-                                <div className="flex items-center justify-between">
-                                  <span className="text-xs text-gray-500 font-medium">Location</span>
-                                  <span className="text-xs text-gray-600">{locationText}</span>
-                                </div>
-                              )}
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs text-gray-500 font-medium">User</span>
+                                <span className="text-xs text-gray-700 font-semibold">{userNames[h.createdBy] || h.createdBy || 'System'}</span>
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -1698,84 +1965,131 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
                   )}
                 </div>
 
-                {/* Desktop Table */}
-                <div className="hidden md:block overflow-x-auto shadow-lg ring-1 ring-black ring-opacity-5 rounded-2xl">
-                  <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gradient-to-r from-gray-50 to-slate-50">
-                      <tr>
-                        <th className="py-4 pl-6 pr-3 text-left text-xs font-bold text-gray-600 uppercase tracking-wider">Type</th>
-                        <th className="px-3 py-4 text-left text-xs font-bold text-gray-600 uppercase tracking-wider">Qty</th>
-                        <th className="px-3 py-4 text-left text-xs font-bold text-gray-600 uppercase tracking-wider">Balance</th>
-                        <th className="px-3 py-4 text-left text-xs font-bold text-gray-600 uppercase tracking-wider">Reason</th>
-                        <th className="px-3 py-4 text-left text-xs font-bold text-gray-600 uppercase tracking-wider">Reference</th>
-                        <th className="px-3 py-4 text-left text-xs font-bold text-gray-600 uppercase tracking-wider hidden lg:table-cell">Location</th>
-                        <th className="px-3 py-4 text-left text-xs font-bold text-gray-600 uppercase tracking-wider">Date</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100 bg-white">
-                      {history.length === 0 ? (
+                {/* Desktop Table - Professional & Responsive */}
+                <div className="hidden md:block bg-white rounded-2xl border border-gray-200 shadow-lg overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead className="bg-gradient-to-r from-gray-50 via-slate-50 to-gray-50 border-b-2 border-gray-200">
                         <tr>
-                          <td colSpan={7} className="py-12 text-center">
-                            <ClockIcon className="w-12 h-12 mx-auto mb-3 text-gray-300" />
-                            <p className="text-sm font-medium text-gray-500">No transactions found</p>
-                          </td>
+                          <th className="py-3.5 px-4 text-left text-[11px] font-bold text-gray-700 uppercase tracking-wider">
+                            <div className="flex items-center gap-2">
+                              <span>Type</span>
+                            </div>
+                          </th>
+                          <th className="py-3.5 px-3 text-right text-[11px] font-bold text-gray-700 uppercase tracking-wider">Qty</th>
+                          <th className="py-3.5 px-3 text-right text-[11px] font-bold text-gray-700 uppercase tracking-wider">Balance</th>
+                          <th className="py-3.5 px-3 text-left text-[11px] font-bold text-gray-700 uppercase tracking-wider max-w-[200px]">Reason</th>
+                          <th className="py-3.5 px-3 text-left text-[11px] font-bold text-gray-700 uppercase tracking-wider hidden xl:table-cell">Ref</th>
+                          <th className="py-3.5 px-3 text-left text-[11px] font-bold text-gray-700 uppercase tracking-wider hidden lg:table-cell max-w-[120px]">User</th>
+                          <th className="py-3.5 px-4 pr-6 text-left text-[11px] font-bold text-gray-700 uppercase tracking-wider">Date & Time</th>
                         </tr>
-                      ) : (
-                        history.map((h, idx) => {
-                          const date = new Date(h.createdAt)
-                          const locationText = h.fromLoc && h.toLoc
-                            ? `${groups.find(g => g.id === h.fromLoc)?.name || h.fromLoc} → ${groups.find(g => g.id === h.toLoc)?.name || h.toLoc}`
-                            : h.fromLoc
-                              ? `From: ${groups.find(g => g.id === h.fromLoc)?.name || h.fromLoc}`
-                              : h.toLoc
-                                ? `To: ${groups.find(g => g.id === h.toLoc)?.name || h.toLoc}`
-                                : ''
-                          return (
-                            <tr key={h.id} className={`hover:bg-gray-50 transition-colors ${idx % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}`}>
-                              <td className="whitespace-nowrap py-4 pl-6 pr-3">
-                                <span className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold ${
-                                  h.type === 'in' ? 'bg-emerald-100 text-emerald-700' :
-                                  h.type === 'out' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'
-                                }`}>
-                                  {h.type === 'in' ? <PlusIcon className="w-3.5 h-3.5" /> :
-                                   h.type === 'out' ? <MinusIcon className="w-3.5 h-3.5" /> :
-                                   <ArrowPathIcon className="w-3.5 h-3.5" />}
-                                  {h.type === 'in' ? 'IN' : h.type === 'out' ? 'OUT' : 'TRANSFER'}
-                                </span>
-                              </td>
-                              <td className={`whitespace-nowrap px-3 py-4 text-lg font-black ${h.type === 'in' ? 'text-emerald-600' : 'text-red-600'}`}>
-                                {h.type === 'in' ? '+' : '-'}{h.quantity}
-                              </td>
-                              <td className="whitespace-nowrap px-3 py-4 text-sm font-semibold text-gray-700">{h.newQuantity}</td>
-                              <td className="px-3 py-4 text-sm text-gray-600 max-w-xs truncate font-medium" title={h.reason}>{h.reason}</td>
-                              <td className="whitespace-nowrap px-3 py-4">
-                                {h.reference ? (
-                                  <span className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-mono bg-gray-100 text-gray-700 border border-gray-200">
-                                    {h.reference}
+                      </thead>
+                      <tbody className="bg-white divide-y divide-gray-100">
+                        {history.length === 0 ? (
+                          <tr>
+                            <td colSpan={7} className="py-16 text-center">
+                              <div className="flex flex-col items-center">
+                                <ClockIcon className="w-14 h-14 text-gray-300 mb-4" />
+                                <p className="text-base font-semibold text-gray-600 mb-1">No transactions found</p>
+                                <p className="text-sm text-gray-400">Try adjusting your filters</p>
+                              </div>
+                            </td>
+                          </tr>
+                        ) : (
+                          history.map((h, idx) => {
+                            const date = new Date(h.createdAt)
+                            return (
+                              <tr 
+                                key={h.id} 
+                                className={`group transition-all duration-150 ${
+                                  idx % 2 === 0 ? 'bg-white' : 'bg-gray-50/30'
+                                } hover:bg-blue-50/50`}
+                              >
+                                {/* Type */}
+                                <td className="py-3 px-4">
+                                  <span className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-bold ${
+                                    h.type === 'in' 
+                                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' 
+                                      : h.type === 'out' 
+                                        ? 'bg-red-50 text-red-700 border border-red-200' 
+                                        : 'bg-blue-50 text-blue-700 border border-blue-200'
+                                  }`}>
+                                    {h.type === 'in' ? (
+                                      <PlusIcon className="w-3 h-3" />
+                                    ) : h.type === 'out' ? (
+                                      <MinusIcon className="w-3 h-3" />
+                                    ) : (
+                                      <ArrowPathIcon className="w-3 h-3" />
+                                    )}
+                                    <span className="hidden sm:inline">
+                                      {h.type === 'in' ? 'IN' : h.type === 'out' ? 'OUT' : 'XFER'}
+                                    </span>
                                   </span>
-                                ) : (
-                                  <span className="text-gray-300">—</span>
-                                )}
-                              </td>
-                              <td className="px-3 py-4 text-sm text-gray-500 max-w-xs truncate hidden lg:table-cell" title={locationText}>
-                                {locationText || <span className="text-gray-300">—</span>}
-                              </td>
-                              <td className="whitespace-nowrap px-3 py-4">
-                                <div className="flex flex-col">
-                                  <time dateTime={date.toISOString()} className="text-sm font-semibold text-gray-900">
-                                    {date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
-                                  </time>
-                                  <time className="text-xs text-gray-400">
-                                    {date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
-                                  </time>
-                                </div>
-                              </td>
-                            </tr>
-                          )
-                        })
-                      )}
-                    </tbody>
-                  </table>
+                                </td>
+
+                                {/* Quantity */}
+                                <td className={`py-3 px-3 text-right text-base font-black ${
+                                  h.type === 'in' ? 'text-emerald-600' : 'text-red-600'
+                                }`}>
+                                  <div className="flex items-center justify-end gap-1">
+                                    <span>{h.type === 'in' ? '+' : '-'}</span>
+                                    <span>{h.quantity.toLocaleString()}</span>
+                                  </div>
+                                </td>
+
+                                {/* Balance */}
+                                <td className="py-3 px-3 text-right">
+                                  <span className="text-sm font-bold text-gray-800">{h.newQuantity.toLocaleString()}</span>
+                                </td>
+
+                                {/* Reason */}
+                                <td className="py-3 px-3 max-w-[200px]">
+                                  <div className="truncate" title={h.reason}>
+                                    <span className="text-sm font-medium text-gray-700">{h.reason}</span>
+                                  </div>
+                                </td>
+
+                                {/* Reference - Hidden on smaller screens */}
+                                <td className="py-3 px-3 hidden xl:table-cell">
+                                  {h.reference ? (
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-mono bg-gray-100 text-gray-700 border border-gray-200">
+                                      {h.reference}
+                                    </span>
+                                  ) : (
+                                    <span className="text-gray-300 text-sm">—</span>
+                                  )}
+                                </td>
+
+                                {/* User - Hidden on smaller screens */}
+                                <td className="py-3 px-3 hidden lg:table-cell max-w-[120px]">
+                                  <div className="truncate" title={userNames[h.createdBy] || h.createdBy || 'System'}>
+                                    <span className="text-xs font-medium text-gray-700">
+                                      {userNames[h.createdBy] || h.createdBy || 'System'}
+                                    </span>
+                                  </div>
+                                </td>
+
+                                {/* Date & Time */}
+                                <td className="py-3 px-4 pr-6">
+                                  <div className="flex flex-col">
+                                    <time 
+                                      dateTime={date.toISOString()} 
+                                      className="text-xs font-semibold text-gray-900"
+                                    >
+                                      {date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' })}
+                                    </time>
+                                    <time className="text-[11px] text-gray-500 mt-0.5">
+                                      {date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                                    </time>
+                                  </div>
+                                </td>
+                              </tr>
+                            )
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
             )}
@@ -1783,11 +2097,37 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
             {/* --- SETTINGS TAB (Refactored Forms) --- */}
             {activeTab === 'settings' && (
               <div className="space-y-8">
+                {sectionMessage && (
+                  <div
+                    className={`rounded-lg border-2 px-4 py-3 text-sm flex items-center justify-between ${
+                      sectionMessage.type === 'success'
+                        ? 'border-green-300 bg-green-50 text-green-800'
+                        : 'border-red-300 bg-red-50 text-red-800'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      {sectionMessage.type === 'success' ? (
+                        <CheckCircleIcon className="w-5 h-5 text-green-600" />
+                      ) : (
+                        <ExclamationCircleIcon className="w-5 h-5 text-red-600" />
+                      )}
+                      <span className="font-medium">{sectionMessage.text}</span>
+                    </div>
+                    <button
+                      onClick={() => setSectionMessage(null)}
+                      className="ml-4 text-gray-400 hover:text-gray-600 transition-colors"
+                    >
+                      <XMarkIcon className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
+
                 {/* Basic Information */}
                 <div className="bg-white rounded-xl border border-gray-200 p-6">
-                  <form onSubmit={(e) => { e.preventDefault(); genericUpdate(new FormData(e.currentTarget), 'basic') }}>
-                    <SectionHeader title="Basic Information" icon={TagIcon} />
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {canManage && (
+                    <form onSubmit={(e) => { e.preventDefault(); genericUpdate(new FormData(e.currentTarget), 'basic') }}>
+                      <SectionHeader title="Basic Information" icon={TagIcon} />
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <InputGroup label="Product Name">
                         <StyledInput name="name" defaultValue={product.name} required />
                       </InputGroup>
@@ -1815,18 +2155,20 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
                       </InputGroup>
                     </div>
                     <div className="mt-6 flex justify-end">
-                      <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium transition-colors">
-                        Save Basic Info
-                      </button>
-                    </div>
-                  </form>
+                        <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium transition-colors">
+                          Save Basic Info
+                        </button>
+                      </div>
+                    </form>
+                  )}
                 </div>
 
                 {/* Inventory Settings */}
                 <div className="bg-white rounded-xl border border-gray-200 p-6">
-                  <form onSubmit={(e) => { e.preventDefault(); genericUpdate(new FormData(e.currentTarget), 'stock') }}>
-                    <SectionHeader title="Inventory Settings" icon={CubeIcon} />
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {canManage && (
+                    <form onSubmit={(e) => { e.preventDefault(); genericUpdate(new FormData(e.currentTarget), 'stock') }}>
+                      <SectionHeader title="Inventory Settings" icon={CubeIcon} />
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                       <InputGroup label="Price Per Box">
                         <StyledInput name="pricePerBox" type="number" step="0.01" defaultValue={product.pricePerBox} />
                       </InputGroup>
@@ -1847,18 +2189,20 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
                       </InputGroup>
                     </div>
                     <div className="mt-6 flex justify-end">
-                      <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium transition-colors">
-                        Save Inventory Settings
-                      </button>
-                    </div>
-                  </form>
+                        <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium transition-colors">
+                          Save Inventory Settings
+                        </button>
+                      </div>
+                    </form>
+                  )}
                 </div>
 
                 {/* Classification */}
                 <div className="bg-white rounded-xl border border-gray-200 p-6">
-                  <form onSubmit={(e) => { e.preventDefault(); genericUpdate(new FormData(e.currentTarget), 'class') }}>
-                    <SectionHeader title="Classification" icon={TagIcon} />
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {canManage && (
+                    <form onSubmit={(e) => { e.preventDefault(); genericUpdate(new FormData(e.currentTarget), 'class') }}>
+                      <SectionHeader title="Classification" icon={TagIcon} />
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <InputGroup label="Category">
                         <StyledSelect name="category" defaultValue={product.category || ''}>
                           <option value="">Select...</option>
@@ -1873,18 +2217,20 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
                       </InputGroup>
                     </div>
                     <div className="mt-6 flex justify-end">
-                      <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium transition-colors">
-                        Save Classification
-                      </button>
-                    </div>
-                  </form>
+                        <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium transition-colors">
+                          Save Classification
+                        </button>
+                      </div>
+                    </form>
+                  )}
                 </div>
 
                 {/* Technical Specs */}
                 <div className="bg-white rounded-xl border border-gray-200 p-6">
-                  <form onSubmit={(e) => { e.preventDefault(); genericUpdate(new FormData(e.currentTarget), 'tech') }}>
-                    <SectionHeader title="Technical Specs" icon={DocumentTextIcon} />
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {canManage && (
+                    <form onSubmit={(e) => { e.preventDefault(); genericUpdate(new FormData(e.currentTarget), 'tech') }}>
+                      <SectionHeader title="Technical Specs" icon={DocumentTextIcon} />
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                       <InputGroup label="Material / Series">
                         <StyledInput name="materialSeries" defaultValue={product.materialSeries} />
                       </InputGroup>
@@ -1901,12 +2247,13 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
                         <StyledInput name="cal" defaultValue={product.cal} />
                       </InputGroup>
                     </div>
-                    <div className="mt-6 flex justify-end">
-                      <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium transition-colors">
-                        Save Specs
-                      </button>
-                    </div>
-                  </form>
+                      <div className="mt-6 flex justify-end">
+                        <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium transition-colors">
+                          Save Specs
+                        </button>
+                      </div>
+                    </form>
+                  )}
                 </div>
 
                 {/* Images & Media */}
@@ -1924,21 +2271,29 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
                               alt={product.name}
                               className="w-32 h-32 object-cover rounded-lg border border-gray-200"
                             />
-                            <button
-                              type="button"
-                              onClick={async () => {
-                                if (!confirm('Delete main image?') || !workspaceId) return
-                                try {
-                                  await updateProduct(workspaceId, product.id, { imageUrl: null } as any)
-                                  onSaved?.()
-                                } catch (e) {
-                                  alert('Failed to delete image')
-                                }
-                              }}
-                              className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 hover:bg-red-600"
-                            >
-                              <XMarkIcon className="w-4 h-4" />
-                            </button>
+                            {canManage && (
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  if (!confirm('Delete main image?') || !workspaceId) return
+                                  try {
+                                    await updateProduct(workspaceId, product.id, { imageUrl: null } as any)
+                                    // Update local state immediately
+                                    setSelectedImage(null)
+                                    setMainImageFile(null)
+                                    // Invalidate product queries to refresh data
+                                    queryClient.invalidateQueries({ queryKey: ['product', workspaceId, product.id] })
+                                    queryClient.invalidateQueries({ queryKey: ['products', workspaceId] })
+                                    onSaved?.()
+                                  } catch (e) {
+                                    alert('Failed to delete image')
+                                  }
+                                }}
+                                className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 hover:bg-red-600"
+                              >
+                                <XMarkIcon className="w-4 h-4" />
+                              </button>
+                            )}
                           </div>
                         )}
                         <div>
@@ -1968,7 +2323,7 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
                   </div>
 
                   {/* Gallery Images */}
-                  <div>
+                  <div id="product-image-upload">
                     <InputGroup label="Gallery Images">
                       <div className="space-y-4">
                         {Array.isArray(product.galleryUrls) && product.galleryUrls.length > 0 && (
@@ -1988,6 +2343,13 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
                                       const updated = [...(product.galleryUrls || [])]
                                       updated.splice(idx, 1)
                                       await updateProduct(workspaceId, product.id, { galleryUrls: updated.length > 0 ? updated : [] } as any)
+                                      // Update local state if deleted image was selected
+                                      if (selectedImage === url) {
+                                        setSelectedImage(updated.length > 0 ? updated[0] : (product.imageUrl || null))
+                                      }
+                                      // Invalidate product queries to refresh data
+                                      queryClient.invalidateQueries({ queryKey: ['product', workspaceId, product.id] })
+                                      queryClient.invalidateQueries({ queryKey: ['products', workspaceId] })
                                       onSaved?.()
                                     } catch (e) {
                                       alert('Failed to delete image')
@@ -2080,7 +2442,8 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
 
                 {/* Tags & Notes */}
                 <div className="bg-white rounded-xl border border-gray-200 p-6">
-                  <form onSubmit={(e) => { e.preventDefault(); genericUpdate(new FormData(e.currentTarget), 'tags') }}>
+                  {canManage && (
+                    <form onSubmit={(e) => { e.preventDefault(); genericUpdate(new FormData(e.currentTarget), 'tags') }}>
                     <SectionHeader title="Tags & Notes" icon={TagIcon} />
                     <div className="grid grid-cols-1 gap-4">
                       <InputGroup label="Tags (comma separated)">
@@ -2097,15 +2460,16 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
                       </InputGroup>
                     </div>
                     <div className="mt-6 flex justify-end">
-                      <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium transition-colors">
-                        Save Tags & Notes
-                      </button>
-                    </div>
-                  </form>
+                        <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium transition-colors">
+                          Save Tags & Notes
+                        </button>
+                      </div>
+                    </form>
+                  )}
                 </div>
 
                 {/* Custom Fields */}
-                {customFields.length > 0 && (
+                {customFields.length > 0 && canManage && (
                   <div className="bg-white rounded-xl border border-gray-200 p-6">
                     <form onSubmit={(e) => { e.preventDefault(); genericUpdate(new FormData(e.currentTarget), 'custom') }}>
                       <SectionHeader title="Custom Fields" icon={DocumentTextIcon} />
@@ -2165,14 +2529,14 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
                           </div>
                         ))}
                       </div>
-                      <div className="mt-6 flex justify-end">
-                        <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium transition-colors">
-                          Save Custom Fields
-                        </button>
-                      </div>
-                    </form>
-                  </div>
-                )}
+                        <div className="mt-6 flex justify-end">
+                          <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium transition-colors">
+                            Save Custom Fields
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+                  )}
               </div>
             )}
 
@@ -2246,32 +2610,34 @@ export function ProductDetails({ product, onClose, onSaved }: Props) {
                                   {createdAt.toLocaleDateString('en-GB')}
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                  <div className="flex items-center justify-end gap-2">
-                                    <button
-                                      onClick={() => setSelectedTicket(ticket)}
-                                      className="text-blue-600 hover:text-blue-900"
-                                      title="Edit"
-                                    >
-                                      <PencilIcon className="w-4 h-4" />
-                                    </button>
-                                    <button
-                                      onClick={async () => {
-                                        if (!confirm('Are you sure you want to delete this ticket?')) return
-                                        if (!workspaceId) return
-                                        try {
-                                          await deleteProductTicket(workspaceId, product.id, ticket.id)
-                                          refetchTickets()
-                                          onSaved?.()
-                                        } catch (e) {
-                                          alert('Failed to delete ticket: ' + (e instanceof Error ? e.message : 'Unknown error'))
-                                        }
-                                      }}
-                                      className="text-red-600 hover:text-red-900"
-                                      title="Delete"
-                                    >
-                                      <TrashIcon className="w-4 h-4" />
-                                    </button>
-                                  </div>
+                                  {canManage && (
+                                    <div className="flex items-center justify-end gap-2">
+                                      <button
+                                        onClick={() => setSelectedTicket(ticket)}
+                                        className="text-blue-600 hover:text-blue-900"
+                                        title="Edit"
+                                      >
+                                        <PencilIcon className="w-4 h-4" />
+                                      </button>
+                                      <button
+                                        onClick={async () => {
+                                          if (!confirm('Are you sure you want to delete this ticket?')) return
+                                          if (!workspaceId) return
+                                          try {
+                                            await deleteProductTicket(workspaceId, product.id, ticket.id)
+                                            refetchTickets()
+                                            onSaved?.()
+                                          } catch (e) {
+                                            alert('Failed to delete ticket: ' + (e instanceof Error ? e.message : 'Unknown error'))
+                                          }
+                                        }}
+                                        className="text-red-600 hover:text-red-900"
+                                        title="Delete"
+                                      >
+                                        <TrashIcon className="w-4 h-4" />
+                                      </button>
+                                    </div>
+                                  )}
                                 </td>
                               </tr>
                             )

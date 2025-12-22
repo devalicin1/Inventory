@@ -39,7 +39,8 @@ const COLORS = {
   highlight: [243, 235, 255] // Açık mor vurgu arka planı
 }
 
-const COMPANY_LOGO = '/logo.png'
+import { LOGO_PDF_URL } from './logo'
+const COMPANY_LOGO = LOGO_PDF_URL
 
 export async function generateJobCreateFormPDFBlob(overrides: JobCreateFormOverrides = {}): Promise<Blob> {
   try {

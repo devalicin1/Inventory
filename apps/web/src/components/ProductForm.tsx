@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { createProduct, updateProduct, type ProductInput, type Group } from '../api/products'
 import { listCustomFields, type CustomField } from '../api/settings'
+import { useSessionStore } from '../state/sessionStore'
+import { hasWorkspacePermission } from '../utils/permissions'
 import { LABEL_SIZES, PAPER_SIZES, generateBarcodeDataURL, type LabelSize, type PaperSize, type BarcodeOptions } from '../utils/barcode'
 
 interface Props {
@@ -14,6 +16,25 @@ interface Props {
 }
 
 export function ProductForm({ workspaceId, groups, onCreated, onClose, productId, initialValues }: Props) {
+  const { userId } = useSessionStore()
+  const [canManageInventory, setCanManageInventory] = useState(false)
+
+  // Check permission for managing inventory
+  useEffect(() => {
+    if (!workspaceId || !userId) {
+      setCanManageInventory(false)
+      return
+    }
+
+    hasWorkspacePermission(workspaceId, userId, 'manage_inventory')
+      .then((hasPermission) => {
+        setCanManageInventory(hasPermission)
+      })
+      .catch(() => {
+        setCanManageInventory(false)
+      })
+  }, [workspaceId, userId])
+
   const [form, setForm] = useState<ProductInput>({
     name: '',
     sku: '',
@@ -167,6 +188,13 @@ export function ProductForm({ workspaceId, groups, onCreated, onClose, productId
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    
+    // Check permission before submitting
+    if (!canManageInventory) {
+      alert('You do not have permission to manage inventory.')
+      return
+    }
+    
     setSubmitting(true)
     setError(null)
     try {
@@ -226,6 +254,11 @@ export function ProductForm({ workspaceId, groups, onCreated, onClose, productId
               {/* Left Panel - Form Fields */}
               <div className="xl:col-span-4 p-6 overflow-y-auto">
                 <div className="space-y-6">
+                  {error && (
+                    <div className="mb-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                      {error}
+                    </div>
+                  )}
                   {/* Basic Information Section */}
                   <section className="bg-white rounded-lg border border-gray-200 p-6">
                     <h4 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">

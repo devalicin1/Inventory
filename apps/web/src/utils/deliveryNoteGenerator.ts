@@ -1,7 +1,8 @@
 import jsPDF from 'jspdf'
 import type { Job, ProductionRun } from '../api/production-jobs'
 
-const COMPANY_LOGO = '/logo.png' // Logo dosyasının olduğundan emin olun
+import { LOGO_PDF_URL } from './logo'
+const COMPANY_LOGO = LOGO_PDF_URL
 
 // --- TİPLER ---
 export type DeliveryNoteOverrides = {

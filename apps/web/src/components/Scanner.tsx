@@ -188,13 +188,14 @@ export function Scanner({ onScan, onClose }: ScannerProps) {
   return (
     <div className="fixed inset-0 z-50 bg-black">
       <div className="flex h-full flex-col">
-        <div className="flex items-center justify-between p-4 text-white">
-          <h2 className="text-lg font-semibold">Scan Barcode/QR</h2>
+        {/* Glass morphism header */}
+        <div className="flex items-center justify-between p-4 sm:p-5 bg-black/40 backdrop-blur-xl border-b border-white/10">
+          <h2 className="text-lg sm:text-xl font-bold text-white">Scan Barcode/QR</h2>
           <button
             onClick={onClose}
-            className="rounded-full bg-white/20 p-2 hover:bg-white/30"
+            className="rounded-2xl bg-white/15 hover:bg-white/25 backdrop-blur-md p-2.5 sm:p-3 active:scale-95 transition-all duration-200 border border-white/20 shadow-lg"
           >
-            ✕
+            <span className="text-white text-lg sm:text-xl font-bold">✕</span>
           </button>
         </div>
         
@@ -208,52 +209,82 @@ export function Scanner({ onScan, onClose }: ScannerProps) {
             disablePictureInPicture
             controls={false}
           />
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <div className={`h-48 w-48 border-2 rounded-lg transition-all duration-300 ${
+          {/* Glass morphism scan frame */}
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
+            <div className="absolute inset-0 bg-black/50" />
+            <div className={`relative h-64 w-64 sm:h-72 sm:w-72 transition-all duration-300 ${
               scanAttempts > 10 
-                ? 'border-yellow-400 shadow-lg shadow-yellow-400/50 animate-pulse opacity-100' 
-                : 'border-white opacity-50'
-            }`} />
+                ? 'opacity-100' 
+                : 'opacity-80'
+            }`}>
+              <div className="absolute inset-0 bg-transparent rounded-2xl" style={{ 
+                boxShadow: '0 0 0 9999px rgba(0,0,0,0.6)' 
+              }} />
+              {/* Corner indicators */}
+              <div className={`absolute -top-1 -left-1 w-10 h-10 sm:w-12 sm:h-12 border-t-4 border-l-4 rounded-tl-2xl transition-colors duration-300 ${
+                scanAttempts > 10 ? 'border-yellow-400' : 'border-blue-400'
+              }`} />
+              <div className={`absolute -top-1 -right-1 w-10 h-10 sm:w-12 sm:h-12 border-t-4 border-r-4 rounded-tr-2xl transition-colors duration-300 ${
+                scanAttempts > 10 ? 'border-yellow-400' : 'border-blue-400'
+              }`} />
+              <div className={`absolute -bottom-1 -left-1 w-10 h-10 sm:w-12 sm:h-12 border-b-4 border-l-4 rounded-bl-2xl transition-colors duration-300 ${
+                scanAttempts > 10 ? 'border-yellow-400' : 'border-blue-400'
+              }`} />
+              <div className={`absolute -bottom-1 -right-1 w-10 h-10 sm:w-12 sm:h-12 border-b-4 border-r-4 rounded-br-2xl transition-colors duration-300 ${
+                scanAttempts > 10 ? 'border-yellow-400' : 'border-blue-400'
+              }`} />
+              {isScanning && scanAttempts <= 10 && (
+                <div className="absolute inset-x-4 top-1/2 h-0.5 bg-gradient-to-r from-transparent via-blue-400 to-transparent animate-pulse" />
+              )}
+            </div>
           </div>
         </div>
 
         {error && (
-          <div className="p-4 bg-red-500 text-white">
-            <p>{error}</p>
-            <button
-              onClick={() => window.location.reload()}
-              className="mt-2 rounded bg-white/20 px-3 py-1 text-sm"
-            >
-              Retry
-            </button>
+          <div className="p-4 sm:p-5 bg-gradient-to-br from-red-500/90 to-red-600/90 backdrop-blur-xl border-t border-white/20">
+            <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 sm:p-5 border border-white/20 max-w-md mx-auto">
+              <p className="text-white font-semibold mb-3">{error}</p>
+              <button
+                onClick={() => window.location.reload()}
+                className="w-full sm:w-auto px-5 py-2.5 bg-white/20 hover:bg-white/30 backdrop-blur-md rounded-xl text-white font-semibold text-sm active:scale-95 transition-all border border-white/30 shadow-lg"
+              >
+                Retry
+              </button>
+            </div>
           </div>
         )}
 
         {isScanning && !error && (
-          <div className="p-4 text-center">
+          <div className="absolute bottom-0 left-0 right-0 p-4 sm:p-5 z-20">
             {scanAttempts > 10 ? (
-              <div className="bg-yellow-500/90 backdrop-blur-sm px-4 py-3 rounded-lg shadow-lg text-left max-w-md mx-auto">
-                <div className="flex items-start gap-3">
-                  <InformationCircleIcon className="h-5 w-5 text-yellow-900 flex-shrink-0 mt-0.5" />
+              <div className="bg-gradient-to-br from-yellow-400/95 to-orange-500/95 backdrop-blur-xl px-5 sm:px-6 py-4 sm:py-5 rounded-2xl sm:rounded-3xl shadow-2xl border border-yellow-300/30 max-w-md mx-auto">
+                <div className="flex items-start gap-4">
+                  <div className="w-10 h-10 sm:w-12 sm:h-12 bg-white/20 backdrop-blur-md rounded-xl flex items-center justify-center flex-shrink-0 border border-white/20">
+                    <InformationCircleIcon className="h-6 w-6 sm:h-7 sm:w-7 text-yellow-900" />
+                  </div>
                   <div className="flex-1">
-                    <p className="text-sm font-medium text-yellow-900 mb-1">QR kod bulunamadı</p>
-                    <ul className="text-xs text-yellow-800 space-y-1">
-                      <li>• QR kodu kameraya daha yakın tutun</li>
-                      <li>• Işığın yeterli olduğundan emin olun</li>
-                      <li>• QR kodun tamamının görünür olduğundan emin olun</li>
-                      <li>• Kamerayı sabit tutun</li>
+                    <p className="text-sm sm:text-base font-bold text-yellow-900 mb-2">QR code not found</p>
+                    <ul className="text-xs sm:text-sm text-yellow-800 space-y-1 font-medium">
+                      <li>• Move code closer to camera</li>
+                      <li>• Ensure good lighting</li>
+                      <li>• Make sure code is fully visible</li>
+                      <li>• Hold camera steady</li>
                     </ul>
                   </div>
                 </div>
               </div>
             ) : scanAttempts > 5 ? (
-              <div className="bg-orange-500/90 backdrop-blur-sm px-4 py-2 rounded-lg shadow-lg text-white">
-                <p className="text-xs text-center">
-                  QR kod aranıyor... Kamerayı sabit tutun ve QR kodu kare içine hizalayın
+              <div className="bg-gradient-to-r from-orange-500/90 to-amber-500/90 backdrop-blur-xl px-5 sm:px-6 py-3 sm:py-4 rounded-2xl sm:rounded-3xl shadow-2xl border border-orange-300/30 max-w-md mx-auto">
+                <p className="text-sm sm:text-base text-white text-center font-semibold">
+                  🔍 Searching... Hold steady and align code in frame
                 </p>
               </div>
             ) : (
-              <p className="text-white">Point camera at barcode or QR code</p>
+              <div className="bg-black/60 backdrop-blur-xl px-5 sm:px-6 py-3 sm:py-4 rounded-2xl sm:rounded-3xl border border-white/20 shadow-2xl max-w-md mx-auto">
+                <p className="text-sm sm:text-base text-white text-center font-semibold">
+                  📷 Point camera at barcode or QR code
+                </p>
+              </div>
             )}
           </div>
         )}

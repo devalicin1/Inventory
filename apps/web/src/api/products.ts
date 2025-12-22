@@ -189,8 +189,8 @@ export async function createProduct(workspaceId: string, input: ProductInput): P
     }
   }
 
-  const qrData = await generateQRCodeDataURL(input.sku || docRef.id)
-  
+  const qrData = await generateQRCodeDataURL(`PRO:${input.sku || docRef.id}`)
+
   // Generate barcode only if requested (default: true for backward compatibility)
   let barcodeUrl: string | undefined
   if (input.generateBarcode !== false) {
@@ -221,7 +221,7 @@ export async function createProduct(workspaceId: string, input: ProductInput): P
       }
       const barcodeResult = await generateBarcodeDataURL(input.sku || docRef.id, barcodeOptions)
       const barRef = ref(storage, `workspaces/${workspaceId}/products/${docRef.id}/barcode.png`)
-      
+
       // Convert data URL to bytes
       const res = await fetch(barcodeResult.dataUrl)
       const buf = await res.arrayBuffer()
@@ -504,7 +504,7 @@ export function subscribeToProducts(
 ): () => void {
   const col = collection(db, 'workspaces', workspaceId, 'products')
   const q = query(col, orderBy('name', 'asc'))
-  
+
   return onSnapshot(
     q,
     (snapshot) => {

@@ -30,11 +30,38 @@ export function useCameraScanner({
   const reader = useRef<BrowserMultiFormatReader | null>(null)
   const hasProcessedScan = useRef(false)
 
+  // 1. Stable Refs to avoid restarting the effect when these change
+  const onScanSuccessRef = useRef(onScanSuccess)
+  const lastScannedCodeRef = useRef(lastScannedCode)
+  const scanAttemptsRef = useRef(0) // Internal tracking to avoid state dependency
+
+  // Keep refs synced
   useEffect(() => {
+    onScanSuccessRef.current = onScanSuccess
+  }, [onScanSuccess])
+
+  useEffect(() => {
+    lastScannedCodeRef.current = lastScannedCode
+  }, [lastScannedCode])
+
+  // Reset internal attempts when enabled toggles
+  useEffect(() => {
+    if (enabled) {
+      scanAttemptsRef.current = 0
+    }
+  }, [enabled])
+
+  useEffect(() => {
+    // 2. Minimal Dependency Array
+    // Only restart if:
+    // - enabled status changes
+    // - scanMode changes (camera vs manual)
+    // - video element is re-created
     if (!enabled || scanMode !== 'camera' || !videoRef.current) {
       if (reader.current) {
         try {
-          ;(reader.current as any).reset()
+          // Use type assertion for undocumented reset method if needed, or just standard cleanup
+          (reader.current as any).reset()
         } catch (e) {
           // Ignore reset errors
         }
@@ -47,209 +74,157 @@ export function useCameraScanner({
     }
 
     if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
-      setCameraError('Camera access requires HTTPS. Please use a secure connection.')
+      setCameraError('Camera access requires HTTPS.')
       setIsScanning(false)
       return
     }
 
+    let isMounted = true // 3. Concurrency Safety
+
+    // Cleanup existing reader
     if (reader.current) {
       try {
-        ;(reader.current as any).reset()
-      } catch (e) {
-        console.warn('Error resetting existing scanner:', e)
-      }
+        (reader.current as any).reset()
+      } catch (e) { }
       reader.current = null
     }
-    
-    if (videoRef.current) {
-      const existingStream = videoRef.current.srcObject as MediaStream
-      if (existingStream) {
-        existingStream.getTracks().forEach(track => {
-          track.stop()
-        })
-        videoRef.current.srcObject = null
-      }
+
+    // Cleanup existing stream manually to be safe
+    if (videoRef.current.srcObject) {
+      const stream = videoRef.current.srcObject as MediaStream
+      stream.getTracks().forEach(t => t.stop())
+      videoRef.current.srcObject = null
     }
-    
+
     reader.current = new BrowserMultiFormatReader()
-    setScanAttempts(0)
-    setLastScanTime(Date.now())
     hasProcessedScan.current = false
-    
+    setLastScanTime(Date.now())
+
     const startScanning = async () => {
+      if (!isMounted) return
+      setIsScanning(true)
+      setCameraError(null)
+
+      if (!videoRef.current) return
+
+      // Mobile video attributes
+      videoRef.current.setAttribute('playsinline', 'true')
+      videoRef.current.setAttribute('webkit-playsinline', 'true')
+      videoRef.current.muted = true
+      videoRef.current.autoplay = true
+
+      const handleScanResult = (result: any, err: any) => {
+        if (!isMounted) return
+
+        if (result) {
+          if (hasProcessedScan.current) return
+
+          const scannedCode = result.getText().trim()
+
+          // Compare with REF, not state dependency
+          if (lastScannedCodeRef.current === scannedCode) return
+
+          hasProcessedScan.current = true
+
+          // Update state (will trigger re-render but NOT re-run of this effect)
+          setLastScannedCode(scannedCode)
+          setLastScanTime(Date.now())
+
+          // Stop the stream? User requested stability. 
+          // If we stop stream here, we might need to restart it later manually.
+          // For now, let's keep the behavior of "Scan -> Success -> Close/Pause"
+          // But perform cleanup safely.
+
+          if (videoRef.current && videoRef.current.srcObject) {
+            const stream = videoRef.current.srcObject as MediaStream
+            stream.getTracks().forEach(t => t.stop())
+            videoRef.current.srcObject = null
+          }
+
+          if (reader.current) {
+            (reader.current as any).reset()
+            reader.current = null
+          }
+
+          setIsScanning(false)
+
+          // Debounce flag reset
+          setTimeout(() => {
+            if (isMounted) hasProcessedScan.current = false
+          }, 100)
+
+          // Call stable callback
+          onScanSuccessRef.current(scannedCode)
+
+          // Clear validation cooldown
+          setTimeout(() => {
+            if (isMounted) setLastScannedCode(null)
+          }, 3000)
+        }
+        if (err) {
+          if (err.name === 'NotFoundException') {
+            // Just noise, ignore or log sparingly
+          }
+        }
+      }
+
       try {
-        setIsScanning(true)
-        setCameraError(null)
+        // 4. Soft Constraints
+        // { ideal: 'environment' } is much friendlier to Android drivers than just 'environment'
+        await reader.current!.decodeFromConstraints(
+          {
+            audio: false,
+            video: {
+              facingMode: { ideal: 'environment' }
+            }
+          },
+          videoRef.current,
+          handleScanResult
+        )
+      } catch (firstError: any) {
+        if (!isMounted) return
+        console.warn('Ideal environment camera failed, attempting fallback...', firstError)
 
         try {
-          const stream = await navigator.mediaDevices.getUserMedia({ 
-            video: { 
-              facingMode: 'environment',
-              width: { ideal: 1280, min: 640, max: 1920 },
-              height: { ideal: 720, min: 480, max: 1080 },
-              frameRate: { ideal: 30, max: 30 }
-            } 
-          })
-          stream.getTracks().forEach(track => track.stop())
-        } catch (permissionError) {
-          if (permissionError instanceof Error) {
-            if (permissionError.name === 'NotAllowedError' || permissionError.name === 'PermissionDeniedError') {
-              throw new Error('Camera permission denied. Please allow camera access in your browser settings and try again.')
-            } else if (permissionError.name === 'NotFoundError' || permissionError.name === 'DevicesNotFoundError') {
-              throw new Error('No camera found on this device.')
-            } else if (permissionError.name === 'NotReadableError' || permissionError.name === 'TrackStartError') {
-              throw new Error('Camera is already in use by another application.')
-            }
-          }
-          throw permissionError
-        }
-        
-        await new Promise(resolve => setTimeout(resolve, 100))
-        
-        const devices = await BrowserMultiFormatReader.listVideoInputDevices()
-        
-        if (devices.length === 0) {
-          throw new Error('No camera found. Please check your device permissions.')
-        }
+          if (!reader.current) return // Safety check
 
-        let deviceId = devices[devices.length - 1]?.deviceId
-        const backCamera = devices.find(d => 
-          d.label.toLowerCase().includes('back') || 
-          d.label.toLowerCase().includes('rear') ||
-          d.label.toLowerCase().includes('environment') ||
-          d.label.toLowerCase().includes('facing back')
-        )
-        if (backCamera) {
-          deviceId = backCamera.deviceId
-        } else if (devices.length > 1) {
-          deviceId = devices[devices.length - 1].deviceId
-        } else if (devices.length > 0) {
-          deviceId = devices[0].deviceId
-        }
+          // Fallback: simple video request
+          await reader.current.decodeFromConstraints(
+            { video: true },
+            videoRef.current,
+            handleScanResult
+          )
+        } catch (secondError: any) {
+          if (!isMounted) return
+          console.error('Camera fallback failed:', secondError)
 
-        if (!deviceId || !videoRef.current) {
-          throw new Error('Camera not available')
-        }
+          let errorType = secondError.name || 'UnknownError'
+          let errorMessage = secondError.message || JSON.stringify(secondError)
 
-        if (videoRef.current) {
-          videoRef.current.setAttribute('playsinline', 'true')
-          videoRef.current.setAttribute('webkit-playsinline', 'true')
-          videoRef.current.muted = true
-          videoRef.current.autoplay = true
+          setCameraError(`CAM_ERR_V3.2: [${errorType}] ${errorMessage}`)
+          setIsScanning(false)
         }
-
-        await reader.current!.decodeFromVideoDevice(
-          deviceId, 
-          videoRef.current, 
-          (result, err) => {
-            if (result) {
-              if (hasProcessedScan.current) {
-                return
-              }
-              hasProcessedScan.current = true
-
-              const scannedCode = result.getText().trim()
-              
-              if (lastScannedCode === scannedCode) {
-                return
-              }
-              
-              setLastScannedCode(scannedCode)
-              setScanAttempts(0)
-              setLastScanTime(Date.now())
-              
-              if (videoRef.current) {
-                const stream = videoRef.current.srcObject as MediaStream
-                if (stream) {
-                  stream.getTracks().forEach(track => {
-                    track.stop()
-                  })
-                  videoRef.current.srcObject = null
-                }
-              }
-              
-              if (reader.current) {
-                try {
-                  ;(reader.current as any).reset()
-                } catch (e) {
-                  console.warn('Error resetting scanner:', e)
-                }
-                reader.current = null
-              }
-              
-              setIsScanning(false)
-              
-              setTimeout(() => {
-                hasProcessedScan.current = false
-              }, 100)
-              
-              onScanSuccess(scannedCode)
-              
-              setTimeout(() => {
-                setLastScannedCode(null)
-              }, 3000)
-            }
-            if (err) {
-              if (err instanceof Error && err.name === 'NotFoundException') {
-                setScanAttempts(prev => prev + 1)
-              } else {
-                console.error('Scan error:', err)
-              }
-            }
-          }
-        )
-      } catch (err) {
-        let errorMessage = 'Failed to start camera'
-        
-        if (err instanceof Error) {
-          if (err.message.includes('permission')) {
-            errorMessage = err.message
-          } else if (err.message.includes('No camera')) {
-            errorMessage = err.message
-          } else if (err.message.includes('already in use')) {
-            errorMessage = err.message
-          } else if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-            errorMessage = 'Camera permission denied. Please allow camera access in your browser settings.'
-          } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-            errorMessage = 'No camera found on this device.'
-          } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
-            errorMessage = 'Camera is already in use. Please close other applications using the camera.'
-          } else {
-            errorMessage = err.message || errorMessage
-          }
-        }
-        
-        setCameraError(errorMessage)
-        setIsScanning(false)
-        console.error('Camera error:', err)
       }
     }
 
     startScanning()
 
     return () => {
+      isMounted = false
+      // Strict Cleanup on Unmount / Dep Change
       if (reader.current) {
         try {
-          ;(reader.current as any).reset()
-        } catch (e) {
-          console.warn('Error resetting scanner:', e)
-        }
+          (reader.current as any).reset()
+        } catch (e) { }
         reader.current = null
       }
-      
-      if (videoRef.current) {
+      if (videoRef.current && videoRef.current.srcObject) {
         const stream = videoRef.current.srcObject as MediaStream
-        if (stream) {
-          stream.getTracks().forEach(track => {
-            track.stop()
-          })
-          videoRef.current.srcObject = null
-        }
+        stream.getTracks().forEach(t => t.stop())
+        videoRef.current.srcObject = null
       }
-      
       setIsScanning(false)
       setCameraError(null)
     }
-  }, [enabled, scanMode, videoRef, setIsScanning, setCameraError, setScanAttempts, setLastScanTime, setLastScannedCode, lastScannedCode, onScanSuccess])
+  }, [enabled, scanMode, videoRef, setIsScanning, setCameraError, setLastScannedCode, setLastScanTime]) // REMOVED: onScanSuccess, lastScannedCode, etc.
 }
-

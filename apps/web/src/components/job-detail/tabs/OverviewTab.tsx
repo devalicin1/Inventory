@@ -11,6 +11,7 @@ import {
 } from '@heroicons/react/24/outline'
 import type { Job, HistoryEvent, Workflow } from '../../../api/production-jobs'
 import { updateJob } from '../../../api/production-jobs'
+import { calculateProgress as calculateJobProgress } from '../../scanner/utils/productionCalculations'
 
 interface OverviewTabProps {
   job: Job
@@ -86,40 +87,9 @@ export const OverviewTab: FC<OverviewTabProps> = ({
     return null
   }
 
-  const calculateProgress = () => {
-    if (!job.output || job.output.length === 0) return 0
-    const item = job.output[0]
-    const qtyProduced = Number(item.qtyProduced || 0)
-    const qtyPlanned = Number(item.qtyPlanned || 0)
-    
-    // Safety checks
-    if (qtyPlanned <= 0) return 0
-    if (qtyProduced < 0) return 0
-    
-    // Calculate percentage
-    // If qtyProduced > qtyPlanned, it means either:
-    // 1. More was produced than planned (overproduction)
-    // 2. Units don't match (UOM mismatch - e.g., planned in boxes, produced in cartoons)
-    // 3. Data error (qtyPlanned is wrong)
-    const percentage = (qtyProduced / qtyPlanned) * 100
-    
-    // Log warning if percentage exceeds 100% significantly (likely data issue)
-    if (percentage > 150) {
-      console.warn(`Progress calculation warning for job ${job.code}:`, {
-        qtyProduced,
-        qtyPlanned,
-        percentage: `${percentage.toFixed(2)}%`,
-        producedUOM: item.uom || job.unit,
-        plannedUOM: item.uom || job.unit,
-        message: 'Progress exceeds 150%. Possible UOM mismatch or data error.'
-      })
-    }
-    
-    // Cap at 100% for display (overproduction still shows as 100%)
-    return Math.min(Math.max(percentage, 0), 100)
-  }
-
-  const progress = calculateProgress()
+  // Calculate progress using production runs for accurate percentage
+  const progressData = calculateJobProgress(job, allRuns, workflows)
+  const progress = progressData.percentage
 
   return (
     <div className="space-y-6">

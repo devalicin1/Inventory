@@ -1,13 +1,14 @@
 {
-  "name": "Inventory PWA",
-  "short_name": "Inventory",
+  "name": "Itory",
+  "short_name": "Itory",
   "theme_color": "#0ea5e9",
   "background_color": "#ffffff",
   "display": "standalone",
   "start_url": "/",
   "icons": [
-    { "src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=", "sizes": "192x192", "type": "image/png" },
-    { "src": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=", "sizes": "512x512", "type": "image/png" }
+    { "src": "https://firebasestorage.googleapis.com/v0/b/inventory-ce0c2.firebasestorage.app/o/Logos%2Ficon.png?alt=media", "sizes": "64x64", "type": "image/png" },
+    { "src": "https://firebasestorage.googleapis.com/v0/b/inventory-ce0c2.firebasestorage.app/o/Logos%2Ficon.png?alt=media", "sizes": "192x192", "type": "image/png" },
+    { "src": "https://firebasestorage.googleapis.com/v0/b/inventory-ce0c2.firebasestorage.app/o/Logos%2Ficon.png?alt=media", "sizes": "512x512", "type": "image/png" }
   ]
 }
 

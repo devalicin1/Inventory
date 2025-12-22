@@ -4,7 +4,8 @@ import { doc as firestoreDoc, getDoc } from 'firebase/firestore'
 import { db, storage } from '../lib/firebase'
 import { ref, getBytes } from 'firebase/storage'
 
-const COMPANY_LOGO = '/logo.png'
+import { LOGO_PDF_URL } from './logo'
+const COMPANY_LOGO = LOGO_PDF_URL
 
 const COLORS = {
   text: [30, 30, 30],

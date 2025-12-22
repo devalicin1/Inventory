@@ -9,6 +9,9 @@ import { createStockTransaction } from '../api/inventory'
 import { ProductForm } from '../components/ProductForm'
 import { ProductDetails } from '../components/ProductDetails'
 import { useSessionStore } from '../state/sessionStore'
+import { hasWorkspacePermission } from '../utils/permissions'
+import { scoreAndSort } from '../utils/search'
+import { showToast } from '../components/ui/Toast'
 import {
   PlusIcon,
   QrCodeIcon,
@@ -76,8 +79,25 @@ export function Inventory() {
   const [quickAdjustProduct, setQuickAdjustProduct] = useState<string | null>(null)
   const [adjustQty, setAdjustQty] = useState<number>(1)
   const [isAdjusting, setIsAdjusting] = useState(false)
+  const [canManageInventory, setCanManageInventory] = useState(false)
   const qc = useQueryClient()
   const { workspaceId, userId } = useSessionStore()
+
+  // Check permission for managing inventory
+  useEffect(() => {
+    if (!workspaceId || !userId) {
+      setCanManageInventory(false)
+      return
+    }
+
+    hasWorkspacePermission(workspaceId, userId, 'manage_inventory')
+      .then((hasPermission) => {
+        setCanManageInventory(hasPermission)
+      })
+      .catch(() => {
+        setCanManageInventory(false)
+      })
+  }, [workspaceId, userId])
 
   const { data: products = [], isLoading: productsLoading, refetch: refetchProducts } = useQuery({
     queryKey: ['products', workspaceId],
@@ -164,21 +184,26 @@ export function Inventory() {
       filtered = filtered.filter(p => (p as any).groupId === selectedGroup)
     }
 
-    if (searchTerm) {
-      const term = searchTerm.toLowerCase()
-      filtered = filtered.filter(p =>
-        p.name.toLowerCase().includes(term) ||
-        p.sku.toLowerCase().includes(term) ||
-        p.id.toLowerCase().includes(term)
-      )
-    }
-
     if (statusFilter !== 'all') {
       filtered = filtered.filter(p => p.status === statusFilter)
     }
 
     if (lowStockFilter) {
       filtered = filtered.filter(p => (p.qtyOnHand || 0) < p.minStock)
+    }
+
+    // Use fuzzy search if search term exists
+    if (searchTerm) {
+      const scored = scoreAndSort(
+        filtered,
+        searchTerm,
+        (p) => [
+          p.name || '',
+          p.sku || '',
+          p.id || ''
+        ]
+      )
+      filtered = scored.map(result => result.item)
     }
 
     return filtered
@@ -253,6 +278,9 @@ export function Inventory() {
     
     setIsAdjusting(true)
     try {
+      const product = products.find(p => p.id === productId)
+      const sku = product?.sku || productId.substring(0, 8)
+      
       await createStockTransaction({
         workspaceId: workspaceId!,
         productId,
@@ -262,11 +290,23 @@ export function Inventory() {
         reason: type === 'in' ? 'Quick stock in' : 'Quick stock out',
       })
       qc.invalidateQueries({ queryKey: ['products', workspaceId] })
+      window.dispatchEvent(new Event('stockTransactionCreated'))
+      
+      showToast(
+        `Stock ${type === 'in' ? 'added' : 'removed'}: ${type === 'in' ? '+' : '-'}${qty} ${product?.uom || 'units'} for ${sku}`,
+        'success',
+        3000
+      )
+      
       setQuickAdjustProduct(null)
       setAdjustQty(1)
     } catch (err) {
       console.error('Failed to adjust stock:', err)
-      alert('Failed to adjust stock')
+      showToast(
+        `Failed to adjust stock: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        'error',
+        5000
+      )
     } finally {
       setIsAdjusting(false)
     }
@@ -286,16 +326,12 @@ export function Inventory() {
 
   const columns = [
     {
-      key: 'sku' as keyof Product,
-      label: 'SKU',
-      sortable: true
-    },
-    {
       key: 'name' as keyof Product,
-      label: 'Product Name',
+      label: 'Product',
       sortable: true,
-      render: (value: string) => {
-        if (!value) return ''
+      className: 'min-w-[250px]',
+      render: (value: string, item: Product) => {
+        if (!value) return <span className="text-gray-400">—</span>
         // Clean up encoding issues - remove replacement characters and invalid unicode
         let cleaned = value
           .replace(/\uFFFD/g, '') // Remove replacement characters ()
@@ -311,22 +347,41 @@ export function Inventory() {
           // If decoding fails, use original
         }
 
-        // Return cleaned value or fallback to original
-        return cleaned || value
+        const product = products.find(p => p.id === item.id)
+        const sku = product?.sku || ''
+        
+        return (
+          <div className="flex flex-col gap-1">
+            <span className="font-semibold text-gray-900 leading-tight">{cleaned || value}</span>
+            {sku && (
+              <span className="text-xs text-gray-500 font-mono bg-gray-50 px-2 py-0.5 rounded inline-block w-fit">{sku}</span>
+            )}
+          </div>
+        )
       }
     },
     {
       key: 'uom' as keyof Product,
       label: 'Unit',
-      sortable: true
+      sortable: true,
+      className: 'w-20',
+      render: (value: string) => (
+        <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-gray-100 text-gray-700">
+          {value || '—'}
+        </span>
+      )
     },
     {
       key: 'qtyOnHand' as keyof Product,
       label: 'On Hand',
+      className: 'w-32',
       render: (value: number, item: Product) => {
         const product = products.find(p => p.id === item.id)
         const minStock = product?.minStock || 0
         const qty = value || 0
+        const isLow = qty < minStock && qty > 0
+        const isOut = qty === 0
+        
         return (
           <span className={`font-medium ${qty === 0 ? 'text-red-600' :
             qty < minStock ? 'text-orange-600' : 'text-gray-900'
@@ -360,6 +415,42 @@ export function Inventory() {
       sortable: true
     },
   ]
+
+  const handleCreateDefaultGroups = async () => {
+    if (!workspaceId) return
+
+    try {
+      const templateNames = [
+        'Raw Materials',
+        'Work In Progress',
+        'Finished Goods',
+        'Consumables',
+        'Tools & Equipment'
+      ]
+
+      const existingNames = new Set(
+        (groups || []).map(g => g.name.toLowerCase().trim())
+      )
+
+      const toCreate = templateNames.filter(
+        name => !existingNames.has(name.toLowerCase().trim())
+      )
+
+      if (toCreate.length === 0) {
+        alert('All recommended folders already exist.')
+        return
+      }
+
+      await Promise.all(
+        toCreate.map(name => createGroup(workspaceId!, name))
+      )
+
+      qc.invalidateQueries({ queryKey: ['groups', workspaceId] })
+    } catch (err) {
+      console.error('Failed to create default folders', err)
+      alert('Failed to create default folders')
+    }
+  }
 
   // Folder tree component
   const FolderTree = ({ groups, parentId = null, depth = 0 }: { groups: Group[], parentId?: string | null, depth?: number }) => {
@@ -438,47 +529,49 @@ export function Inventory() {
                 </div>
 
                 {/* Group Actions */}
-                <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
-                  <button
-                    onClick={async (e) => {
-                      e.stopPropagation()
-                      const name = prompt('New subfolder name?')
-                      if (!name) return
-                      await createGroup(workspaceId!, name, group.id)
-                      qc.invalidateQueries({ queryKey: ['groups', workspaceId] })
-                      setExpandedGroups(prev => new Set(prev).add(group.id))
-                    }}
-                    className="p-1 text-gray-400 hover:text-blue-600 transition-colors"
-                    title="New subfolder"
-                  >
-                    <FolderPlusIcon className="h-3 w-3" />
-                  </button>
-                  <button
-                    onClick={async (e) => {
-                      e.stopPropagation()
-                      const name = prompt('Rename folder', group.name)
-                      if (!name) return
-                      await renameGroup(workspaceId!, group.id, name)
-                      qc.invalidateQueries({ queryKey: ['groups', workspaceId] })
-                    }}
-                    className="p-1 text-gray-400 hover:text-green-600 transition-colors"
-                    title="Rename folder"
-                  >
-                    <PencilIcon className="h-3 w-3" />
-                  </button>
-                  <button
-                    onClick={async (e) => {
-                      e.stopPropagation()
-                      if (!confirm('Delete this folder and all its contents?')) return
-                      await deleteGroup(workspaceId!, group.id)
-                      qc.invalidateQueries({ queryKey: ['groups', workspaceId] })
-                    }}
-                    className="p-1 text-gray-400 hover:text-red-600 transition-colors"
-                    title="Delete folder"
-                  >
-                    <TrashIcon className="h-3 w-3" />
-                  </button>
-                </div>
+                {canManageInventory && (
+                  <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
+                    <button
+                      onClick={async (e) => {
+                        e.stopPropagation()
+                        const name = prompt('New subfolder name?')
+                        if (!name) return
+                        await createGroup(workspaceId!, name, group.id)
+                        qc.invalidateQueries({ queryKey: ['groups', workspaceId] })
+                        setExpandedGroups(prev => new Set(prev).add(group.id))
+                      }}
+                      className="p-1 text-gray-400 hover:text-blue-600 transition-colors"
+                      title="New subfolder"
+                    >
+                      <FolderPlusIcon className="h-3 w-3" />
+                    </button>
+                    <button
+                      onClick={async (e) => {
+                        e.stopPropagation()
+                        const name = prompt('Rename folder', group.name)
+                        if (!name) return
+                        await renameGroup(workspaceId!, group.id, name)
+                        qc.invalidateQueries({ queryKey: ['groups', workspaceId] })
+                      }}
+                      className="p-1 text-gray-400 hover:text-green-600 transition-colors"
+                      title="Rename folder"
+                    >
+                      <PencilIcon className="h-3 w-3" />
+                    </button>
+                    <button
+                      onClick={async (e) => {
+                        e.stopPropagation()
+                        if (!confirm('Delete this folder and all its contents?')) return
+                        await deleteGroup(workspaceId!, group.id)
+                        qc.invalidateQueries({ queryKey: ['groups', workspaceId] })
+                      }}
+                      className="p-1 text-gray-400 hover:text-red-600 transition-colors"
+                      title="Delete folder"
+                    >
+                      <TrashIcon className="h-3 w-3" />
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Children */}
@@ -605,16 +698,18 @@ export function Inventory() {
                       <QrCodeIcon className="h-8 w-8" />
                       <span className="font-semibold">Scan</span>
                     </button>
-                    <button
-                      onClick={() => {
-                        setShowCreate(true)
-                        setShowMobileActions(false)
-                      }}
-                      className="flex flex-col items-center justify-center gap-2 p-4 bg-green-50 text-green-700 rounded-2xl active:bg-green-100"
-                    >
-                      <PlusIcon className="h-8 w-8" />
-                      <span className="font-semibold">New Product</span>
-                    </button>
+                    {canManageInventory && (
+                      <button
+                        onClick={() => {
+                          setShowCreate(true)
+                          setShowMobileActions(false)
+                        }}
+                        className="flex flex-col items-center justify-center gap-2 p-4 bg-green-50 text-green-700 rounded-2xl active:bg-green-100"
+                      >
+                        <PlusIcon className="h-8 w-8" />
+                        <span className="font-semibold">New Product</span>
+                      </button>
+                    )}
                   </div>
                   
                   {/* Secondary Actions */}
@@ -737,14 +832,16 @@ export function Inventory() {
               <QrCodeIcon className="h-4 w-4 mr-2" />
               Scan
             </Button>
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => setShowCreate(true)}
-            >
-              <PlusIcon className="h-4 w-4 mr-2" />
-              New Product
-            </Button>
+            {canManageInventory && (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => setShowCreate(true)}
+              >
+                <PlusIcon className="h-4 w-4 mr-2" />
+                New Product
+              </Button>
+            )}
           </div>
         </div>
       </div>
@@ -755,7 +852,7 @@ export function Inventory() {
           <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
           <input
             type="text"
-            placeholder="Search products by name, SKU, or ID..."
+            placeholder="Search within products..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full pl-10 pr-10 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors text-sm"
@@ -1070,6 +1167,44 @@ export function Inventory() {
                     </span>
                   </div>
 
+                  {/* Folder Onboarding - Mobile */}
+                  {canManageInventory && groups.length === 0 && (
+                    <div className="mt-3 rounded-xl border border-dashed border-blue-200 bg-blue-50/60 px-3 py-3 space-y-2">
+                      <div className="text-xs font-semibold text-blue-900">
+                        Set up your first folders
+                      </div>
+                      <p className="text-[11px] text-blue-900/80 leading-snug">
+                        Create folders to group products by type, stage, or location. This makes filtering and reporting much easier later.
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          size="sm"
+                          variant="primary"
+                          className="text-xs"
+                          onClick={handleCreateDefaultGroups}
+                        >
+                          Use recommended folders
+                        </Button>
+                        <button
+                          type="button"
+                          className="text-xs font-medium text-blue-700 hover:text-blue-900 underline underline-offset-2"
+                          onClick={async () => {
+                            const name = prompt('Folder name?')
+                            if (!name) return
+                            await createGroup(workspaceId!, name)
+                            qc.invalidateQueries({ queryKey: ['groups', workspaceId] })
+                          }}
+                        >
+                          Create custom folder
+                        </button>
+                      </div>
+                      <div className="text-[11px] text-blue-900/80">
+                        <span className="font-semibold">Suggested structure: </span>
+                        <span>Raw Materials · Work In Progress · Finished Goods · Consumables · Tools &amp; Equipment</span>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Folder Tree */}
                   <FolderTree groups={groups} />
                 </div>
@@ -1129,6 +1264,43 @@ export function Inventory() {
                 </span>
               </div>
 
+              {/* Folder Onboarding - Desktop */}
+              {canManageInventory && groups.length === 0 && (
+                <div className="mt-3 rounded-xl border border-dashed border-blue-200 bg-blue-50/60 px-3 py-3 space-y-2">
+                  <div className="text-sm font-semibold text-blue-900">
+                    Get started by creating folders
+                  </div>
+                  <p className="text-xs text-blue-900/80 leading-snug">
+                    Folders help you segment products into logical groups like raw materials, finished goods, or tools.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      onClick={handleCreateDefaultGroups}
+                    >
+                      Create recommended folders
+                    </Button>
+                    <button
+                      type="button"
+                      className="text-xs font-medium text-blue-700 hover:text-blue-900 underline underline-offset-2"
+                      onClick={async () => {
+                        const name = prompt('Folder name?')
+                        if (!name) return
+                        await createGroup(workspaceId!, name)
+                        qc.invalidateQueries({ queryKey: ['groups', workspaceId] })
+                      }}
+                    >
+                      Create a custom folder
+                    </button>
+                  </div>
+                  <div className="text-[11px] text-blue-900/80">
+                    <span className="font-semibold">Recommended: </span>
+                    <span>Raw Materials · Work In Progress · Finished Goods · Consumables · Tools &amp; Equipment</span>
+                  </div>
+                </div>
+              )}
+
               {/* Folder Tree */}
               <FolderTree groups={groups} />
             </div>
@@ -1186,18 +1358,20 @@ export function Inventory() {
                     Draft
                   </button>
 
-                  <button
-                    className="text-xs sm:text-sm px-2 sm:px-3 py-1 sm:py-1.5 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors flex items-center gap-1"
-                    onClick={async () => {
-                      if (!confirm(`Delete ${selectedIds.length} product(s)? This action cannot be undone.`)) return
-                      await Promise.all(selectedIds.map(id => deleteProduct(workspaceId!, id)))
-                      setSelectedIds([])
-                      qc.invalidateQueries({ queryKey: ['products', workspaceId] })
-                    }}
-                  >
-                    <TrashIcon className="h-3 w-3" />
-                    <span className="hidden sm:inline">Delete</span>
-                  </button>
+                  {canManageInventory && (
+                    <button
+                      className="text-xs sm:text-sm px-2 sm:px-3 py-1 sm:py-1.5 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors flex items-center gap-1"
+                      onClick={async () => {
+                        if (!confirm(`Delete ${selectedIds.length} product(s)? This action cannot be undone.`)) return
+                        await Promise.all(selectedIds.map(id => deleteProduct(workspaceId!, id)))
+                        setSelectedIds([])
+                        qc.invalidateQueries({ queryKey: ['products', workspaceId] })
+                      }}
+                    >
+                      <TrashIcon className="h-3 w-3" />
+                      <span className="hidden sm:inline">Delete</span>
+                    </button>
+                  )}
 
                   <button
                     onClick={() => setSelectedIds([])}
@@ -1211,7 +1385,7 @@ export function Inventory() {
           )}
 
           {/* Products Table - Desktop */}
-          <Card noPadding className="hidden md:block overflow-hidden">
+          <Card noPadding className="hidden md:block overflow-hidden shadow-lg border border-gray-200">
             <DataTable
               data={paginatedProducts}
               columns={columns}
@@ -1226,37 +1400,50 @@ export function Inventory() {
                 setSelectedIds(checked ? paginatedProducts.map((p: any) => p.id) : [])
               }}
               renderActions={(item) => (
-                <div className="flex items-center justify-end gap-3">
+                <div className="flex items-center justify-end gap-2">
                   <button
-                    onClick={() => setSelectedProduct(item)}
-                    className="text-blue-600 hover:text-blue-900 font-medium text-sm px-3 py-1.5 rounded-lg hover:bg-blue-50 transition-colors flex items-center gap-1"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setSelectedProduct(item)
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg border border-blue-200 transition-all duration-150 hover:shadow-sm"
+                    title="View details"
                   >
-                    <EyeIcon className="h-3 w-3" />
-                    View
+                    <EyeIcon className="h-4 w-4" />
+                    <span className="hidden lg:inline">View</span>
                   </button>
 
-                  <button
-                    onClick={async () => {
-                      const next = (item as any).status === 'active' ? 'draft' : 'active'
-                      await setProductStatus(workspaceId!, (item as any).id, next as any)
-                      qc.invalidateQueries({ queryKey: ['products', workspaceId] })
-                    }}
-                    className="text-gray-600 hover:text-gray-900 text-sm px-3 py-1.5 rounded-lg hover:bg-gray-50 transition-colors"
-                  >
-                    {(item as any).status === 'active' ? 'Make Draft' : 'Activate'}
-                  </button>
+                  {canManageInventory && (
+                    <>
+                      <button
+                        onClick={async (e) => {
+                          e.stopPropagation()
+                          const next = (item as any).status === 'active' ? 'draft' : 'active'
+                          await setProductStatus(workspaceId!, (item as any).id, next as any)
+                          qc.invalidateQueries({ queryKey: ['products', workspaceId] })
+                        }}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg border border-gray-200 transition-all duration-150 hover:shadow-sm"
+                        title={(item as any).status === 'active' ? 'Make Draft' : 'Activate'}
+                      >
+                        <span className="hidden lg:inline">{(item as any).status === 'active' ? 'Draft' : 'Activate'}</span>
+                        <span className="lg:hidden">{(item as any).status === 'active' ? 'D' : 'A'}</span>
+                      </button>
 
-                  <button
-                    onClick={async () => {
-                      if (!confirm('Are you sure you want to delete this product?')) return
-                      await deleteProduct(workspaceId!, (item as any).id)
-                      qc.invalidateQueries({ queryKey: ['products', workspaceId] })
-                    }}
-                    className="text-red-600 hover:text-red-900 text-sm px-3 py-1.5 rounded-lg hover:bg-red-50 transition-colors flex items-center gap-1"
-                  >
-                    <TrashIcon className="h-3 w-3" />
-                    Delete
-                  </button>
+                      <button
+                        onClick={async (e) => {
+                          e.stopPropagation()
+                          if (!confirm('Are you sure you want to delete this product?')) return
+                          await deleteProduct(workspaceId!, (item as any).id)
+                          qc.invalidateQueries({ queryKey: ['products', workspaceId] })
+                        }}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-red-700 bg-red-50 hover:bg-red-100 rounded-lg border border-red-200 transition-all duration-150 hover:shadow-sm"
+                        title="Delete product"
+                      >
+                        <TrashIcon className="h-4 w-4" />
+                        <span className="hidden lg:inline">Delete</span>
+                      </button>
+                    </>
+                  )}
                 </div>
               )}
             />
@@ -1280,13 +1467,15 @@ export function Inventory() {
                       <QrCodeIcon className="h-6 w-6" />
                       Scan Product
                     </button>
-                    <button
-                      onClick={() => setShowCreate(true)}
-                      className="w-full flex items-center justify-center gap-2 px-6 py-4 bg-gray-100 text-gray-700 rounded-xl font-semibold text-base active:scale-98 transition-transform"
-                    >
-                      <PlusIcon className="h-6 w-6" />
-                      Add Product
-                    </button>
+                    {canManageInventory && (
+                      <button
+                        onClick={() => setShowCreate(true)}
+                        className="w-full flex items-center justify-center gap-2 px-6 py-4 bg-gray-100 text-gray-700 rounded-xl font-semibold text-base active:scale-98 transition-transform"
+                      >
+                        <PlusIcon className="h-6 w-6" />
+                        Add Product
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1824,13 +2013,15 @@ export function Inventory() {
             >
               <QrCodeIcon className="h-7 w-7" />
             </button>
-            <button
-              onClick={() => setShowCreate(true)}
-              className="w-14 h-14 bg-green-600 text-white rounded-full shadow-lg flex items-center justify-center active:scale-95 transition-transform"
-              title="Add Product"
-            >
-              <PlusIcon className="h-7 w-7" />
-            </button>
+            {canManageInventory && (
+              <button
+                onClick={() => setShowCreate(true)}
+                className="w-14 h-14 bg-green-600 text-white rounded-full shadow-lg flex items-center justify-center active:scale-95 transition-transform"
+                title="Add Product"
+              >
+                <PlusIcon className="h-7 w-7" />
+              </button>
+            )}
           </div>
 
           {/* Pagination */}
@@ -1920,6 +2111,7 @@ export function Inventory() {
           product={selectedProduct as any}
           onClose={() => setSelectedProduct(null)}
           onSaved={() => qc.invalidateQueries({ queryKey: ['products', workspaceId] })}
+          canManage={canManageInventory}
         />
       )}
 
@@ -2300,6 +2492,7 @@ function ImportModal({
               userId: userId || undefined,
               reason: row.reason || row.Reason || 'Bulk import',
             })
+            window.dispatchEvent(new Event('stockTransactionCreated'))
             setSuccessCount(prev => prev + 1)
           } catch (err: any) {
             setErrors(prev => [...prev, `Failed to update stock for ${row.sku || row.SKU}: ${err.message}`])
@@ -2307,13 +2500,29 @@ function ImportModal({
         }
       }
 
-      if (successCount > 0 || csvData.length === successCount) {
+      if (successCount > 0) {
+        showToast(
+          `Successfully ${importMode === 'create' ? 'created' : 'updated stock for'} ${successCount} item${successCount !== 1 ? 's' : ''}`,
+          'success',
+          4000
+        )
         setTimeout(() => {
           onSuccess()
         }, 1000)
+      } else if (errors.length > 0) {
+        showToast(
+          `Import completed with ${errors.length} error${errors.length !== 1 ? 's' : ''}`,
+          'warning',
+          5000
+        )
       }
     } catch (err: any) {
       setErrors(prev => [...prev, `Import failed: ${err.message}`])
+      showToast(
+        `Import failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        'error',
+        5000
+      )
     } finally {
       setIsProcessing(false)
     }

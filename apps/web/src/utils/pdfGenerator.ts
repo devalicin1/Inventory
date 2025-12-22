@@ -2,7 +2,8 @@ import jsPDF from 'jspdf'
 import { generateQRCodeDataURL } from './qrcode'
 import type { Job } from '../api/production-jobs'
 
-const COMPANY_LOGO = '/logo.png'
+import { LOGO_PDF_URL } from './logo'
+const COMPANY_LOGO = LOGO_PDF_URL
 
 const COLORS = {
   text: [30, 30, 30],

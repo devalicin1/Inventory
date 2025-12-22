@@ -1,5 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useSessionStore } from '../state/sessionStore'
+import { hasWorkspacePermission } from '../utils/permissions'
 import { DataTable } from '../components/DataTable'
 import { ProductionBoard } from '../components/ProductionBoard'
 import { ProductionReportsTab } from '../components/job-detail/tabs/ProductionReportsTab'
@@ -508,8 +510,24 @@ export function Production() {
   const [itemsPerPage, setItemsPerPage] = useState(10)
   const queryClient = useQueryClient()
 
-  // Mock workspace ID - in real app, get from context
-  const workspaceId = 'demo-workspace'
+  const { workspaceId: sessionWorkspaceId, userId } = useSessionStore()
+  const workspaceId = sessionWorkspaceId || 'demo-workspace'
+  const [canManageProduction, setCanManageProduction] = useState(false)
+
+  // Check permission for managing production
+  useEffect(() => {
+    if (!workspaceId || !userId) {
+      setCanManageProduction(false)
+      return
+    }
+
+    const checkPermission = async () => {
+      const { hasWorkspacePermission } = await import('../utils/permissions')
+      const hasPermission = await hasWorkspacePermission(workspaceId, userId, 'manage_production')
+      setCanManageProduction(hasPermission)
+    }
+    checkPermission().catch(() => setCanManageProduction(false))
+  }, [workspaceId, userId])
 
   // Fetch data with initial load
   const { data: jobsData, isLoading: jobsLoading, error: jobsError } = useQuery({
@@ -729,6 +747,10 @@ export function Production() {
   }
 
   const handleDeleteJob = (jobId: string) => {
+    if (!canManageProduction) {
+      alert('You do not have permission to delete jobs.')
+      return
+    }
     if (confirm('Are you sure you want to delete this job? This action cannot be undone.')) {
       deleteJobMutation.mutate(jobId)
     }
@@ -1070,14 +1092,16 @@ export function Production() {
             <ArrowDownTrayIcon className="h-4 w-4 mr-2" />
             Export
           </Button>
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={() => setShowCreateForm(true)}
-          >
-            <PlusIcon className="h-4 w-4 mr-2" />
-            Create Job
-          </Button>
+          {canManageProduction && (
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => setShowCreateForm(true)}
+            >
+              <PlusIcon className="h-4 w-4 mr-2" />
+              Create Job
+            </Button>
+          )}
         </div>
       </div>
 
@@ -1380,7 +1404,7 @@ export function Production() {
                 job={selectedJob}
                 workspaceId={workspaceId}
                 onClose={() => setSelectedJob(null)}
-                onDelete={handleDeleteJob}
+                onDelete={canManageProduction ? handleDeleteJob : undefined}
                 workcenters={workcenters}
                 resources={resources}
               />
@@ -1604,13 +1628,15 @@ export function Production() {
                         </div>
 
                         <div className="flex items-center gap-2">
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setInitialJobForCreate(job); setShowCreateForm(true) }}
-                            className="text-gray-500 hover:text-gray-700 p-2 rounded-lg hover:bg-gray-100 transition-colors"
-                            title="Duplicate job"
-                          >
-                            <Squares2X2Icon className="h-4 w-4" />
-                          </button>
+                          {canManageProduction && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setInitialJobForCreate(job); setShowCreateForm(true) }}
+                              className="text-gray-500 hover:text-gray-700 p-2 rounded-lg hover:bg-gray-100 transition-colors"
+                              title="Duplicate job"
+                            >
+                              <Squares2X2Icon className="h-4 w-4" />
+                            </button>
+                          )}
                           <button
                             onClick={(e) => { e.stopPropagation(); setSelectedJob(job) }}
                             className="text-slate-600 hover:text-slate-800 font-medium text-xs px-3 py-2 rounded-lg hover:bg-slate-100 transition-colors"
@@ -1748,7 +1774,7 @@ export function Production() {
 
                   return (
                     <div className="flex items-center justify-end gap-1">
-                      {job.status === 'draft' && (
+                      {canManageProduction && job.status === 'draft' && (
                         <button
                           onClick={(e) => { e.stopPropagation(); handleStatusChange(job.id, 'released') }}
                           className="text-white bg-blue-600 hover:bg-blue-700 font-medium text-xs px-2 py-1 rounded transition-colors"
@@ -1759,7 +1785,7 @@ export function Production() {
                       )}
 
                       {/* Add Output button - always visible when job is released/in_progress */}
-                      {(job.status === 'released' || job.status === 'in_progress') && (
+                      {canManageProduction && (job.status === 'released' || job.status === 'in_progress') && (
                         <button
                           onClick={(e) => {
                             e.stopPropagation()
@@ -1778,7 +1804,7 @@ export function Production() {
                       )}
 
                       {/* Next Stage button */}
-                      {canShowNextStage && isReady && (
+                      {canManageProduction && canShowNextStage && isReady && (
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
@@ -1798,7 +1824,7 @@ export function Production() {
                       {(() => {
                         const isReadyToComplete = jobsReadyToComplete.some(j => j.id === job.id)
                         const canShowComplete = isReadyToComplete && job.status !== 'done' && job.status !== 'cancelled'
-                        return canShowComplete ? (
+                        return canManageProduction && canShowComplete ? (
                           <button
                             onClick={(e) => { e.stopPropagation(); setConfirmComplete({ open: true, job }) }}
                             className="text-white bg-emerald-600 hover:bg-emerald-700 p-1 rounded transition-colors"
@@ -1809,13 +1835,15 @@ export function Production() {
                         ) : null
                       })()}
 
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setInitialJobForCreate(job); setShowCreateForm(true) }}
-                        className="text-gray-500 hover:text-gray-700 p-1 rounded hover:bg-gray-100 transition-colors"
-                        title="Duplicate job"
-                      >
-                        <Squares2X2Icon className="h-4 w-4" />
-                      </button>
+                      {canManageProduction && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setInitialJobForCreate(job); setShowCreateForm(true) }}
+                          className="text-gray-500 hover:text-gray-700 p-1 rounded hover:bg-gray-100 transition-colors"
+                          title="Duplicate job"
+                        >
+                          <Squares2X2Icon className="h-4 w-4" />
+                        </button>
+                      )}
 
                       <button
                         onClick={(e) => {
@@ -1947,7 +1975,7 @@ export function Production() {
           job={selectedJob}
           workspaceId={workspaceId}
           onClose={() => setSelectedJob(null)}
-          onDelete={handleDeleteJob}
+          onDelete={canManageProduction ? handleDeleteJob : undefined}
           workcenters={workcenters}
           resources={resources}
         />

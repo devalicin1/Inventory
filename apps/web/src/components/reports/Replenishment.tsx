@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getReplenishmentReport, exportToCSV } from '../../api/reports'
 import type { ReplenishmentRow, ReportFilters } from '../../api/reports'
@@ -41,6 +41,8 @@ export function Replenishment({ workspaceId }: ReplenishmentProps) {
   const [isExporting, setIsExporting] = useState(false)
   const [filters, setFilters] = useState<ReportFilters>({})
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set())
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+  const [isAutoRefreshing, setIsAutoRefreshing] = useState(false)
 
   // Fetch groups/folders for filter
   const { data: groups = [] } = useQuery<Group[]>({
@@ -49,11 +51,32 @@ export function Replenishment({ workspaceId }: ReplenishmentProps) {
     enabled: !!workspaceId
   })
 
-  const { data: reportData = [], isLoading, error, refetch } = useQuery({
+  const { data: reportData = [], isLoading, error, refetch, isRefetching } = useQuery({
     queryKey: ['replenishment', workspaceId, filters],
     queryFn: () => getReplenishmentReport(workspaceId, filters),
     enabled: !!workspaceId
   })
+
+  useEffect(() => {
+    if (!workspaceId) return
+
+    const timeout = setTimeout(async () => {
+      try {
+        setIsAutoRefreshing(true)
+        await refetch()
+      } finally {
+        setIsAutoRefreshing(false)
+      }
+    }, 2000)
+
+    return () => clearTimeout(timeout)
+  }, [workspaceId])
+
+  useEffect(() => {
+    if (reportData && reportData.length >= 0) {
+      setLastUpdated(new Date())
+    }
+  }, [reportData])
 
   // Get group name by ID
   const getGroupName = (groupId: string | undefined) => {
@@ -462,10 +485,13 @@ export function Replenishment({ workspaceId }: ReplenishmentProps) {
           {/* Refresh */}
           <button
             onClick={() => refetch()}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 text-sm font-medium"
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 text-sm font-medium disabled:opacity-60 disabled:cursor-not-allowed"
+            disabled={isLoading || isRefetching}
           >
-            <ArrowPathIcon className="h-4 w-4" />
-            <span className="hidden sm:inline">Refresh</span>
+            <ArrowPathIcon className={`h-4 w-4 ${isLoading || isRefetching ? 'animate-spin' : ''}`} />
+            <span className="hidden sm:inline">
+              {isLoading || isRefetching ? 'Refreshing…' : 'Refresh'}
+            </span>
           </button>
 
           {/* Export */}
@@ -474,6 +500,25 @@ export function Replenishment({ workspaceId }: ReplenishmentProps) {
             isLoading={isExporting}
             filename="replenishment"
           />
+        </div>
+
+        {/* Data freshness indicator */}
+        <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-gray-500">
+          {isAutoRefreshing && (
+            <div className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-blue-50 text-blue-700 border border-blue-100">
+              <ArrowPathIcon className="h-3 w-3 animate-spin" />
+              <span>Loading latest data…</span>
+            </div>
+          )}
+          {lastUpdated && !isLoading && !isRefetching && (
+            <span>
+              Last updated:{' '}
+              {lastUpdated.toLocaleTimeString(undefined, {
+                hour: '2-digit',
+                minute: '2-digit'
+              })}
+            </span>
+          )}
         </div>
 
         {/* Expanded Filters */}

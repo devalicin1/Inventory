@@ -55,7 +55,7 @@ interface HandleScanParams {
   dismissedCode: string | null
   selectedJob: Job | null
   onJobFound: (job: Job) => void
-  onProductFound: (product: any) => void
+  onProductFound?: (product: any) => void
   onNotFound: (code: string) => void
   onBatchPayload: (payload: BatchQrPayload, rule?: StageTransitionRule) => void
   onPOFound?: (poId: string) => void
@@ -87,7 +87,7 @@ export const handleScan = async ({
 }: HandleScanParams) => {
   const trimmedCode = code.trim()
   const now = Date.now()
-  
+
   if (dismissedCode) {
     const dismissed = dismissedCode.toLowerCase()
     if (trimmedCode.toLowerCase() === dismissed) {
@@ -95,7 +95,7 @@ export const handleScan = async ({
       return
     }
   }
-  
+
   if (lastScanTime > 0 && (now - lastScanTime) < 2000) {
     const recentScan = recentScans[0]
     if (recentScan && recentScan.code === trimmedCode) {
@@ -104,12 +104,12 @@ export const handleScan = async ({
     }
   }
   setLastScanTime(now)
-  
+
   if (!workspaceId) {
     console.error('workspaceId is null or undefined')
     return
   }
-  
+
   if (jobsLoading) {
     console.log('Jobs still loading, please wait...')
     return
@@ -134,15 +134,51 @@ export const handleScan = async ({
     return
   }
 
-  // Check Jobs
+  // v5.0: Check for prefixed QR codes FIRST (takes priority over fallback)
+
+  // Check for Job QR (JOB: prefix)
+  if (trimmedCode.startsWith('JOB:')) {
+    const jobCode = trimmedCode.substring(4).trim()
+    const job = jobs.find(j => {
+      const code = (j.code || '').trim().toLowerCase()
+      const id = (j.id || '').trim().toLowerCase()
+      return code === jobCode.toLowerCase() || id === jobCode.toLowerCase()
+    })
+    if (job) {
+      console.log('Job found via JOB: prefix:', job.code || job.id)
+      onJobFound(job)
+      addToHistory(trimmedCode, 'job')
+      setScanAttempts(0)
+      return
+    }
+  }
+
+  // Check for Product QR (PRO: prefix)
+  if (trimmedCode.startsWith('PRO:') && onProductFound) {
+    const sku = trimmedCode.substring(4).trim()
+    try {
+      const product = await getProductByCode(workspaceId, sku)
+      if (product) {
+        console.log('Product found via PRO: prefix:', product.sku || product.id)
+        onProductFound(product)
+        addToHistory(trimmedCode, 'product')
+        setScanAttempts(0)
+        return
+      }
+    } catch (e) {
+      console.error('Product lookup failed (PRO: prefix)', e)
+    }
+  }
+
+  // Fallback: Check Jobs (without prefix - for backward compatibility)
   const job = jobs.find(j => {
     const jobCode = (j.code || '').trim().toLowerCase()
-    const jobSku = (j.sku || '').trim().toLowerCase()
     const jobId = (j.id || '').trim().toLowerCase()
     const searchCode = trimmedCode.toLowerCase()
-    return jobCode === searchCode || jobSku === searchCode || jobId === searchCode
+    // v5.0 FIX: Do not search by SKU anymore, strictly Code or ID
+    return jobCode === searchCode || jobId === searchCode
   })
-  
+
   if (job) {
     console.log('Job found:', job.code || job.id)
     onJobFound(job)
@@ -151,18 +187,20 @@ export const handleScan = async ({
     return
   }
 
-  // Check Products
-  try {
-    const product = await getProductByCode(workspaceId, trimmedCode)
-    if (product) {
-      console.log('Product found:', product.sku || product.id)
-      onProductFound(product)
-      addToHistory(trimmedCode, 'product')
-      setScanAttempts(0)
-      return
+  // Check Products (only if onProductFound callback is provided)
+  if (onProductFound) {
+    try {
+      const product = await getProductByCode(workspaceId, trimmedCode)
+      if (product) {
+        console.log('Product found:', product.sku || product.id)
+        onProductFound(product)
+        addToHistory(trimmedCode, 'product')
+        setScanAttempts(0)
+        return
+      }
+    } catch (e) {
+      console.error('Product lookup failed', e)
     }
-  } catch (e) {
-    console.error('Product lookup failed', e)
   }
 
   // Check Purchase Orders (if onPOFound callback is provided)
@@ -177,13 +215,13 @@ export const handleScan = async ({
         setScanAttempts(0)
         return
       }
-      
+
       // Check if it's a PO number format (PO-000001)
       if (trimmedCode.startsWith('PO-') || trimmedCode.match(/^PO\d+$/)) {
         const poCol = collection(db, 'workspaces', workspaceId, 'purchaseOrders')
         const q = query(poCol, where('poNumber', '==', trimmedCode))
         const snap = await getDocs(q)
-        
+
         if (!snap.empty) {
           const poDoc = snap.docs[0]
           const poId = poDoc.id
@@ -200,12 +238,12 @@ export const handleScan = async ({
   }
 
   // Not Found
-  console.log('Scan not found:', { 
-    code: trimmedCode, 
+  console.log('Scan not found:', {
+    code: trimmedCode,
     jobsCount: jobs.length,
     sampleJobCodes: jobs.map(j => j.code || j.id).slice(0, 3)
   })
-  
+
   const alreadyShown = recentScans.some(s => s.code === trimmedCode && s.type === 'none')
   if (!alreadyShown) {
     onNotFound(trimmedCode)

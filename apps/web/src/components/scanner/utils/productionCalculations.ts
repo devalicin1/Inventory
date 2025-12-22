@@ -55,60 +55,139 @@ export function getStageInfo(
 
 /**
  * Calculate overall progress for a job
+ * Progress is calculated based on packaging output (boxes) when available,
+ * otherwise based on the final stage output with proper UOM conversions
  */
 export function calculateProgress(
   job: Job,
   productionRuns: any[],
   workflows: Array<{ stages?: Array<StageInfo> }>
 ): Progress {
-  const outputItem = job.output?.[0]
+  const numberUp = job.productionSpecs?.numberUp || 1
+  const pcsPerBox = job.packaging?.pcsPerBox || 1
+  const plannedBoxes = job.packaging?.plannedBoxes || 0
   
-  let produced: number
-  let planned: number
-  let uom: string
-  
-  if (outputItem?.qtyProduced !== undefined && outputItem?.qtyPlanned !== undefined) {
-    produced = Number(outputItem.qtyProduced || 0)
-    planned = Number(outputItem.qtyPlanned || 0)
-    uom = outputItem.uom || job.unit || 'units'
-  } else {
-    const plannedStages = job.plannedStageIds || []
-    const lastStageId = plannedStages.length > 0 ? plannedStages[plannedStages.length - 1] : job.currentStageId
-    const lastStageInfo = getStageInfo(lastStageId, workflows)
-    const finalOutputUOM = (lastStageInfo as any)?.outputUOM || outputItem?.uom || job.unit || 'sheets'
+  // If packaging info exists, calculate progress based on boxes
+  // IMPORTANT: Progress should only be calculated from actual packaging stage output,
+  // not from intermediate stages (like printing). Only count boxes that have actually
+  // been packaged, not theoretical boxes calculated from sheets.
+  if (plannedBoxes > 0 && pcsPerBox > 0) {
+    const workflow = workflows.find((w: any) => w.id === job.workflowId)
+    const plannedStages: string[] = Array.isArray((job as any).plannedStageIds) ? (job as any).plannedStageIds : []
     
-    let totalProduced = 0
-    
+    // Find the last stage with cartoon output (this is typically the packaging stage)
+    let lastCartoonStageId: string | null = null
     for (let i = plannedStages.length - 1; i >= 0; i--) {
       const stageId = plannedStages[i]
-      const stageInfo = getStageInfo(stageId, workflows) as any
-      if (stageInfo?.outputUOM === finalOutputUOM) {
-        const stageRuns = productionRuns.filter((r: any) => r.stageId === stageId)
-        totalProduced = stageRuns.reduce((sum: number, r: any) => sum + Number(r.qtyGood || 0), 0)
+      const stageInfo = workflow?.stages?.find((s: any) => s.id === stageId)
+      if (stageInfo?.outputUOM === 'cartoon') {
+        lastCartoonStageId = stageId
         break
       }
     }
     
-    if (totalProduced === 0) {
-      totalProduced = productionRuns.reduce((sum: number, r: any) => sum + Number(r.qtyGood || 0), 0)
+    // If we found a cartoon output stage, ONLY use its runs (actual packaging output)
+    // Do NOT calculate from previous stages - progress should reflect actual packaged boxes
+    if (lastCartoonStageId) {
+      const targetStageRuns = productionRuns.filter((r: any) => {
+        if (r.stageId !== lastCartoonStageId) return false
+        // Exclude transfer runs (WIP transfers, not actual production)
+        if ((r as any).transferSourceRunIds && Array.isArray((r as any).transferSourceRunIds) && (r as any).transferSourceRunIds.length > 0) {
+          return false
+        }
+        return true
+      })
+      
+      // Only count actual cartoon output from packaging stage
+      const totalCartoonOutput = targetStageRuns.reduce((sum: number, r: any) => {
+        return sum + Number(r.qtyGood || 0)
+      }, 0)
+      
+      // Convert cartoon to boxes
+      const producedBoxes = pcsPerBox > 0 ? totalCartoonOutput / pcsPerBox : 0
+      const percentage = plannedBoxes > 0 ? Math.min(100, (producedBoxes / plannedBoxes) * 100) : 0
+      
+      return {
+        produced: producedBoxes,
+        planned: plannedBoxes,
+        percentage,
+        uom: 'box'
+      }
     }
     
-    produced = totalProduced
-    
-    if (finalOutputUOM === 'cartoon' || finalOutputUOM === 'box' || finalOutputUOM === 'boxes') {
+    // If no cartoon stage found but packaging info exists, progress should be 0
+    // because we can't calculate progress without actual packaging output
+    // Don't try to estimate from sheets - progress must reflect actual packaged boxes
+    return {
+      produced: 0,
+      planned: plannedBoxes,
+      percentage: 0,
+      uom: 'box'
+    }
+  }
+  
+  // Fallback: calculate based on final stage output (original logic)
+  const outputItem = job.output?.[0]
+  const plannedStages = job.plannedStageIds || []
+  const lastStageId = plannedStages.length > 0 ? plannedStages[plannedStages.length - 1] : job.currentStageId
+  const lastStageInfo = getStageInfo(lastStageId, workflows)
+  const finalOutputUOM = (lastStageInfo as any)?.outputUOM || outputItem?.uom || job.unit || 'sheets'
+  
+  let totalProduced = 0
+  
+  // Find runs from the last stage with matching output UOM
+  for (let i = plannedStages.length - 1; i >= 0; i--) {
+    const stageId = plannedStages[i]
+    const stageInfo = getStageInfo(stageId, workflows) as any
+    if (stageInfo?.outputUOM === finalOutputUOM) {
+      const stageRuns = productionRuns.filter((r: any) => {
+        if (r.stageId !== stageId) return false
+        // Exclude transfer runs
+        if ((r as any).transferSourceRunIds && Array.isArray((r as any).transferSourceRunIds) && (r as any).transferSourceRunIds.length > 0) {
+          return false
+        }
+        return true
+      })
+      totalProduced = stageRuns.reduce((sum: number, r: any) => sum + Number(r.qtyGood || 0), 0)
+      break
+    }
+  }
+  
+  // If no matching stage found, sum all runs
+  if (totalProduced === 0) {
+    totalProduced = productionRuns
+      .filter((r: any) => {
+        // Exclude transfer runs
+        if ((r as any).transferSourceRunIds && Array.isArray((r as any).transferSourceRunIds) && (r as any).transferSourceRunIds.length > 0) {
+          return false
+        }
+        return true
+      })
+      .reduce((sum: number, r: any) => sum + Number(r.qtyGood || 0), 0)
+  }
+  
+  let produced = totalProduced
+  let planned: number
+  let uom: string
+  
+  if (finalOutputUOM === 'cartoon' || finalOutputUOM === 'box' || finalOutputUOM === 'boxes') {
+    if (plannedBoxes > 0 && pcsPerBox > 0) {
+      planned = plannedBoxes
+      produced = pcsPerBox > 0 ? totalProduced / pcsPerBox : 0
+      uom = 'box'
+    } else {
       const boxQty = job.packaging?.plannedBoxes || 0
-      const pcsPerBox = job.packaging?.pcsPerBox || 1
       planned = boxQty * pcsPerBox
       uom = 'cartoon'
-    } else {
-      const sheetItem = Array.isArray(job.bom) ? job.bom.find((item: any) => 
-        ['sht', 'sheet', 'sheets'].includes(String(item.uom || '').toLowerCase())
-      ) : null
-      planned = sheetItem 
-        ? Number(sheetItem.qtyRequired || 0) 
-        : (outputItem?.qtyPlanned as number) || Number(job.quantity || 0)
-      uom = finalOutputUOM
     }
+  } else {
+    const sheetItem = Array.isArray(job.bom) ? job.bom.find((item: any) => 
+      ['sht', 'sheet', 'sheets'].includes(String(item.uom || '').toLowerCase())
+    ) : null
+    planned = sheetItem 
+      ? Number(sheetItem.qtyRequired || 0) 
+      : (outputItem?.qtyPlanned as number) || Number(job.quantity || 0)
+    uom = finalOutputUOM
   }
 
   const percentage = planned > 0 ? Math.min(100, (produced / planned) * 100) : 0

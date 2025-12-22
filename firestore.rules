@@ -1,10 +1,209 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Development rules - allow all access for now
-    // TODO: Implement proper authentication and restore security rules
+    
+    // Helper function: Check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Helper function: Check if user is super admin
+    function isSuperAdmin() {
+      return isAuthenticated() && 
+             (request.auth.token.email in ['admin@inventory.com'] ||
+              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isSuperAdmin == true);
+    }
+    
+    // Helper function: Get user role in workspace
+    function getUserRole(workspaceId) {
+      return get(/databases/$(database)/documents/workspaces/$(workspaceId)/users/$(request.auth.uid)).data.role;
+    }
+    
+    // Helper function: Check if user is workspace member
+    function isWorkspaceMember(workspaceId) {
+      return isAuthenticated() && 
+             exists(/databases/$(database)/documents/workspaces/$(workspaceId)/users/$(request.auth.uid));
+    }
+    
+    // Helper function: Check if user can manage workspace (owner or admin)
+    function canManageWorkspace(workspaceId) {
+      return isWorkspaceMember(workspaceId) && (getUserRole(workspaceId) == 'owner' || getUserRole(workspaceId) == 'admin');
+    }
+    
+    // Helper function: Get user permissions in workspace
+    function getUserPermissions(workspaceId) {
+      let userData = get(/databases/$(database)/documents/workspaces/$(workspaceId)/users/$(request.auth.uid)).data;
+      // Return permissions if exists and is list, otherwise return empty list
+      return (userData.permissions != null && userData.permissions is list) ? userData.permissions : [];
+    }
+    
+    // Helper function: Get user screens in workspace
+    function getUserScreens(workspaceId) {
+      let userData = get(/databases/$(database)/documents/workspaces/$(workspaceId)/users/$(request.auth.uid)).data;
+      // Return screens if exists and is list, otherwise return empty list
+      return (userData.screens != null && userData.screens is list) ? userData.screens : [];
+    }
+    
+    // Helper function: Check if user has specific permission
+    function hasPermission(workspaceId, permission) {
+      return isWorkspaceMember(workspaceId) && ('*' in getUserPermissions(workspaceId) || permission in getUserPermissions(workspaceId));
+    }
+    
+    // Helper function: Check if user has access to specific screen
+    function hasScreenAccess(workspaceId, screenId) {
+      return isWorkspaceMember(workspaceId) && ('*' in getUserScreens(workspaceId) || screenId in getUserScreens(workspaceId));
+    }
+    
+    // Users collection - global user profiles
+    match /users/{userId} {
+      // Users can read their own profile
+      allow read: if isAuthenticated() && request.auth.uid == userId;
+      
+      // Users can create/update their own profile
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+      allow update: if isAuthenticated() && request.auth.uid == userId;
+      
+      // Super admin can read all user profiles
+      allow read: if isSuperAdmin();
+    }
+    
+    // Workspaces collection - allow listing for authenticated users (development)
+    // TODO: In production, restrict this to super admins only
+    match /workspaces/{workspaceId} {
+      // Super admin can read all workspaces
+      allow read: if isSuperAdmin();
+      
+      // Workspace members can read their workspace
+      allow read: if isWorkspaceMember(workspaceId);
+      
+      // Development: Authenticated users can read all workspaces (for admin page)
+      // This allows both single document reads and collection queries
+      // TODO: Remove this in production and use proper super admin check
+      allow read: if isAuthenticated();
+      
+      // Super admin can create workspaces
+      allow create: if isSuperAdmin();
+      
+      // Development: Authenticated users can create workspaces
+      // TODO: Remove this in production
+      allow create: if isAuthenticated();
+      
+      // Super admin or workspace owner/admin can update workspace
+      allow update: if isSuperAdmin() || canManageWorkspace(workspaceId);
+      
+      // Super admin can delete workspaces
+      allow delete: if isSuperAdmin();
+      
+      // Workspace users subcollection
+      match /users/{userId} {
+        // Users can read their own workspace membership
+        allow read: if isAuthenticated() && request.auth.uid == userId;
+        
+        // Workspace members can read user list (for admin panel)
+        allow read: if isWorkspaceMember(workspaceId);
+        
+        // Super admin can read all workspace users
+        allow read: if isSuperAdmin();
+        
+        // Super admin or workspace owner/admin can add users
+        // Development: Allow authenticated users who are workspace members to add users
+        // TODO: In production, restrict to owner/admin only
+        allow create: if isSuperAdmin() || 
+          (isAuthenticated() && isWorkspaceMember(workspaceId) && 
+           (getUserRole(workspaceId) == 'owner' || getUserRole(workspaceId) == 'admin')) ||
+          // Development fallback: Allow any authenticated user (for testing)
+          (isAuthenticated());
+        
+        // Super admin or workspace owner/admin can update user roles
+        allow update: if isSuperAdmin() || canManageWorkspace(workspaceId);
+        
+        // Super admin or workspace owner/admin can remove users
+        allow delete: if isSuperAdmin() || canManageWorkspace(workspaceId);
+      }
+      
+      // Role permissions subcollection
+      match /role-permissions/{role} {
+        // Authenticated users can read role permissions (needed for default permissions)
+        // This allows reading default permissions even if user is not yet a workspace member
+        allow read: if isAuthenticated();
+        
+        // Super admin or workspace owner/admin can manage role permissions
+        allow write: if isSuperAdmin() || canManageWorkspace(workspaceId);
+      }
+      
+      // Products subcollection - requires inventory screen access
+      match /products/{productId} {
+        // Read: requires inventory screen access
+        allow read: if isWorkspaceMember(workspaceId) && 
+                      (hasScreenAccess(workspaceId, 'inventory') || hasScreenAccess(workspaceId, '*'));
+        
+        // Write: requires manage_inventory permission
+        allow create, update: if isWorkspaceMember(workspaceId) && 
+                                 (hasPermission(workspaceId, 'manage_inventory') || hasPermission(workspaceId, '*'));
+        
+        // Delete: requires manage_inventory permission
+        allow delete: if isWorkspaceMember(workspaceId) && 
+                        (hasPermission(workspaceId, 'manage_inventory') || hasPermission(workspaceId, '*'));
+      }
+      
+      // Jobs subcollection - requires production screen access
+      match /jobs/{jobId} {
+        // Read: requires production screen access
+        allow read: if isWorkspaceMember(workspaceId) && 
+                      (hasScreenAccess(workspaceId, 'production') || hasScreenAccess(workspaceId, '*'));
+        
+        // Write: requires manage_production permission
+        allow create, update: if isWorkspaceMember(workspaceId) && 
+                                 (hasPermission(workspaceId, 'manage_production') || hasPermission(workspaceId, '*'));
+        
+        // Delete: requires manage_production permission
+        allow delete: if isWorkspaceMember(workspaceId) && 
+                        (hasPermission(workspaceId, 'manage_production') || hasPermission(workspaceId, '*'));
+      }
+      
+      // Purchase Orders subcollection - requires purchase-orders screen access
+      match /purchase-orders/{poId} {
+        // Read: requires purchase-orders screen access
+        allow read: if isWorkspaceMember(workspaceId) && 
+                      (hasScreenAccess(workspaceId, 'purchase-orders') || hasScreenAccess(workspaceId, '*'));
+        
+        // Write: requires manage_purchase_orders permission
+        allow create, update: if isWorkspaceMember(workspaceId) && 
+                                 (hasPermission(workspaceId, 'manage_purchase_orders') || hasPermission(workspaceId, '*'));
+        
+        // Delete: requires manage_purchase_orders permission
+        allow delete: if isWorkspaceMember(workspaceId) && 
+                        (hasPermission(workspaceId, 'manage_purchase_orders') || hasPermission(workspaceId, '*'));
+      }
+      
+      // Reports subcollection - requires reports screen access
+      match /reports/{reportId} {
+        // Read: requires reports screen access
+        allow read: if isWorkspaceMember(workspaceId) && 
+                      (hasScreenAccess(workspaceId, 'reports') || hasScreenAccess(workspaceId, '*'));
+        
+        // Write: requires view_reports permission (read-only for most users)
+        allow create, update: if isWorkspaceMember(workspaceId) && 
+                                 (hasPermission(workspaceId, 'view_reports') || hasPermission(workspaceId, '*'));
+        
+        // Delete: requires view_reports permission
+        allow delete: if isWorkspaceMember(workspaceId) && 
+                        (hasPermission(workspaceId, 'view_reports') || hasPermission(workspaceId, '*'));
+      }
+      
+      // All other workspace subcollections (workcenters, resources, etc.)
+      match /{subcollection}/{document=**} {
+        // Workspace members can read (general access)
+        allow read: if isWorkspaceMember(workspaceId);
+        
+        // Workspace members can write (general access - can be restricted further)
+        allow write: if isWorkspaceMember(workspaceId);
+      }
+    }
+    
+    // Default: deny all other access
     match /{document=**} {
-      allow read, write: if true;
+      allow read, write: if false;
     }
   }
 }

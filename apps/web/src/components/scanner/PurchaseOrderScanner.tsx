@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { getPurchaseOrder, updatePurchaseOrder } from '../../api/purchase-orders'
 import { createStockTransaction } from '../../api/inventory'
-import { useCameraScanner } from './hooks/useCameraScanner'
+import { Scanner } from '../Scanner'
 import { ScannerHeader } from './components/ScannerHeader'
 import { XMarkIcon, CheckCircleIcon, XCircleIcon } from '@heroicons/react/24/outline'
 import { useSessionStore } from '../../state/sessionStore'
@@ -31,14 +31,10 @@ export function PurchaseOrderScanner({ workspaceId, onClose }: PurchaseOrderScan
   const [isCheckingStatus, setIsCheckingStatus] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const videoRef = useRef<HTMLVideoElement>(null)
-  const [isScanning, setIsScanning] = useState(false)
+  // Scanner State
   const [scanMode, setScanMode] = useState<'camera' | 'manual'>('camera')
   const [manualCode, setManualCode] = useState('')
-  const [lastScannedCode, setLastScannedCode] = useState('')
-  const [scanAttempts, setScanAttempts] = useState(0)
-  const [lastScanTime, setLastScanTime] = useState(0)
-  const [cameraError, setCameraError] = useState<string | null>(null)
+  const [processingCode, setProcessingCode] = useState<string | null>(null) // v3.3 Debug
 
   // IMPORTANT: only initialize from URL once (prevents "Scan New" being overwritten by URL param)
   const didInitFromUrl = useRef(false)
@@ -55,18 +51,8 @@ export function PurchaseOrderScanner({ workspaceId, onClose }: PurchaseOrderScan
     setSearchParams(next, { replace: true })
   }
 
-  const stopCamera = () => {
-    if (videoRef.current) {
-      const stream = videoRef.current.srcObject as MediaStream | null
-      if (stream) {
-        stream.getTracks().forEach((track) => track.stop())
-        videoRef.current.srcObject = null
-      }
-    }
-  }
-
   // Fetch PO when scanned
-  const { data: fetchedPO } = useQuery({
+  const { data: fetchedPO, isError: isFetchError, error: fetchError } = useQuery({
     queryKey: ['po', workspaceId, scannedPOId],
     queryFn: () => getPurchaseOrder(workspaceId, scannedPOId!),
     enabled: !!scannedPOId && !!workspaceId,
@@ -79,15 +65,22 @@ export function PurchaseOrderScanner({ workspaceId, onClose }: PurchaseOrderScan
       setReceivedItems(new Map())
       setPostedItems(new Set())
       setError(null)
-      stopCamera()
+      setProcessingCode(null) // Reset debug state
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scannedPOId])
 
   useEffect(() => {
+    if (isFetchError) {
+      setProcessingCode(null) // Stop spinner on error
+      setError(`PO Lookup Failed: ${fetchError instanceof Error ? fetchError.message : 'Unknown error'}`)
+      return
+    }
+
     if (!fetchedPO) return
 
     setPo(fetchedPO)
+    setProcessingCode(null) // Stop spinner on success
     setIsCheckingStatus(true)
 
     const checkPostedItems = async () => {
@@ -133,25 +126,29 @@ export function PurchaseOrderScanner({ workspaceId, onClose }: PurchaseOrderScan
     }
 
     checkPostedItems()
-  }, [fetchedPO, workspaceId])
+  }, [fetchedPO, workspaceId, isFetchError, fetchError])
 
   // Handle QR code scan or manual entry
   const handleScanSuccess = async (code: string) => {
     const trimmedCode = code.trim()
     setError(null)
 
+    // v4.1 FIX: Close scanner immediately to reveal Processing overlay
+    setScanMode('manual')
+
+    // Show processing state
+    setProcessingCode(trimmedCode)
+
     // Parse PO ID from QR code (format: "PO:poId")
     if (trimmedCode.startsWith('PO:')) {
       const poId = trimmedCode.substring(3)
       setScannedPOId(poId)
-      setIsScanning(false)
       return
     }
 
     // Try to find PO by PO Number (format: "PO-000001" or "PO123")
     if (trimmedCode.startsWith('PO-') || trimmedCode.match(/^PO\d+$/)) {
       try {
-        setIsScanning(false)
         setError('Looking up PO...')
 
         const poCol = collection(db, 'workspaces', workspaceId, 'purchaseOrders')
@@ -163,10 +160,12 @@ export function PurchaseOrderScanner({ workspaceId, onClose }: PurchaseOrderScan
           setScannedPOId(poDoc.id)
           setError(null)
         } else {
+          setProcessingCode(null)
           setError(`Purchase Order not found: ${trimmedCode}`)
         }
       } catch (err) {
         console.error('Error looking up PO:', err)
+        setProcessingCode(null)
         setError(`Failed to lookup PO: ${err instanceof Error ? err.message : 'Unknown error'}`)
       }
       return
@@ -178,7 +177,6 @@ export function PurchaseOrderScanner({ workspaceId, onClose }: PurchaseOrderScan
         const maybe = await getPurchaseOrder(workspaceId, trimmedCode)
         if (maybe) {
           setScannedPOId(trimmedCode)
-          setIsScanning(false)
           setError(null)
           return
         }
@@ -191,7 +189,6 @@ export function PurchaseOrderScanner({ workspaceId, onClose }: PurchaseOrderScan
           if (!snap.empty) {
             const poDoc = snap.docs[0]
             setScannedPOId(poDoc.id)
-            setIsScanning(false)
             setError(null)
             return
           }
@@ -201,22 +198,9 @@ export function PurchaseOrderScanner({ workspaceId, onClose }: PurchaseOrderScan
       }
     }
 
+    setProcessingCode(null)
     setError('Invalid format. Enter PO number (e.g., PO-000001) or scan QR code')
   }
-
-  // Camera scanner hook
-  useCameraScanner({
-    scanMode,
-    videoRef,
-    setIsScanning,
-    setCameraError,
-    setScanAttempts,
-    setLastScanTime,
-    setLastScannedCode,
-    lastScannedCode,
-    onScanSuccess: handleScanSuccess,
-    enabled: scanMode === 'camera' && !scannedPOId,
-  })
 
   const toggleItemReceived = (itemKey: string) => {
     setReceivedItems((prev) => {
@@ -323,7 +307,6 @@ export function PurchaseOrderScanner({ workspaceId, onClose }: PurchaseOrderScan
       alert(message)
 
       // Close: stop camera + clear URL param so it won't re-open on next render
-      stopCamera()
       clearPoIdFromUrl()
       onClose()
     } catch (err) {
@@ -335,35 +318,28 @@ export function PurchaseOrderScanner({ workspaceId, onClose }: PurchaseOrderScan
   }
 
   const handleCloseClick = () => {
-    stopCamera()
-    clearPoIdFromUrl()
+    // Don't clear URL here, it conflicts with navigation
     onClose()
   }
 
   const handleScanNew = () => {
-    // KEY FIX: remove poId from URL, otherwise effect re-sets scannedPOId
-    stopCamera()
     clearPoIdFromUrl()
 
     if (scannedPOId) {
       queryClient.removeQueries({ queryKey: ['po', workspaceId, scannedPOId] })
     }
 
+    // Clear all state
     setScannedPOId(null)
     setPo(null)
     setReceivedItems(new Map())
     setPostedItems(new Set())
     setError(null)
     setManualCode('')
-    setCameraError(null)
-    setScanAttempts(0)
-    setLastScanTime(0)
-    setLastScannedCode('')
+    setProcessingCode(null)
 
-    setTimeout(() => {
-      setIsScanning(true)
-      setScanMode('camera')
-    }, 100)
+    // Reset to camera mode
+    setScanMode('camera')
   }
 
   if (po) {
@@ -393,19 +369,20 @@ export function PurchaseOrderScanner({ workspaceId, onClose }: PurchaseOrderScan
         </button>
 
         <div className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between relative z-[100]">
-          <h2 className="text-lg font-semibold text-gray-900 pr-12">Receive Purchase Order</h2>
+          <h2 className="text-lg font-semibold text-gray-900 pr-12">
+            Receive PO <span className="text-xs text-blue-600 font-mono font-bold">v4.1</span>
+          </h2>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4">
           {/* PO Info */}
           <div
-            className={`bg-white rounded-lg shadow-sm border-2 p-4 mb-4 ${
-              isAlreadyReceived
-                ? 'border-green-500 bg-green-50'
-                : isPartiallyReceived
-                  ? 'border-yellow-500 bg-yellow-50'
-                  : 'border-gray-200'
-            }`}
+            className={`bg-white rounded-lg shadow-sm border-2 p-4 mb-4 ${isAlreadyReceived
+              ? 'border-green-500 bg-green-50'
+              : isPartiallyReceived
+                ? 'border-yellow-500 bg-yellow-50'
+                : 'border-gray-200'
+              }`}
           >
             <div className="flex items-center justify-between mb-2">
               <h3 className="font-semibold text-gray-900">{po.poNumber}</h3>
@@ -437,9 +414,8 @@ export function PurchaseOrderScanner({ workspaceId, onClose }: PurchaseOrderScan
                 return (
                   <div
                     key={key}
-                    className={`bg-white rounded-lg shadow-sm border-2 p-4 ${
-                      status.received ? 'border-green-500' : 'border-gray-200'
-                    } ${isPosted ? 'bg-blue-50' : ''}`}
+                    className={`bg-white rounded-lg shadow-sm border-2 p-4 ${status.received ? 'border-green-500' : 'border-gray-200'
+                      } ${isPosted ? 'bg-blue-50' : ''}`}
                   >
                     <div className="flex items-start justify-between mb-2">
                       <div className="flex-1">
@@ -465,9 +441,8 @@ export function PurchaseOrderScanner({ workspaceId, onClose }: PurchaseOrderScan
                         type="button"
                         onClick={() => !isAlreadyReceived && toggleItemReceived(key)}
                         disabled={isAlreadyReceived}
-                        className={`ml-4 p-2 rounded-full ${
-                          status.received ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'
-                        } ${isAlreadyReceived ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        className={`ml-4 p-2 rounded-full ${status.received ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'
+                          } ${isAlreadyReceived ? 'opacity-50 cursor-not-allowed' : ''}`}
                       >
                         {status.received ? (
                           <CheckCircleIcon className="h-6 w-6" />
@@ -489,9 +464,8 @@ export function PurchaseOrderScanner({ workspaceId, onClose }: PurchaseOrderScan
                             !isAlreadyReceived && updateReceivedQty(key, parseFloat(e.target.value) || 0)
                           }
                           disabled={isAlreadyReceived}
-                          className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 ${
-                            isAlreadyReceived ? 'bg-gray-100 cursor-not-allowed' : ''
-                          }`}
+                          className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 ${isAlreadyReceived ? 'bg-gray-100 cursor-not-allowed' : ''
+                            }`}
                         />
                         <p className="text-xs text-gray-500 mt-1">
                           Max: {item.orderQuantity} {item.uom || 'units'}
@@ -561,29 +535,25 @@ export function PurchaseOrderScanner({ workspaceId, onClose }: PurchaseOrderScan
       <div className="flex-1 flex flex-col items-center justify-center p-4">
         <div className="w-full max-w-md">
           <div className="bg-gray-900 rounded-2xl overflow-hidden shadow-2xl aspect-[3/4] relative flex flex-col items-center justify-center text-white mb-4">
-            {scanMode === 'camera' ? (
-              <>
-                {cameraError ? (
-                  <div className="absolute inset-0 bg-black/90 flex flex-col items-center justify-center p-4 z-20">
-                    <p className="text-sm text-red-300 text-center mb-4">{cameraError}</p>
-                    <button
-                      type="button"
-                      onClick={() => setScanMode('manual')}
-                      className="px-6 py-3 bg-gray-700 text-white rounded-xl font-semibold text-sm"
-                    >
-                      Manual Entry
-                    </button>
-                  </div>
-                ) : (
-                  <>
-                    <video ref={videoRef} className="w-full h-full object-cover" playsInline autoPlay muted />
-                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                      <div className="border-2 border-white/50 rounded-lg w-64 h-64"></div>
-                    </div>
-                  </>
-                )}
-              </>
-            ) : (
+
+            {/* Shared Scanner Component */}
+            {scanMode === 'camera' && !processingCode && (
+              <div className="absolute inset-0 z-10 w-full h-full">
+                <Scanner
+                  onScan={handleScanSuccess}
+                  onClose={() => setScanMode('manual')}
+                />
+              </div>
+            )}
+
+            {processingCode ? (
+              <div className="absolute inset-0 bg-blue-900 flex flex-col items-center justify-center p-6 z-30">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mb-4"></div>
+                <h3 className="text-xl font-bold mb-2">Processing Scan</h3>
+                <p className="font-mono text-blue-200 text-center break-all text-sm mb-4">"{processingCode}"</p>
+                <p className="text-sm text-blue-300">Searching database...</p>
+              </div>
+            ) : scanMode === 'manual' ? (
               <div className="w-full h-full flex flex-col items-center justify-center p-4">
                 <input
                   type="text"
@@ -607,7 +577,7 @@ export function PurchaseOrderScanner({ workspaceId, onClose }: PurchaseOrderScan
                   Use Camera
                 </button>
               </div>
-            )}
+            ) : null}
           </div>
 
           <p className="text-center text-white text-sm">Scan PO QR code or enter manually</p>

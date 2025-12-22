@@ -200,8 +200,8 @@ export async function uploadJobAttachment(
     file.type === 'application/pdf'
       ? 'pdf'
       : file.type.startsWith('image/')
-      ? 'image'
-      : 'other'
+        ? 'image'
+        : 'other'
 
   const attachment: JobAttachment = {
     id: fileRef.name,
@@ -351,6 +351,8 @@ export interface WorkflowStage {
   expectedSLAHours?: number
   defaultWorkcenterId?: string
   exitChecks: string[]
+  inputUOM?: string
+  outputUOM?: string
 }
 
 export interface WorkflowTransition {
@@ -525,7 +527,7 @@ export async function createJob(workspaceId: string, input: JobInput): Promise<J
   let barcodeUrl: string | undefined
 
   try {
-    const qrData = await generateQRCodeDataURL(input.code || docRef.id)
+    const qrData = await generateQRCodeDataURL(`JOB:${input.code || docRef.id}`)
     // Use legacy function signature for backward compatibility with jobs
     const barcodeResult = await generateBarcodeDataURL(input.code || docRef.id, {})
     const barcodeData = barcodeResult.dataUrl
@@ -609,13 +611,13 @@ export async function saveJobQr(
   const buf = await res.arrayBuffer()
   await uploadBytes(qrRef, new Uint8Array(buf), { contentType: 'image/png' })
   const url = await getDownloadURL(qrRef)
-  
+
   // Update job with new QR URL
   await updateDoc(doc(db, 'workspaces', workspaceId, 'jobs', jobId), {
     qrUrl: url,
     updatedAt: serverTimestamp(),
   } as any)
-  
+
   return url
 }
 
@@ -1361,7 +1363,7 @@ export async function recordJobOutput(
     try {
       const workflows = await listWorkflows(workspaceId)
       const workflow = workflows.find(w => w.id === job.workflowId)
-      
+
       if (workflow && Array.isArray(workflow.stages) && workflow.stages.length > 0) {
         // Use plannedStageIds if available, otherwise use all workflow stages
         const plannedIds: string[] = Array.isArray(job.plannedStageIds) ? job.plannedStageIds : []
@@ -1373,13 +1375,13 @@ export async function recordJobOutput(
           // Fallback to last stage in workflow
           lastStageId = workflow.stages[workflow.stages.length - 1].id
         }
-        
+
         if (stageId !== lastStageId) {
           const lastStage = workflow.stages.find((s: any) => s.id === lastStageId)
           const lastStageName = lastStage?.name || lastStageId
           const currentStage = workflow.stages.find((s: any) => s.id === stageId)
           const currentStageName = currentStage?.name || stageId
-          
+
           throw new Error(
             `Cannot post to inventory from stage "${currentStageName}". ` +
             `Only the final stage "${lastStageName}" can post to inventory. ` +
@@ -1620,28 +1622,28 @@ export async function recalculateJobBomConsumption(workspaceId: string, jobId: s
   const consSnapAll = await getDocs(consCol)
   // Get approved consumptions for actual calculation
   const consSnap = await getDocs(query(consCol, where('approved', '==', true)))
-  
+
   console.log(`[recalculateJobBomConsumption] Job: ${jobId}, BOM items: ${bom.length}, Approved consumptions: ${consSnap.docs.length}, All consumptions: ${consSnapAll.docs.length}`)
-  
+
   // Build multiple lookup maps for flexible matching
   const totalsByItemId: Record<string, number> = {}
   const totalsBySku: Record<string, number> = {}
   const totalsByName: Record<string, number> = {}
   // Special map for consumptions with empty SKU - match by name only
   const totalsByNameNoSku: Record<string, number> = {}
-  
+
   consSnap.docs.forEach(d => {
     const r: any = d.data()
     const qtyUsed = Number(r.qtyUsed || 0)
     if (qtyUsed <= 0) return
-    
+
     // Normalize keys (trim, lowercase for case-insensitive matching)
     const itemId = r.itemId ? String(r.itemId).trim() : null
     const sku = r.sku ? String(r.sku).trim().toLowerCase() : null
     const name = r.name ? String(r.name).trim().toLowerCase().replace(/\s+/g, ' ') : null
-    
+
     console.log(`[recalculateJobBomConsumption] Consumption: itemId=${itemId}, sku=${sku || '(empty)'}, name=${name}, qtyUsed=${qtyUsed}`)
-    
+
     if (itemId) {
       totalsByItemId[itemId] = (totalsByItemId[itemId] || 0) + qtyUsed
     }
@@ -1660,14 +1662,14 @@ export async function recalculateJobBomConsumption(workspaceId: string, jobId: s
   const nextBom = bom.map(b => {
     // Try multiple matching strategies
     let consumed = 0
-    
+
     // 1. Try itemId match (most reliable)
     const bomItemId = (b as any).itemId ? String((b as any).itemId).trim() : null
     const bomSku = b.sku ? String(b.sku).trim().toLowerCase() : null
     const bomName = b.name ? String(b.name).trim().toLowerCase().replace(/\s+/g, ' ') : null
-    
+
     console.log(`[recalculateJobBomConsumption] BOM item: itemId=${bomItemId || '(empty)'}, sku=${bomSku || '(empty)'}, name=${bomName || '(empty)'}`)
-    
+
     if (bomItemId && totalsByItemId[bomItemId]) {
       consumed = totalsByItemId[bomItemId]
       console.log(`[recalculateJobBomConsumption] Matched by itemId: ${consumed}`)
@@ -1700,7 +1702,7 @@ export async function recalculateJobBomConsumption(workspaceId: string, jobId: s
         }
       }
     }
-    
+
     return { ...b, consumed: Number(consumed) }
   })
 
@@ -1764,7 +1766,7 @@ export function subscribeToJobs(
 ): () => void {
   const col = collection(db, 'workspaces', workspaceId, 'jobs')
   const q = query(col, orderBy('updatedAt', 'desc'))
-  
+
   return onSnapshot(
     q,
     (snapshot) => {
@@ -1792,7 +1794,7 @@ export function subscribeToJob(
   onError?: (error: Error) => void
 ): () => void {
   const docRef = doc(db, 'workspaces', workspaceId, 'jobs', jobId)
-  
+
   return onSnapshot(
     docRef,
     (snapshot) => {
@@ -1820,7 +1822,7 @@ export function subscribeToJobConsumptions(
 ): () => void {
   const col = collection(db, 'workspaces', workspaceId, 'jobs', jobId, 'consumptions')
   const q = query(col, orderBy('createdAt', 'desc'))
-  
+
   return onSnapshot(
     q,
     (snapshot) => {
@@ -1849,7 +1851,7 @@ export function subscribeToJobProductionRuns(
   const col = collection(db, 'workspaces', workspaceId, 'jobs', jobId, 'productionRuns')
   // Use 'at' field for ordering to match listJobProductionRuns
   const q = query(col, orderBy('at', 'desc'))
-  
+
   return onSnapshot(
     q,
     (snapshot) => {
@@ -1877,7 +1879,7 @@ export function subscribeToJobHistory(
 ): () => void {
   const col = collection(db, 'workspaces', workspaceId, 'jobs', jobId, 'history')
   const q = query(col, orderBy('at', 'desc'))
-  
+
   return onSnapshot(
     q,
     (snapshot) => {
@@ -1905,7 +1907,7 @@ export function subscribeToJobTickets(
 ): () => void {
   const col = collection(db, 'workspaces', workspaceId, 'jobs', jobId, 'tickets')
   const q = query(col, orderBy('createdAt', 'desc'))
-  
+
   return onSnapshot(
     q,
     (snapshot) => {
@@ -1933,7 +1935,7 @@ export function subscribeToJobTimeLogs(
 ): () => void {
   const col = collection(db, 'workspaces', workspaceId, 'jobs', jobId, 'timelogs')
   const q = query(col, orderBy('startedAt', 'desc'))
-  
+
   return onSnapshot(
     q,
     (snapshot) => {

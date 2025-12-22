@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSessionStore } from '../state/sessionStore'
+import { hasWorkspacePermission } from '../utils/permissions'
 import { 
   listUOMs, createUOM, updateUOM, deleteUOM,
   listCategories, createCategory, updateCategory, deleteCategory,
@@ -39,8 +40,26 @@ export function Settings() {
   const [showCreate, setShowCreate] = useState(false)
   const [editingItem, setEditingItem] = useState<any>(null)
   const [formData, setFormData] = useState<any>({})
-  const { workspaceId } = useSessionStore()
+  const [canManageSettings, setCanManageSettings] = useState(false)
+  const [modalError, setModalError] = useState<string | null>(null)
+  const { workspaceId, userId } = useSessionStore()
   const queryClient = useQueryClient()
+
+  // Check permission for managing settings
+  useEffect(() => {
+    if (!workspaceId || !userId) {
+      setCanManageSettings(false)
+      return
+    }
+
+    hasWorkspacePermission(workspaceId, userId, 'manage_settings')
+      .then((hasPermission) => {
+        setCanManageSettings(hasPermission)
+      })
+      .catch(() => {
+        setCanManageSettings(false)
+      })
+  }, [workspaceId, userId])
 
   // UOM queries
   const { data: uoms = [], isLoading: uomsLoading } = useQuery({
@@ -114,8 +133,13 @@ export function Settings() {
 
   const handleCreate = async () => {
     if (!workspaceId) return
+    if (!canManageSettings) {
+      alert('You do not have permission to manage settings.')
+      return
+    }
     
     try {
+      setModalError(null)
       switch (activeTab) {
         case 'uom':
           await createUOM(workspaceId, formData)
@@ -181,9 +205,10 @@ export function Settings() {
       queryClient.invalidateQueries({ queryKey: [activeTab === 'custom-fields' ? 'customFields' : activeTab + 's', workspaceId] })
       setShowCreate(false)
       setFormData({})
+      setModalError(null)
     } catch (error) {
       console.error('Create error:', error)
-      alert('Oluşturulurken hata oluştu: ' + (error instanceof Error ? error.message : 'Bilinmeyen hata'))
+      setModalError(error instanceof Error ? error.message : 'An unknown error occurred while creating the item.')
     }
   }
 
@@ -191,6 +216,7 @@ export function Settings() {
     if (!workspaceId || !editingItem) return
     
     try {
+      setModalError(null)
       switch (activeTab) {
         case 'uom':
           await updateUOM(workspaceId, editingItem.id, formData)
@@ -273,13 +299,18 @@ export function Settings() {
       queryClient.invalidateQueries({ queryKey: [activeTab === 'custom-fields' ? 'customFields' : activeTab + 's', workspaceId] })
       setEditingItem(null)
       setFormData({})
+      setModalError(null)
     } catch (error) {
       console.error('Update error:', error)
-      alert('Güncellenirken hata oluştu: ' + (error instanceof Error ? error.message : 'Bilinmeyen hata'))
+      setModalError(error instanceof Error ? error.message : 'An unknown error occurred while updating the item.')
     }
   }
 
   const handleDelete = async (id: string) => {
+    if (!canManageSettings) {
+      alert('You do not have permission to manage settings.')
+      return
+    }
     if (!workspaceId || !confirm('Bu öğeyi silmek istediğinizden emin misiniz?')) return
     
     try {
@@ -310,7 +341,7 @@ export function Settings() {
       queryClient.invalidateQueries({ queryKey: [activeTab === 'custom-fields' ? 'customFields' : activeTab + 's', workspaceId] })
     } catch (error) {
       console.error('Delete error:', error)
-      alert('Silinirken hata oluştu: ' + (error instanceof Error ? error.message : 'Bilinmeyen hata'))
+      alert('An error occurred while deleting the item: ' + (error instanceof Error ? error.message : 'Unknown error'))
     }
   }
 
@@ -487,8 +518,95 @@ export function Settings() {
               {activeTab === 'addresses' && 'Addresses'}
               {activeTab === 'company-information' && 'Company Information'}
             </h2>
-            {activeTab !== 'report-settings' && activeTab !== 'company-information' && (
+            {activeTab !== 'report-settings' && activeTab !== 'company-information' && canManageSettings && (
               <div className="flex space-x-2">
+                {activeTab === 'uom' && uoms.length === 0 && (
+                  <button
+                    onClick={async () => {
+                      if (!workspaceId) return
+                      try {
+                        const defaultUoms = [
+                          { name: 'Piece', symbol: 'pc', description: 'Individual units' },
+                          { name: 'Box', symbol: 'box', description: 'Box of items' },
+                          { name: 'Kilogram', symbol: 'kg', description: 'Weight in kilograms' },
+                          { name: 'Litre', symbol: 'L', description: 'Volume in litres' },
+                        ]
+                        await Promise.all(defaultUoms.map(uom => createUOM(workspaceId, uom)))
+                        queryClient.invalidateQueries({ queryKey: ['uoms', workspaceId] })
+                        alert('Common units of measure have been created. You can edit or remove them anytime.')
+                      } catch (error) {
+                        console.error('Initialize UOMs error:', error)
+                        alert('Error creating default units: ' + (error instanceof Error ? error.message : 'Unknown error'))
+                      }
+                    }}
+                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                  >
+                    Use Common UOMs
+                  </button>
+                )}
+
+                {activeTab === 'categories' && categories.length === 0 && (
+                  <button
+                    onClick={async () => {
+                      if (!workspaceId) return
+                      try {
+                        const defaultCategories = [
+                          { name: 'Raw Materials', description: 'Materials used to produce finished goods' },
+                          { name: 'Work In Progress', description: 'Items currently in production' },
+                          { name: 'Finished Goods', description: 'Ready-to-sell products' },
+                          { name: 'Packaging', description: 'Boxes, labels and other packing materials' },
+                          { name: 'Maintenance & Tools', description: 'Tools, spare parts and maintenance supplies' },
+                        ]
+                        await Promise.all(defaultCategories.map(cat => createCategory(workspaceId, cat)))
+                        queryClient.invalidateQueries({ queryKey: ['categories', workspaceId] })
+                        alert('Common categories have been created. You can edit or remove them anytime.')
+                      } catch (error) {
+                        console.error('Initialize categories error:', error)
+                        alert('Error creating default categories: ' + (error instanceof Error ? error.message : 'Unknown error'))
+                      }
+                    }}
+                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                  >
+                    Use Common Categories
+                  </button>
+                )}
+
+                {activeTab === 'subcategories' && subcategories.length === 0 && categories.length > 0 && (
+                  <button
+                    onClick={async () => {
+                      if (!workspaceId) return
+                      try {
+                        const byName = (name: string) => categories.find(c => c.name.toLowerCase() === name.toLowerCase())?.id
+                        const defaultSubs = [
+                          { name: 'Steel & Metals', parent: 'Raw Materials', description: 'Steel, aluminium and other metals' },
+                          { name: 'Plastics & Resin', parent: 'Raw Materials', description: 'Plastic granules, resin and similar inputs' },
+                          { name: 'Labels & Stickers', parent: 'Packaging', description: 'Product and shipping labels' },
+                          { name: 'Cartons & Pallets', parent: 'Packaging', description: 'Outer cartons, pallets and wraps' },
+                          { name: 'Spare Parts', parent: 'Maintenance & Tools', description: 'Critical spare parts and components' },
+                        ].filter(sub => byName(sub.parent))
+
+                        await Promise.all(
+                          defaultSubs.map(sub =>
+                            createSubcategory(workspaceId, {
+                              name: sub.name,
+                              categoryId: byName(sub.parent)!,
+                              description: sub.description,
+                            })
+                          )
+                        )
+                        queryClient.invalidateQueries({ queryKey: ['subcategories', workspaceId] })
+                        alert('Common subcategories have been created and linked to your categories. You can edit or remove them anytime.')
+                      } catch (error) {
+                        console.error('Initialize subcategories error:', error)
+                        alert('Error creating default subcategories: ' + (error instanceof Error ? error.message : 'Unknown error'))
+                      }
+                    }}
+                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                  >
+                    Use Common Subcategories
+                  </button>
+                )}
+
                 {activeTab === 'stock-reasons' && stockReasons.length === 0 && (
                   <button
                     onClick={async () => {
@@ -496,7 +614,7 @@ export function Settings() {
                       try {
                         await initializeDefaultStockReasons(workspaceId)
                         queryClient.invalidateQueries({ queryKey: ['stockReasons', workspaceId] })
-                        alert('Default stock reasons have been initialized!')
+                        alert('Default stock reasons have been initialized. You can edit or remove them anytime.')
                       } catch (error) {
                         console.error('Initialize error:', error)
                         alert('Error initializing default reasons: ' + (error instanceof Error ? error.message : 'Unknown error'))
@@ -504,14 +622,16 @@ export function Settings() {
                     }}
                     className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
                   >
-                    Initialize Defaults
+                    Use Common Reasons
                   </button>
                 )}
+
                 <button
                   onClick={() => {
                     setShowCreate(true)
                     setEditingItem(null)
                     setFormData({})
+                    setModalError(null)
                   }}
                   className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
                 >
@@ -529,6 +649,10 @@ export function Settings() {
               isLoading={companyInfoLoading}
               onSave={async (data) => {
                 if (!workspaceId) return
+                if (!canManageSettings) {
+                  alert('You do not have permission to manage settings.')
+                  return
+                }
                 try {
                   await updateCompanyInformation(workspaceId, data)
                   queryClient.invalidateQueries({ queryKey: ['companyInformation', workspaceId] })
@@ -546,6 +670,10 @@ export function Settings() {
               isLoading={reportSettingsLoading}
               onSave={async (rawMaterialGroupIds) => {
                 if (!workspaceId) return
+                if (!canManageSettings) {
+                  alert('You do not have permission to manage settings.')
+                  return
+                }
                 try {
                   await updateReportSettings(workspaceId, { rawMaterialGroupIds })
                   queryClient.invalidateQueries({ queryKey: ['reportSettings', workspaceId] })
@@ -623,24 +751,27 @@ export function Settings() {
                       </>
                     )}
                   </div>
-                  <div className="flex space-x-2">
-                    <button
-                      onClick={() => {
-                        setEditingItem(item)
-                        setFormData(item)
-                        setShowCreate(true)
-                      }}
-                      className="px-3 py-1 text-sm border border-gray-300 rounded hover:bg-gray-50"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => handleDelete(item.id)}
-                      className="px-3 py-1 text-sm border border-red-300 text-red-700 rounded hover:bg-red-50"
-                    >
-                      Delete
-                    </button>
-                  </div>
+                  {canManageSettings && (
+                    <div className="flex space-x-2">
+                      <button
+                        onClick={() => {
+                          setEditingItem(item)
+                          setFormData(item)
+                          setShowCreate(true)
+                          setModalError(null)
+                        }}
+                        className="px-3 py-1 text-sm border border-gray-300 rounded hover:bg-gray-50"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => handleDelete(item.id)}
+                        className="px-3 py-1 text-sm border border-red-300 text-red-700 rounded hover:bg-red-50"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  )}
                 </div>
               ))}
               {getCurrentData().length === 0 && (
@@ -691,8 +822,13 @@ export function Settings() {
             </div>
 
             {/* Modal Body */}
-            <div className="p-6">
-            
+            <div className="p-6 space-y-4">
+              {modalError && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  {modalError}
+                </div>
+              )}
+
               <form onSubmit={(e) => {
                 e.preventDefault()
                 if (editingItem) {

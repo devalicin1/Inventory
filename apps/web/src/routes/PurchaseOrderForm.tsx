@@ -19,6 +19,7 @@ import { getCompanyInformation } from '../api/company'
 import { createStockTransaction } from '../api/inventory'
 import { downloadPurchaseOrderPDF } from '../utils/purchaseOrderPdfGenerator'
 import { useSessionStore } from '../state/sessionStore'
+import { hasWorkspacePermission } from '../utils/permissions'
 import { collection, query, where, getDocs } from 'firebase/firestore'
 import { db } from '../lib/firebase'
 import { generateQRCodeDataURL, downloadQRCode, copyQRCodeToClipboard } from '../utils/qrcode'
@@ -103,6 +104,7 @@ export function PurchaseOrderForm() {
   const queryClient = useQueryClient()
   const isEdit = location.pathname.includes('/edit')
   const isView = !!id && !isEdit
+  const [canManagePOs, setCanManagePOs] = useState(false)
   
   // Check if we're duplicating from an existing PO
   const duplicateFromId = new URLSearchParams(location.search).get('duplicate')
@@ -202,6 +204,22 @@ export function PurchaseOrderForm() {
     queryFn: () => getCompanyInformation(workspaceId!),
     enabled: !!workspaceId,
   })
+
+  // Check permission for managing purchase orders
+  useEffect(() => {
+    if (!workspaceId || !userId) {
+      setCanManagePOs(false)
+      return
+    }
+
+    hasWorkspacePermission(workspaceId, userId, 'manage_purchase_orders')
+      .then((hasPermission) => {
+        setCanManagePOs(hasPermission)
+      })
+      .catch(() => {
+        setCanManagePOs(false)
+      })
+  }, [workspaceId, userId])
 
   // Generate QR code for PO
   useEffect(() => {
@@ -554,6 +572,11 @@ export function PurchaseOrderForm() {
   }
 
   const handleSave = async () => {
+    // Check permission before saving
+    if (!canManagePOs) {
+      alert('You do not have permission to manage purchase orders.')
+      return
+    }
     if (!workspaceId) return
 
     setIsSaving(true)
@@ -672,98 +695,124 @@ export function PurchaseOrderForm() {
   }
 
   return (
-    <div className="space-y-6 p-6">
+    <div className="space-y-4 sm:space-y-6 p-4 sm:p-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-gray-900">Purchase Orders</h1>
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-gray-900">Purchase Orders</h1>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
           {existingPO && (
-            <div className="text-sm text-gray-500">
+            <div className="text-xs sm:text-sm text-gray-500 order-last sm:order-none">
               Last Updated: {formatDateTime(existingPO.lastUpdated || existingPO.updatedAt)}
             </div>
           )}
           {isView ? (
-            <div className="flex gap-2">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+              {/* QR & Scan Actions Group */}
               {existingPO && qrCodeUrl && (
                 <>
-                  <button
-                    onClick={() => setShowQRModal(true)}
-                    className="px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-blue-600 rounded-md hover:bg-blue-700 flex items-center gap-2"
-                  >
-                    <QrCodeIcon className="h-4 w-4" />
-                    QR CODE
-                  </button>
-                  <button
-                    onClick={() => navigate('/scan/po')}
-                    className="px-4 py-2 text-sm font-medium text-white bg-purple-600 border border-purple-600 rounded-md hover:bg-purple-700 flex items-center gap-2"
-                  >
-                    <QrCodeIcon className="h-4 w-4" />
-                    SCAN TO RECEIVE
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setShowQRModal(true)}
+                      className="px-3 py-1.5 sm:px-4 sm:py-2 text-xs sm:text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center gap-1.5 sm:gap-2 shadow-sm"
+                    >
+                      <QrCodeIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-gray-500" />
+                      <span className="hidden sm:inline">QR CODE</span>
+                      <span className="sm:hidden">QR</span>
+                    </button>
+                    <button
+                      onClick={() => navigate('/scan/po')}
+                      className="px-3 py-1.5 sm:px-4 sm:py-2 text-xs sm:text-sm font-medium text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100 flex items-center gap-1.5 sm:gap-2 shadow-sm"
+                    >
+                      <QrCodeIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-indigo-600" />
+                      <span className="hidden sm:inline">SCAN TO RECEIVE</span>
+                      <span className="sm:hidden">SCAN</span>
+                    </button>
+                  </div>
+                  <div className="hidden sm:block w-px h-6 bg-gray-300" />
                 </>
               )}
-              <button
-                onClick={() => setShowExportModal(true)}
-                className="px-4 py-2 text-sm font-medium text-white bg-red-600 border border-red-600 rounded-md hover:bg-red-700 flex items-center gap-2"
-              >
-                <ArrowDownTrayIcon className="h-4 w-4" />
-                EXPORT
-              </button>
-              {existingPO && existingPO.status === 'Received' && (
+              
+              {/* Export Actions Group */}
+              <div className="flex items-center gap-2">
                 <button
-                  onClick={async () => {
-                    if (!existingPO || !workspaceId) return
-                    
-                    // Check which items are already posted before showing modal
-                    const alreadyPostedSet = new Set<string>()
-                    if (Array.isArray(existingPO.lineItems)) {
-                      for (const item of existingPO.lineItems) {
-                        if (item.productId) {
-                          try {
-                            const txnsCol = collection(db, 'workspaces', workspaceId, 'stockTxns')
-                            const q = query(
-                              txnsCol,
-                              where('productId', '==', item.productId),
-                              where('refs.poId', '==', existingPO.id)
-                            )
-                            const snap = await getDocs(q)
-                            if (!snap.empty) {
-                              alreadyPostedSet.add(item.productId || '')
+                  onClick={() => setShowExportModal(true)}
+                  className="px-3 py-1.5 sm:px-4 sm:py-2 text-xs sm:text-sm font-medium text-gray-700 bg-gray-100 border border-gray-300 rounded-lg hover:bg-gray-200 flex items-center gap-1.5 sm:gap-2 shadow-sm"
+                >
+                  <ArrowDownTrayIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-gray-500" />
+                  <span className="hidden sm:inline">EXPORT</span>
+                  <span className="sm:hidden">EXPORT</span>
+                </button>
+              </div>
+              
+              {/* Inventory Actions Group */}
+              {existingPO && existingPO.status === 'Received' && (
+                <>
+                  <div className="hidden sm:block w-px h-6 bg-gray-300" />
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={async () => {
+                        if (!existingPO || !workspaceId) return
+                        
+                        // Check which items are already posted before showing modal
+                        const alreadyPostedSet = new Set<string>()
+                        if (Array.isArray(existingPO.lineItems)) {
+                          for (const item of existingPO.lineItems) {
+                            if (item.productId) {
+                              try {
+                                const txnsCol = collection(db, 'workspaces', workspaceId, 'stockTxns')
+                                const q = query(
+                                  txnsCol,
+                                  where('productId', '==', item.productId),
+                                  where('refs.poId', '==', existingPO.id)
+                                )
+                                const snap = await getDocs(q)
+                                if (!snap.empty) {
+                                  alreadyPostedSet.add(item.productId || '')
+                                }
+                              } catch (error) {
+                                console.error('Error checking posted items:', error)
+                              }
                             }
-                          } catch (error) {
-                            console.error('Error checking posted items:', error)
                           }
                         }
-                      }
-                    }
-                    setPostedItems(alreadyPostedSet)
-                    setShowPostToInventoryModal(true)
-                  }}
-                  className="px-4 py-2 text-sm font-medium text-white bg-green-600 border border-green-600 rounded-md hover:bg-green-700 flex items-center gap-2"
-                >
-                  <CheckCircleIcon className="h-4 w-4" />
-                  POST TO INVENTORY
-                </button>
+                        setPostedItems(alreadyPostedSet)
+                        setShowPostToInventoryModal(true)
+                      }}
+                      className="px-3 py-1.5 sm:px-4 sm:py-2 text-xs sm:text-sm font-medium text-white bg-emerald-600 border border-emerald-600 rounded-lg hover:bg-emerald-700 flex items-center gap-1.5 sm:gap-2 shadow-sm"
+                    >
+                      <CheckCircleIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-white" />
+                      <span className="hidden sm:inline">POST TO INVENTORY</span>
+                      <span className="sm:hidden">POST</span>
+                    </button>
+                  </div>
+                </>
               )}
-              <button
-                onClick={() => navigate(`/purchase-orders/${id}/edit`)}
-                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-blue-600 rounded-md hover:bg-blue-700"
-              >
-                EDIT
-              </button>
-              <button
-                onClick={() => navigate('/purchase-orders')}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-              >
-                BACK
-              </button>
+              
+              {/* Edit & Navigation Actions Group */}
+              <div className="hidden sm:block w-px h-6 bg-gray-300" />
+              <div className="flex items-center gap-2">
+                {canManagePOs && (
+                  <button
+                    onClick={() => navigate(`/purchase-orders/${id}/edit`)}
+                    className="px-3 py-1.5 sm:px-4 sm:py-2 text-xs sm:text-sm font-medium text-white bg-blue-600 border border-blue-600 rounded-lg hover:bg-blue-700 shadow-sm"
+                  >
+                    EDIT
+                  </button>
+                )}
+                <button
+                  onClick={() => navigate('/purchase-orders')}
+                  className="px-3 py-1.5 sm:px-4 sm:py-2 text-xs sm:text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
+                >
+                  BACK
+                </button>
+              </div>
             </div>
           ) : (
             <button
               onClick={() => navigate('/purchase-orders')}
-              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+              className="px-3 py-1.5 sm:px-4 sm:py-2 text-xs sm:text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 w-full sm:w-auto"
             >
               CANCEL
             </button>
@@ -772,9 +821,9 @@ export function PurchaseOrderForm() {
       </div>
 
       {/* PO Number and Status */}
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-4">
+      <div className="bg-white rounded-lg border border-gray-200 p-4 sm:p-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
             <input
               type="text"
               value={
@@ -785,7 +834,7 @@ export function PurchaseOrderForm() {
                     : 'Auto-generated'
               }
               readOnly
-              className="text-2xl font-bold text-gray-900 bg-transparent border-none focus:outline-none"
+              className="text-xl sm:text-2xl font-bold text-gray-900 bg-transparent border-none focus:outline-none"
             />
             <select
               value={pendingStatus || formData.status || 'Draft'}
@@ -801,7 +850,7 @@ export function PurchaseOrderForm() {
                 }
               }}
               disabled={isView}
-              className={`px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
+              className={`px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 w-full sm:w-auto ${
                 isView ? 'bg-gray-100 cursor-not-allowed' : ''
               }`}
             >
@@ -814,9 +863,9 @@ export function PurchaseOrderForm() {
               <option value="Cancelled">Cancelled</option>
             </select>
           </div>
-          <div className="text-right">
-            <div className="text-sm text-gray-500">Order Total</div>
-            <div className="text-2xl font-bold text-gray-900">GBP {orderTotal.toFixed(2)}</div>
+          <div className="text-left sm:text-right">
+            <div className="text-xs sm:text-sm text-gray-500">Order Total</div>
+            <div className="text-xl sm:text-2xl font-bold text-gray-900">GBP {orderTotal.toFixed(2)}</div>
           </div>
         </div>
         {existingPO && (
@@ -838,9 +887,9 @@ export function PurchaseOrderForm() {
       </div>
 
       {/* Dates Section */}
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Dates</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="bg-white rounded-lg border border-gray-200 p-4 sm:p-6">
+        <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-4">Dates</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Submitted By</label>
             <input
@@ -902,19 +951,19 @@ export function PurchaseOrderForm() {
       </div>
 
       {/* Line Items Section */}
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Line Items</h2>
+      <div className="bg-white rounded-lg border border-gray-200 p-4 sm:p-6">
+        <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-4">Line Items</h2>
 
         {/* Search and Add Items */}
         {!isView && (
-          <div className="mb-6 space-y-4">
-            <div className="flex gap-4">
+          <div className="mb-4 sm:mb-6 space-y-4">
+            <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
               <div className="flex-1 relative">
-                <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+                <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 sm:h-5 sm:w-5 text-gray-400" />
                 <input
                   ref={searchInputRef}
                   type="text"
-                  placeholder="Search to add items to the purchase order"
+                  placeholder="Search to add items..."
                   value={itemSearchTerm}
                   onChange={(e) => {
                     setItemSearchTerm(e.target.value)
@@ -927,7 +976,7 @@ export function PurchaseOrderForm() {
                     }
                   }}
                   onKeyDown={handleKeyDown}
-                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  className="w-full pl-9 sm:pl-10 pr-4 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 />
               
               {/* Product Dropdown */}
@@ -989,10 +1038,11 @@ export function PurchaseOrderForm() {
             </div>
                 <button
                   type="button"
-                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 flex items-center gap-2"
+                  className="px-3 py-2 sm:px-4 sm:py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 flex items-center justify-center gap-2 text-sm"
                   title="Scan barcode"
                 >
-                  <QrCodeIcon className="h-5 w-5" />
+                  <QrCodeIcon className="h-4 w-4 sm:h-5 sm:w-5" />
+                  <span className="sm:hidden">Scan</span>
                 </button>
                 <button
                   type="button"
@@ -1013,11 +1063,12 @@ export function PurchaseOrderForm() {
                       lineItems: [...currentLineItems, newItem],
                     })
                   }}
-                  className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 flex items-center gap-2"
+                  className="px-3 py-2 sm:px-4 sm:py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 flex items-center justify-center gap-2 text-sm w-full sm:w-auto"
                   title="Add manual item"
                 >
-                  <PlusIcon className="h-5 w-5" />
-                  Add Manual Item
+                  <PlusIcon className="h-4 w-4 sm:h-5 sm:w-5" />
+                  <span className="hidden sm:inline">Add Manual Item</span>
+                  <span className="sm:hidden">Add Item</span>
                 </button>
               </div>
               <div className="flex items-center">
@@ -1038,8 +1089,8 @@ export function PurchaseOrderForm() {
             </div>
           )}
 
-        {/* Line Items Table */}
-        <div className="overflow-x-auto">
+        {/* Line Items Table - Desktop */}
+        <div className="hidden md:block overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
@@ -1187,23 +1238,155 @@ export function PurchaseOrderForm() {
             </tbody>
           </table>
         </div>
+
+        {/* Line Items Cards - Mobile */}
+        <div className="md:hidden space-y-3">
+          {(() => {
+            const hasLineItems = Array.isArray(formData.lineItems) && formData.lineItems.length > 0
+            if (!hasLineItems) {
+              return (
+                <div className="px-4 py-8 text-center text-sm text-gray-500">
+                  No items added yet. Search and add items above.
+                </div>
+              )
+            }
+            return formData.lineItems.map((item, index) => {
+              const product = item.productId ? products.find(p => p.id === item.productId) : null
+              const defaultUOM = product?.uom || item.uom || ''
+              
+              return (
+                <div key={index} className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="text-xs font-semibold text-gray-500">#{index + 1}</span>
+                        {isView ? (
+                          <span className="text-sm font-medium text-gray-900">{item.itemDescription}</span>
+                        ) : (
+                          <input
+                            type="text"
+                            value={item.itemDescription}
+                            onChange={(e) => handleUpdateLineItem(index, { itemDescription: e.target.value })}
+                            onBlur={(e) => {
+                              const cleaned = cleanProductName(e.target.value)
+                              if (cleaned !== e.target.value) {
+                                handleUpdateLineItem(index, { itemDescription: cleaned })
+                              }
+                            }}
+                            placeholder="Item Description"
+                            className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                          />
+                        )}
+                      </div>
+                      {item.partNumber && (
+                        <div className="text-xs text-gray-600 mb-2">Part #: {item.partNumber}</div>
+                      )}
+                    </div>
+                    {!isView && (
+                      <button
+                        onClick={() => handleRemoveLineItem(index)}
+                        className="text-red-600 hover:text-red-800 ml-2"
+                      >
+                        <TrashIcon className="h-5 w-5" />
+                      </button>
+                    )}
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-500 mb-1">Quantity</label>
+                      {isView ? (
+                        <div className="text-sm text-gray-900">{item.orderQuantity}</div>
+                      ) : (
+                        <input
+                          type="number"
+                          value={item.orderQuantity}
+                          onChange={(e) => handleUpdateLineItem(index, { orderQuantity: Number(e.target.value) })}
+                          className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                          min="0"
+                        />
+                      )}
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-500 mb-1">Unit</label>
+                      {item.productId ? (
+                        <div className="text-sm text-gray-700 font-medium px-2 py-1 bg-gray-100 border border-gray-200 rounded">
+                          {defaultUOM || '-'}
+                        </div>
+                      ) : isView ? (
+                        <div className="text-sm text-gray-700 font-medium px-2 py-1 bg-gray-100 border border-gray-200 rounded">
+                          {item.uom || '-'}
+                        </div>
+                      ) : (
+                        <select
+                          value={item.uom || ''}
+                          onChange={(e) => handleUpdateLineItem(index, { uom: e.target.value })}
+                          className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        >
+                          <option value="">Select Unit</option>
+                          {uoms.map((uom) => (
+                            <option key={uom.id} value={uom.symbol}>
+                              {uom.symbol} {uom.name && `(${uom.name})`}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-500 mb-1">Unit Rate</label>
+                      {isView ? (
+                        <div className="text-sm text-gray-900">GBP {item.unitRate.toFixed(2)}</div>
+                      ) : (
+                        <input
+                          type="number"
+                          value={item.unitRate}
+                          onChange={(e) => handleUpdateLineItem(index, { unitRate: Number(e.target.value) })}
+                          className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                          min="0"
+                          step="0.01"
+                        />
+                      )}
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-500 mb-1">Amount</label>
+                      <div className="text-sm font-semibold text-gray-900">GBP {item.amount.toFixed(2)}</div>
+                    </div>
+                  </div>
+                  
+                  {!isView && !item.productId && (
+                    <div className="mt-3">
+                      <label className="block text-xs font-medium text-gray-500 mb-1">Part Number</label>
+                      <input
+                        type="text"
+                        value={item.partNumber || ''}
+                        onChange={(e) => handleUpdateLineItem(index, { partNumber: e.target.value })}
+                        className="w-full px-2 py-1 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        placeholder="?"
+                      />
+                    </div>
+                  )}
+                </div>
+              )
+            })
+          })()}
+        </div>
       </div>
 
       {/* Vendor Section */}
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-gray-900">Vendor</h2>
+      <div className="bg-white rounded-lg border border-gray-200 p-4 sm:p-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+          <h2 className="text-base sm:text-lg font-semibold text-gray-900">Vendor</h2>
           {!isView && (
             <button
               type="button"
               onClick={() => setShowVendorModal(true)}
-              className="px-4 py-2 text-sm font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100"
+              className="px-3 py-1.5 sm:px-4 sm:py-2 text-xs sm:text-sm font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 w-full sm:w-auto"
             >
               SELECT VENDOR
             </button>
           )}
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
             <input
@@ -1372,20 +1555,20 @@ export function PurchaseOrderForm() {
       </div>
 
       {/* Ship To Section */}
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-gray-900">Ship To</h2>
+      <div className="bg-white rounded-lg border border-gray-200 p-4 sm:p-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+          <h2 className="text-base sm:text-lg font-semibold text-gray-900">Ship To</h2>
           {!isView && (
             <button
               type="button"
               onClick={() => setShowShipToModal(true)}
-              className="px-4 py-2 text-sm font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100"
+              className="px-3 py-1.5 sm:px-4 sm:py-2 text-xs sm:text-sm font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 w-full sm:w-auto"
             >
               SELECT ADDRESS
             </button>
           )}
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="md:col-span-2">
             <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
             <input
@@ -1519,20 +1702,20 @@ export function PurchaseOrderForm() {
       </div>
 
       {/* Bill To Section */}
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-gray-900">Bill To</h2>
+      <div className="bg-white rounded-lg border border-gray-200 p-4 sm:p-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+          <h2 className="text-base sm:text-lg font-semibold text-gray-900">Bill To</h2>
           {!isView && (
             <button
               type="button"
               onClick={() => setShowBillToModal(true)}
-              className="px-4 py-2 text-sm font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100"
+              className="px-3 py-1.5 sm:px-4 sm:py-2 text-xs sm:text-sm font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 w-full sm:w-auto"
             >
               SELECT ADDRESS
             </button>
           )}
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="md:col-span-2">
             <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
             <input
@@ -1666,8 +1849,8 @@ export function PurchaseOrderForm() {
       </div>
 
       {/* Notes Section */}
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">Notes</h2>
+      <div className="bg-white rounded-lg border border-gray-200 p-4 sm:p-6">
+        <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-4">Notes</h2>
         <textarea
           value={formData.notes || ''}
           onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
@@ -1682,18 +1865,18 @@ export function PurchaseOrderForm() {
       </div>
 
       {/* Save Button */}
-      {!isView && (
-        <div className="flex justify-end gap-4">
+      {!isView && canManagePOs && (
+        <div className="flex flex-col sm:flex-row justify-end gap-3 sm:gap-4">
           <button
             onClick={() => navigate('/purchase-orders')}
-            className="px-6 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+            className="px-4 sm:px-6 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 w-full sm:w-auto"
           >
             Cancel
           </button>
           <button
             onClick={handleSave}
             disabled={isSaving}
-            className="px-6 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-4 sm:px-6 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed w-full sm:w-auto"
           >
             {isSaving ? 'Saving...' : 'Save Purchase Order'}
           </button>
@@ -1702,9 +1885,9 @@ export function PurchaseOrderForm() {
 
       {/* Export Modal */}
       {showExportModal && existingPO && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
-            <div className="p-6 border-b border-gray-200 flex items-center justify-between">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-2 sm:p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[95vh] sm:max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="p-4 sm:p-6 border-b border-gray-200 flex items-center justify-between">
               <h3 className="text-lg font-semibold text-gray-900">Export</h3>
               <button
                 onClick={() => setShowExportModal(false)}
@@ -1713,8 +1896,8 @@ export function PurchaseOrderForm() {
                 <XMarkIcon className="h-6 w-6" />
               </button>
             </div>
-            <div className="flex-1 overflow-y-auto p-6">
-              <div className="grid grid-cols-2 gap-6">
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
                 {/* Left Column - Settings */}
                 <div className="space-y-6">
                   {/* Export Settings */}
@@ -1802,10 +1985,10 @@ export function PurchaseOrderForm() {
                 </div>
               </div>
             </div>
-            <div className="p-6 border-t border-gray-200 flex justify-end">
+            <div className="p-4 sm:p-6 border-t border-gray-200 flex flex-col sm:flex-row justify-end gap-3">
               <button
                 onClick={() => setShowExportModal(false)}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 mr-3"
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 w-full sm:w-auto order-2 sm:order-1"
               >
                 Cancel
               </button>
@@ -1832,7 +2015,7 @@ export function PurchaseOrderForm() {
                   }
                 }}
                 disabled={isExporting || exportOptions.selectedFields.length === 0}
-                className="px-6 py-2 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-6 py-2 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed w-full sm:w-auto order-1 sm:order-2"
               >
                 {isExporting ? 'Exporting...' : 'EXPORT'}
               </button>
@@ -1843,15 +2026,15 @@ export function PurchaseOrderForm() {
 
       {/* Post to Inventory Modal */}
       {showPostToInventoryModal && existingPO && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl">
-            <div className="p-6 border-b border-gray-200">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-2 sm:p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[95vh] sm:max-h-[90vh] flex flex-col">
+            <div className="p-4 sm:p-6 border-b border-gray-200">
               <h3 className="text-lg font-semibold text-gray-900">Post Received Items to Inventory</h3>
               <p className="text-sm text-gray-600 mt-2">
                 This will add the received items from this purchase order to your inventory.
               </p>
             </div>
-            <div className="p-6 max-h-96 overflow-y-auto">
+            <div className="p-4 sm:p-6 flex-1 overflow-y-auto max-h-64 sm:max-h-96">
               <div className="space-y-3">
                 {Array.isArray(existingPO.lineItems) && existingPO.lineItems.length > 0 ? (
                   existingPO.lineItems.map((item, index) => {
@@ -1899,10 +2082,10 @@ export function PurchaseOrderForm() {
                 )}
               </div>
             </div>
-            <div className="p-6 border-t border-gray-200 flex justify-end gap-3">
+            <div className="p-4 sm:p-6 border-t border-gray-200 flex flex-col sm:flex-row justify-end gap-3">
               <button
                 onClick={() => setShowPostToInventoryModal(false)}
-                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 w-full sm:w-auto order-2 sm:order-1"
               >
                 Cancel
               </button>
@@ -1983,7 +2166,7 @@ export function PurchaseOrderForm() {
                   }
                 }}
                 disabled={isPosting}
-                className="px-6 py-2 text-sm font-medium text-white bg-green-600 rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-6 py-2 text-sm font-medium text-white bg-green-600 rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed w-full sm:w-auto order-1 sm:order-2"
               >
                 {isPosting ? 'Posting...' : 'POST TO INVENTORY'}
               </button>
@@ -1994,9 +2177,9 @@ export function PurchaseOrderForm() {
 
       {/* QR Code Modal */}
       {showQRModal && existingPO && qrCodeUrl && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-2 sm:p-4">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
-            <div className="p-6 border-b border-gray-200 flex items-center justify-between">
+            <div className="p-4 sm:p-6 border-b border-gray-200 flex items-center justify-between">
               <h3 className="text-lg font-semibold text-gray-900">Purchase Order QR Code</h3>
               <button
                 onClick={() => setShowQRModal(false)}
@@ -2005,16 +2188,16 @@ export function PurchaseOrderForm() {
                 <XMarkIcon className="h-6 w-6" />
               </button>
             </div>
-            <div className="p-6">
+            <div className="p-4 sm:p-6">
               <div className="flex flex-col items-center gap-4">
-                <div className="bg-white p-4 rounded-lg border-2 border-gray-200">
-                  <img src={qrCodeUrl} alt="PO QR Code" className="w-64 h-64" />
+                <div className="bg-white p-3 sm:p-4 rounded-lg border-2 border-gray-200">
+                  <img src={qrCodeUrl} alt="PO QR Code" className="w-48 h-48 sm:w-64 sm:h-64" />
                 </div>
                 <div className="text-center">
                   <p className="text-sm text-gray-600 mb-2">PO Number: <span className="font-semibold">{existingPO.poNumber}</span></p>
                   <p className="text-xs text-gray-500">Scan this QR code to receive items</p>
                 </div>
-                <div className="flex gap-2 w-full">
+                <div className="flex flex-col sm:flex-row gap-2 w-full">
                   <button
                     onClick={async () => {
                       try {
@@ -2052,9 +2235,9 @@ export function PurchaseOrderForm() {
 
       {/* Received Status Confirmation Modal */}
       {showReceivedConfirmModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-2 sm:p-4">
           <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
-            <div className="p-6">
+            <div className="p-4 sm:p-6">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">
                 Mark Purchase Order as Received?
               </h3>
@@ -2062,13 +2245,13 @@ export function PurchaseOrderForm() {
                 Are you sure you want to mark this purchase order as "Received"? 
                 The "Date Received" will be automatically set to today's date.
               </p>
-              <div className="flex justify-end gap-3">
+              <div className="flex flex-col sm:flex-row justify-end gap-3">
                 <button
                   onClick={() => {
                     setShowReceivedConfirmModal(false)
                     setPendingStatus(null)
                   }}
-                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 w-full sm:w-auto order-2 sm:order-1"
                 >
                   Cancel
                 </button>
@@ -2086,7 +2269,7 @@ export function PurchaseOrderForm() {
                     setShowReceivedConfirmModal(false)
                     setPendingStatus(null)
                   }}
-                  className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-md hover:bg-green-700"
+                  className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-md hover:bg-green-700 w-full sm:w-auto order-1 sm:order-2"
                 >
                   Mark as Received
                 </button>
@@ -2098,9 +2281,9 @@ export function PurchaseOrderForm() {
 
       {/* Vendor Selection Modal */}
       {showVendorModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[80vh] overflow-hidden">
-            <div className="p-6 border-b border-gray-200">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-2 sm:p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[95vh] sm:max-h-[80vh] overflow-hidden flex flex-col">
+            <div className="p-4 sm:p-6 border-b border-gray-200">
               <div className="flex items-center justify-between">
                 <h3 className="text-lg font-semibold text-gray-900">Select Vendor</h3>
                 <button
@@ -2165,9 +2348,9 @@ export function PurchaseOrderForm() {
 
       {/* Ship To Address Selection Modal */}
       {showShipToModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[80vh] overflow-hidden">
-            <div className="p-6 border-b border-gray-200">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-2 sm:p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[95vh] sm:max-h-[80vh] overflow-hidden flex flex-col">
+            <div className="p-4 sm:p-6 border-b border-gray-200">
               <div className="flex items-center justify-between">
                 <h3 className="text-lg font-semibold text-gray-900">Select Ship To Address</h3>
                 <button
@@ -2178,7 +2361,7 @@ export function PurchaseOrderForm() {
                 </button>
               </div>
             </div>
-            <div className="p-6 overflow-y-auto max-h-[60vh]">
+            <div className="p-4 sm:p-6 flex-1 overflow-y-auto">
               {addresses.filter(a => a.type === 'ship' || a.type === 'both').length === 0 ? (
                 <div className="text-center py-8 text-gray-500">
                   <p>No shipping addresses found.</p>
@@ -2228,9 +2411,9 @@ export function PurchaseOrderForm() {
 
       {/* Bill To Address Selection Modal */}
       {showBillToModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[80vh] overflow-hidden">
-            <div className="p-6 border-b border-gray-200">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-2 sm:p-4">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[95vh] sm:max-h-[80vh] overflow-hidden flex flex-col">
+            <div className="p-4 sm:p-6 border-b border-gray-200">
               <div className="flex items-center justify-between">
                 <h3 className="text-lg font-semibold text-gray-900">Select Bill To Address</h3>
                 <button
@@ -2241,7 +2424,7 @@ export function PurchaseOrderForm() {
                 </button>
               </div>
             </div>
-            <div className="p-6 overflow-y-auto max-h-[60vh]">
+            <div className="p-4 sm:p-6 flex-1 overflow-y-auto">
               {addresses.filter(a => a.type === 'bill' || a.type === 'both').length === 0 ? (
                 <div className="text-center py-8 text-gray-500">
                   <p>No billing addresses found.</p>

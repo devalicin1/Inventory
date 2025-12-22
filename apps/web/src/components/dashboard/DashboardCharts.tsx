@@ -79,11 +79,11 @@ export function DashboardCharts({ jobs, isLoading }: DashboardChartsProps) {
     }
 
     return (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
             {/* Production Trend Chart */}
             <Card>
-                <h3 className="text-base font-semibold leading-6 text-gray-900 mb-4">Weekly Production Trend</h3>
-                <div className="h-72 w-full">
+                <h3 className="text-sm sm:text-base font-semibold leading-6 text-gray-900 mb-3 sm:mb-4 px-4 sm:px-6 pt-4 sm:pt-6">Weekly Production Trend</h3>
+                <div className="h-64 sm:h-72 w-full px-4 sm:px-6 pb-4 sm:pb-6">
                     <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={productionTrend} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
@@ -117,8 +117,8 @@ export function DashboardCharts({ jobs, isLoading }: DashboardChartsProps) {
 
             {/* Status Distribution Chart */}
             <Card>
-                <h3 className="text-base font-semibold leading-6 text-gray-900 mb-4">Job Status Distribution</h3>
-                <div className="h-72 w-full">
+                <h3 className="text-sm sm:text-base font-semibold leading-6 text-gray-900 mb-3 sm:mb-4 px-4 sm:px-6 pt-4 sm:pt-6">Job Status Distribution</h3>
+                <div className="h-64 sm:h-72 w-full px-4 sm:px-6 pb-4 sm:pb-6">
                     <ResponsiveContainer width="100%" height="100%">
                         <PieChart>
                             <Pie
