@@ -695,133 +695,125 @@ export function PurchaseOrderForm() {
   }
 
   return (
-    <div className="space-y-4 sm:space-y-6 p-4 sm:p-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-gray-900">Purchase Orders</h1>
-        </div>
-        <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
-          {existingPO && (
-            <div className="text-xs sm:text-sm text-gray-500 order-last sm:order-none">
-              Last Updated: {formatDateTime(existingPO.lastUpdated || existingPO.updatedAt)}
+    <PageShell
+      title={existingPO ? `Purchase Order ${existingPO.poNumber || ''}` : 'New Purchase Order'}
+      subtitle={existingPO ? `Last Updated: ${formatDateTime(existingPO.lastUpdated || existingPO.updatedAt)}` : undefined}
+      actions={
+        isView ? (
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+            {/* QR & Scan Actions Group */}
+            {existingPO && qrCodeUrl && (
+              <>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setShowQRModal(true)}
+                    className="px-3 py-1.5 sm:px-4 sm:py-2 text-xs sm:text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-[14px] hover:bg-gray-50 flex items-center gap-1.5 sm:gap-2 shadow-sm h-10"
+                  >
+                    <QrCodeIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-gray-500" />
+                    <span className="hidden sm:inline">QR CODE</span>
+                    <span className="sm:hidden">QR</span>
+                  </button>
+                  <button
+                    onClick={() => navigate('/scan/po')}
+                    className="px-3 py-1.5 sm:px-4 sm:py-2 text-xs sm:text-sm font-medium text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-[14px] hover:bg-indigo-100 flex items-center gap-1.5 sm:gap-2 shadow-sm h-10"
+                  >
+                    <QrCodeIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-indigo-600" />
+                    <span className="hidden sm:inline">SCAN TO RECEIVE</span>
+                    <span className="sm:hidden">SCAN</span>
+                  </button>
+                </div>
+                <div className="hidden sm:block w-px h-6 bg-gray-300" />
+              </>
+            )}
+            
+            {/* Export Actions Group */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowExportModal(true)}
+                className="px-3 py-1.5 sm:px-4 sm:py-2 text-xs sm:text-sm font-medium text-gray-700 bg-gray-100 border border-gray-300 rounded-[14px] hover:bg-gray-200 flex items-center gap-1.5 sm:gap-2 shadow-sm h-10"
+              >
+                <ArrowDownTrayIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-gray-500" />
+                <span className="hidden sm:inline">EXPORT</span>
+                <span className="sm:hidden">EXPORT</span>
+              </button>
             </div>
-          )}
-          {isView ? (
-            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-              {/* QR & Scan Actions Group */}
-              {existingPO && qrCodeUrl && (
-                <>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => setShowQRModal(true)}
-                      className="px-3 py-1.5 sm:px-4 sm:py-2 text-xs sm:text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center gap-1.5 sm:gap-2 shadow-sm"
-                    >
-                      <QrCodeIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-gray-500" />
-                      <span className="hidden sm:inline">QR CODE</span>
-                      <span className="sm:hidden">QR</span>
-                    </button>
-                    <button
-                      onClick={() => navigate('/scan/po')}
-                      className="px-3 py-1.5 sm:px-4 sm:py-2 text-xs sm:text-sm font-medium text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100 flex items-center gap-1.5 sm:gap-2 shadow-sm"
-                    >
-                      <QrCodeIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-indigo-600" />
-                      <span className="hidden sm:inline">SCAN TO RECEIVE</span>
-                      <span className="sm:hidden">SCAN</span>
-                    </button>
-                  </div>
-                  <div className="hidden sm:block w-px h-6 bg-gray-300" />
-                </>
-              )}
-              
-              {/* Export Actions Group */}
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setShowExportModal(true)}
-                  className="px-3 py-1.5 sm:px-4 sm:py-2 text-xs sm:text-sm font-medium text-gray-700 bg-gray-100 border border-gray-300 rounded-lg hover:bg-gray-200 flex items-center gap-1.5 sm:gap-2 shadow-sm"
-                >
-                  <ArrowDownTrayIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-gray-500" />
-                  <span className="hidden sm:inline">EXPORT</span>
-                  <span className="sm:hidden">EXPORT</span>
-                </button>
-              </div>
-              
-              {/* Inventory Actions Group */}
-              {existingPO && existingPO.status === 'Received' && (
-                <>
-                  <div className="hidden sm:block w-px h-6 bg-gray-300" />
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={async () => {
-                        if (!existingPO || !workspaceId) return
-                        
-                        // Check which items are already posted before showing modal
-                        const alreadyPostedSet = new Set<string>()
-                        if (Array.isArray(existingPO.lineItems)) {
-                          for (const item of existingPO.lineItems) {
-                            if (item.productId) {
-                              try {
-                                const txnsCol = collection(db, 'workspaces', workspaceId, 'stockTxns')
-                                const q = query(
-                                  txnsCol,
-                                  where('productId', '==', item.productId),
-                                  where('refs.poId', '==', existingPO.id)
-                                )
-                                const snap = await getDocs(q)
-                                if (!snap.empty) {
-                                  alreadyPostedSet.add(item.productId || '')
-                                }
-                              } catch (error) {
-                                console.error('Error checking posted items:', error)
+            
+            {/* Inventory Actions Group */}
+            {existingPO && existingPO.status === 'Received' && (
+              <>
+                <div className="hidden sm:block w-px h-6 bg-gray-300" />
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={async () => {
+                      if (!existingPO || !workspaceId) return
+                      
+                      // Check which items are already posted before showing modal
+                      const alreadyPostedSet = new Set<string>()
+                      if (Array.isArray(existingPO.lineItems)) {
+                        for (const item of existingPO.lineItems) {
+                          if (item.productId) {
+                            try {
+                              const txnsCol = collection(db, 'workspaces', workspaceId, 'stockTxns')
+                              const q = query(
+                                txnsCol,
+                                where('productId', '==', item.productId),
+                                where('refs.poId', '==', existingPO.id)
+                              )
+                              const snap = await getDocs(q)
+                              if (!snap.empty) {
+                                alreadyPostedSet.add(item.productId || '')
                               }
+                            } catch (error) {
+                              console.error('Error checking posted items:', error)
                             }
                           }
                         }
-                        setPostedItems(alreadyPostedSet)
-                        setShowPostToInventoryModal(true)
-                      }}
-                      className="px-3 py-1.5 sm:px-4 sm:py-2 text-xs sm:text-sm font-medium text-white bg-emerald-600 border border-emerald-600 rounded-lg hover:bg-emerald-700 flex items-center gap-1.5 sm:gap-2 shadow-sm"
-                    >
-                      <CheckCircleIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-white" />
-                      <span className="hidden sm:inline">POST TO INVENTORY</span>
-                      <span className="sm:hidden">POST</span>
-                    </button>
-                  </div>
-                </>
-              )}
-              
-              {/* Edit & Navigation Actions Group */}
-              <div className="hidden sm:block w-px h-6 bg-gray-300" />
-              <div className="flex items-center gap-2">
-                {canManagePOs && (
-                  <button
-                    onClick={() => navigate(`/purchase-orders/${id}/edit`)}
-                    className="px-3 py-1.5 sm:px-4 sm:py-2 text-xs sm:text-sm font-medium text-white bg-blue-600 border border-blue-600 rounded-lg hover:bg-blue-700 shadow-sm"
+                      }
+                      setPostedItems(alreadyPostedSet)
+                      setShowPostToInventoryModal(true)
+                    }}
+                    className="px-3 py-1.5 sm:px-4 sm:py-2 text-xs sm:text-sm font-medium text-white bg-emerald-600 border border-emerald-600 rounded-[14px] hover:bg-emerald-700 flex items-center gap-1.5 sm:gap-2 shadow-sm h-10"
                   >
-                    EDIT
+                    <CheckCircleIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4 text-white" />
+                    <span className="hidden sm:inline">POST TO INVENTORY</span>
+                    <span className="sm:hidden">POST</span>
                   </button>
-                )}
+                </div>
+              </>
+            )}
+            
+            {/* Edit & Navigation Actions Group */}
+            <div className="hidden sm:block w-px h-6 bg-gray-300" />
+            <div className="flex items-center gap-2">
+              {canManagePOs && (
                 <button
-                  onClick={() => navigate('/purchase-orders')}
-                  className="px-3 py-1.5 sm:px-4 sm:py-2 text-xs sm:text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
+                  onClick={() => navigate(`/purchase-orders/${id}/edit`)}
+                  className="px-3 py-1.5 sm:px-4 sm:py-2 text-xs sm:text-sm font-medium text-white bg-blue-600 border border-blue-600 rounded-[14px] hover:bg-blue-700 shadow-sm h-10"
                 >
-                  BACK
+                  EDIT
                 </button>
-              </div>
+              )}
+              <button
+                onClick={() => navigate('/purchase-orders')}
+                className="px-3 py-1.5 sm:px-4 sm:py-2 text-xs sm:text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-[14px] hover:bg-gray-50 h-10"
+              >
+                BACK
+              </button>
             </div>
-          ) : (
-            <button
-              onClick={() => navigate('/purchase-orders')}
-              className="px-3 py-1.5 sm:px-4 sm:py-2 text-xs sm:text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 w-full sm:w-auto"
-            >
-              CANCEL
-            </button>
-          )}
-        </div>
-      </div>
+          </div>
+        ) : (
+          <button
+            onClick={() => navigate('/purchase-orders')}
+            className="px-3 py-1.5 sm:px-4 sm:py-2 text-xs sm:text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-[14px] hover:bg-gray-50 w-full sm:w-auto h-10"
+          >
+            CANCEL
+          </button>
+        )
+      }
+    >
 
       {/* PO Number and Status */}
-      <div className="bg-white rounded-lg border border-gray-200 p-4 sm:p-6">
+      <div className="bg-white rounded-[14px] border border-gray-200 p-4 sm:p-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
           <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
             <input
@@ -2471,6 +2463,6 @@ export function PurchaseOrderForm() {
           </div>
         </div>
       )}
-    </div>
+    </PageShell>
   )
 }

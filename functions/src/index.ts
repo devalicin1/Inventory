@@ -1,8 +1,23 @@
-import * as admin from 'firebase-admin'
+import admin from 'firebase-admin'
 import { onDocumentCreated } from 'firebase-functions/v2/firestore'
 import { onCall, onRequest } from 'firebase-functions/v2/https'
 import { onSchedule } from 'firebase-functions/v2/scheduler'
 import { setGlobalOptions } from 'firebase-functions/v2/options'
+import {
+  getQuickBooksConfig as getQBConfig,
+  saveQuickBooksConfig as saveQBConfig,
+  getQuickBooksAuthUrl as getQBAuthUrl,
+  exchangeCodeForToken,
+  syncProductToQuickBooks as syncProductToQB,
+  getQuickBooksItems as getQBItems,
+  createQuickBooksInvoice as createQBInvoice,
+  syncInventoryFromQuickBooks as syncInventoryFromQB,
+  importProductsFromQuickBooks as importProductsFromQB,
+  getQuickBooksAutoSyncConfig,
+  saveQuickBooksAutoSyncConfig,
+  type QuickBooksConfig,
+  type QuickBooksAutoSyncConfig,
+} from './quickbooks.js'
 
 admin.initializeApp()
 setGlobalOptions({ region: 'us-central1', maxInstances: 10 })
@@ -279,5 +294,425 @@ export const lowStockWatcher = onSchedule('every 24 hours', async () => {
       })
     }
   }
+})
+
+// ===== QUICKBOOKS INTEGRATION =====
+
+/**
+ * Get QuickBooks authorization URL
+ */
+export const getQuickBooksAuthUrl = onCall(async (request) => {
+  const { workspaceId } = request.data
+  const userId = request.auth?.uid
+  if (!userId) throw new Error('Unauthenticated')
+  if (!workspaceId) throw new Error('workspaceId is required')
+
+  console.log('[getQuickBooksAuthUrl] Request for workspace:', workspaceId)
+  
+  const config = await getQBConfig(workspaceId)
+  if (!config) {
+    throw new Error('QuickBooks not configured. Please set up client ID and secret first.')
+  }
+
+  console.log('[getQuickBooksAuthUrl] Config loaded:', {
+    hasClientId: !!config.clientId,
+    hasRedirectUri: !!config.redirectUri,
+    environment: config.environment,
+  })
+
+  if (!config.redirectUri) {
+    throw new Error('Redirect URI is missing. Please configure it in Settings.')
+  }
+
+  const authUrl = getQBAuthUrl(config)
+  console.log('[getQuickBooksAuthUrl] Returning auth URL')
+  return { authUrl }
+})
+
+/**
+ * Handle QuickBooks OAuth callback
+ */
+export const quickBooksOAuthCallback = onCall(async (request) => {
+  const { workspaceId, authCode, realmId } = request.data
+  const userId = request.auth?.uid
+  if (!userId) throw new Error('Unauthenticated')
+  if (!workspaceId || !authCode || !realmId) {
+    throw new Error('workspaceId, authCode, and realmId are required')
+  }
+
+  const config = await getQBConfig(workspaceId)
+  if (!config) {
+    throw new Error('QuickBooks not configured')
+  }
+
+  const tokens = await exchangeCodeForToken(config, authCode, realmId)
+  const tokenExpiry = Math.floor(Date.now() / 1000) + tokens.expiresIn
+
+  await saveQBConfig(workspaceId, {
+    realmId,
+    accessToken: tokens.accessToken,
+    refreshToken: tokens.refreshToken,
+    tokenExpiry,
+  })
+
+  return { success: true }
+})
+
+/**
+ * Save QuickBooks configuration
+ */
+export const saveQuickBooksConfig = onCall(async (request) => {
+  const { workspaceId, config } = request.data
+  const userId = request.auth?.uid
+  if (!userId) throw new Error('Unauthenticated')
+  if (!workspaceId) throw new Error('workspaceId is required')
+
+  console.log('[saveQuickBooksConfig] Saving config:', {
+    workspaceId,
+    hasClientId: !!config?.clientId,
+    hasClientSecret: !!config?.clientSecret,
+    redirectUri: config?.redirectUri || 'MISSING',
+    environment: config?.environment,
+  })
+
+  if (!config?.redirectUri) {
+    console.warn('[saveQuickBooksConfig] WARNING: redirectUri is missing!')
+  }
+
+  await saveQBConfig(workspaceId, config)
+  console.log('[saveQuickBooksConfig] Config saved successfully')
+  return { success: true }
+})
+
+/**
+ * Get QuickBooks configuration
+ */
+export const getQuickBooksConfig = onCall(async (request) => {
+  const { workspaceId } = request.data
+  const userId = request.auth?.uid
+  if (!userId) throw new Error('Unauthenticated')
+  if (!workspaceId) throw new Error('workspaceId is required')
+
+  const config = await getQBConfig(workspaceId)
+  if (!config) {
+    return { connected: false }
+  }
+
+  // Check if connection is complete (realmId and accessToken are required)
+  const isConnected = !!(config.realmId && config.accessToken)
+
+  // Don't return sensitive tokens to client
+  return {
+    connected: isConnected,
+    environment: config.environment,
+    realmId: config.realmId,
+  }
+})
+
+/**
+ * Sync product to QuickBooks
+ */
+export const syncProductToQuickBooks = onCall(async (request) => {
+  const { workspaceId, product, quickBooksItemId } = request.data
+  const userId = request.auth?.uid
+  if (!userId) throw new Error('Unauthenticated')
+  if (!workspaceId || !product) {
+    throw new Error('workspaceId and product are required')
+  }
+
+  const itemId = await syncProductToQB(workspaceId, product, quickBooksItemId)
+  return { itemId }
+})
+
+/**
+ * Import products from QuickBooks
+ */
+export const importProductsFromQuickBooks = onCall(async (request) => {
+  console.log('[importProductsFromQuickBooks] Function called')
+  console.log('[importProductsFromQuickBooks] Request data:', JSON.stringify(request.data))
+  
+  const { workspaceId, skus } = request.data
+  const userId = request.auth?.uid
+  
+  console.log('[importProductsFromQuickBooks] workspaceId:', workspaceId)
+  console.log('[importProductsFromQuickBooks] userId:', userId)
+  
+  if (!userId) {
+    console.error('[importProductsFromQuickBooks] Unauthenticated request')
+    throw new Error('Unauthenticated')
+  }
+  if (!workspaceId) {
+    console.error('[importProductsFromQuickBooks] Missing workspaceId')
+    throw new Error('workspaceId is required')
+  }
+
+  try {
+    console.log('[importProductsFromQuickBooks] Starting import...')
+    const result = await importProductsFromQB(workspaceId, skus)
+    console.log('[importProductsFromQuickBooks] Import completed:', JSON.stringify(result))
+    return result
+  } catch (error: any) {
+    console.error('[importProductsFromQuickBooks] Error in function:', error)
+    console.error('[importProductsFromQuickBooks] Error stack:', error.stack)
+    console.error('[importProductsFromQuickBooks] Error message:', error.message)
+    throw error
+  }
+})
+
+/**
+ * Sync inventory from QuickBooks
+ */
+export const syncInventoryFromQuickBooks = onCall(async (request) => {
+  const { workspaceId } = request.data
+  const userId = request.auth?.uid
+  if (!userId) throw new Error('Unauthenticated')
+  if (!workspaceId) throw new Error('workspaceId is required')
+
+  await syncInventoryFromQB(workspaceId)
+  return { success: true }
+})
+
+/**
+ * Get QuickBooks logs (recent activity)
+ */
+export const getQuickBooksLogs = onCall(async (request) => {
+  const { workspaceId, limit = 20 } = request.data as {
+    workspaceId?: string
+    limit?: number
+  }
+  const userId = request.auth?.uid
+  if (!userId) throw new Error('Unauthenticated')
+  if (!workspaceId) throw new Error('workspaceId is required')
+
+  const db = admin.firestore()
+
+  const snap = await db
+    .collection(`workspaces/${workspaceId}/quickbooksLogs`)
+    .orderBy('finishedAt', 'desc')
+    .limit(typeof limit === 'number' && limit > 0 ? limit : 20)
+    .get()
+
+  const logs = snap.docs.map((doc) => ({
+    id: doc.id,
+    ...doc.data(),
+  }))
+
+  return { logs }
+})
+
+/**
+ * Get QuickBooks auto-sync configuration
+ */
+export const getQuickBooksAutoSyncConfigFn = onCall(async (request) => {
+  const { workspaceId } = request.data as { workspaceId?: string }
+  const userId = request.auth?.uid
+  if (!userId) throw new Error('Unauthenticated')
+  if (!workspaceId) throw new Error('workspaceId is required')
+
+  const config = await getQuickBooksAutoSyncConfig(workspaceId)
+
+  // Default config if not set yet
+  const effective: QuickBooksAutoSyncConfig = config ?? {
+    inventorySyncInterval: 'off',
+    productImportInterval: 'off',
+    lastInventorySyncAt: null,
+    lastProductImportAt: null,
+  }
+
+  return {
+    inventorySyncInterval: effective.inventorySyncInterval,
+    productImportInterval: effective.productImportInterval,
+    lastInventorySyncAt: effective.lastInventorySyncAt ?? null,
+    lastProductImportAt: effective.lastProductImportAt ?? null,
+  }
+})
+
+/**
+ * Save QuickBooks auto-sync configuration
+ */
+export const saveQuickBooksAutoSyncConfigFn = onCall(async (request) => {
+  const { workspaceId, config } = request.data as {
+    workspaceId?: string
+    config?: Partial<QuickBooksAutoSyncConfig>
+  }
+  const userId = request.auth?.uid
+  if (!userId) throw new Error('Unauthenticated')
+  if (!workspaceId) throw new Error('workspaceId is required')
+  if (!config) throw new Error('config is required')
+
+  await saveQuickBooksAutoSyncConfig(workspaceId, config)
+
+  return { success: true }
+})
+
+function intervalToMs(interval: string | undefined | null): number | null {
+  switch (interval) {
+    case '30m':
+      return 30 * 60 * 1000
+    case '1h':
+      return 60 * 60 * 1000
+    case '4h':
+      return 4 * 60 * 60 * 1000
+    case '1d':
+      return 24 * 60 * 60 * 1000
+    case '7d':
+      return 7 * 24 * 60 * 60 * 1000
+    case 'off':
+    default:
+      return null
+  }
+}
+
+/**
+ * Scheduled driver for QuickBooks auto-sync
+ * Runs every 30 minutes and triggers inventory sync / product import
+ * based on per-workspace auto-sync configuration.
+ */
+export const runQuickBooksAutoSync = onSchedule('every 30 minutes', async () => {
+  const db = admin.firestore()
+  const now = Date.now()
+
+  const workspacesSnap = await db.collection('workspaces').get()
+
+  for (const workspace of workspacesSnap.docs) {
+    const workspaceId = workspace.id
+
+    try {
+      const qbConfig = await getQBConfig(workspaceId)
+      if (!qbConfig?.accessToken || !qbConfig.realmId) {
+        continue
+      }
+
+      const autoSyncConfig =
+        (await getQuickBooksAutoSyncConfig(workspaceId)) ??
+        ({
+          inventorySyncInterval: 'off',
+          productImportInterval: 'off',
+        } as QuickBooksAutoSyncConfig)
+
+      const inventoryIntervalMs = intervalToMs(autoSyncConfig.inventorySyncInterval)
+      const productIntervalMs = intervalToMs(autoSyncConfig.productImportInterval)
+
+      const autoSyncRef = db.doc(`workspaces/${workspaceId}/settings/quickbooksAutoSync`)
+
+      // Inventory sync
+      if (inventoryIntervalMs) {
+        const last = autoSyncConfig.lastInventorySyncAt?.toMillis?.() ?? 0
+        if (!last || now - last >= inventoryIntervalMs) {
+          const startedAt = admin.firestore.FieldValue.serverTimestamp()
+          try {
+            await syncInventoryFromQB(workspaceId)
+            await autoSyncRef.set(
+              {
+                lastInventorySyncAt: admin.firestore.FieldValue.serverTimestamp(),
+                inventorySyncInterval: autoSyncConfig.inventorySyncInterval,
+              },
+              { merge: true }
+            )
+            await db.collection(`workspaces/${workspaceId}/quickbooksLogs`).add({
+              type: 'inventory_sync',
+              trigger: 'auto',
+              status: 'success',
+              startedAt,
+              finishedAt: admin.firestore.FieldValue.serverTimestamp(),
+            })
+          } catch (error: any) {
+            console.error(
+              '[runQuickBooksAutoSync] Inventory sync failed for workspace',
+              workspaceId,
+              error
+            )
+            await db.collection(`workspaces/${workspaceId}/quickbooksLogs`).add({
+              type: 'inventory_sync',
+              trigger: 'auto',
+              status: 'failed',
+              startedAt,
+              finishedAt: admin.firestore.FieldValue.serverTimestamp(),
+              errorMessage: error?.message || String(error),
+            })
+          }
+        }
+      }
+
+      // Product import (full, without SKU filtering)
+      if (productIntervalMs) {
+        const last = autoSyncConfig.lastProductImportAt?.toMillis?.() ?? 0
+        if (!last || now - last >= productIntervalMs) {
+          const startedAt = admin.firestore.FieldValue.serverTimestamp()
+          try {
+            const result = await importProductsFromQB(workspaceId)
+            await autoSyncRef.set(
+              {
+                lastProductImportAt: admin.firestore.FieldValue.serverTimestamp(),
+                productImportInterval: autoSyncConfig.productImportInterval,
+              },
+              { merge: true }
+            )
+            await db.collection(`workspaces/${workspaceId}/quickbooksLogs`).add({
+              type: 'product_import',
+              trigger: 'auto',
+              status: 'success',
+              startedAt,
+              finishedAt: admin.firestore.FieldValue.serverTimestamp(),
+              imported: result.imported,
+              updated: result.updated,
+              skipped: result.skipped,
+              errors: result.errors,
+            })
+          } catch (error: any) {
+            console.error(
+              '[runQuickBooksAutoSync] Product import failed for workspace',
+              workspaceId,
+              error
+            )
+            await db.collection(`workspaces/${workspaceId}/quickbooksLogs`).add({
+              type: 'product_import',
+              trigger: 'auto',
+              status: 'failed',
+              startedAt,
+              finishedAt: admin.firestore.FieldValue.serverTimestamp(),
+              errorMessage: error?.message || String(error),
+            })
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[runQuickBooksAutoSync] Error handling workspace', workspaceId, err)
+    }
+  }
+})
+
+/**
+ * Get QuickBooks items
+ */
+export const getQuickBooksItems = onCall(async (request) => {
+  const { workspaceId } = request.data
+  const userId = request.auth?.uid
+  if (!userId) throw new Error('Unauthenticated')
+  if (!workspaceId) throw new Error('workspaceId is required')
+
+  try {
+    const items = await getQBItems(workspaceId)
+    console.log(`[getQuickBooksItems] Returning ${items.length} items`)
+    return { items }
+  } catch (error: any) {
+    console.error('[getQuickBooksItems] Error:', error)
+    throw new Error(`Failed to get QuickBooks items: ${error.message || 'Unknown error'}`)
+  }
+})
+
+/**
+ * Create invoice in QuickBooks
+ */
+export const createQuickBooksInvoice = onCall(async (request) => {
+  const { workspaceId, invoice } = request.data
+  const userId = request.auth?.uid
+  if (!userId) throw new Error('Unauthenticated')
+  if (!workspaceId || !invoice) {
+    throw new Error('workspaceId and invoice are required')
+  }
+
+  const invoiceId = await createQBInvoice(workspaceId, invoice)
+  return { invoiceId }
 })
 

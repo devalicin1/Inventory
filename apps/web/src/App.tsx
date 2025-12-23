@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Outlet, useLocation } from 'react-router-dom'
+import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useSessionStore } from './state/sessionStore'
 import { Sidebar } from './components/layout/Sidebar'
 import { MobileNav } from './components/layout/MobileNav'
@@ -21,6 +21,7 @@ function App() {
   const [authLoading, setAuthLoading] = useState(true)
   const [showWorkspaceSelector, setShowWorkspaceSelector] = useState(false)
   const toasts = useToasts()
+  const navigate = useNavigate()
 
   // Global search shortcut
   useEffect(() => {
@@ -48,6 +49,10 @@ function App() {
       if (!user) {
         clear()
         setAuthLoading(false)
+        // Redirect to login page when user signs out
+        if (window.location.pathname !== '/login') {
+          navigate('/login', { replace: true })
+        }
         return
       }
 
@@ -105,22 +110,36 @@ function App() {
           console.warn('   User Email:', user.email)
         }
         
-        // Session'ı güncelle (workspace seçimi yapılmadan önce)
+        // localStorage'dan önceki workspace seçimini kontrol et
+        const savedWorkspaceId = localStorage.getItem('selectedWorkspaceId')
+        let initialWorkspaceId: string | null = null
+        
+        // Eğer kaydedilmiş workspaceId varsa ve bu workspace hala kullanıcının workspace listesindeyse, onu kullan
+        if (savedWorkspaceId && userWorkspaces.some(ws => ws.workspaceId === savedWorkspaceId)) {
+          initialWorkspaceId = savedWorkspaceId
+          console.log('Restoring saved workspace from localStorage:', savedWorkspaceId)
+        }
+        
+        // Session'ı güncelle
         const sessionData = {
           userId: user.uid,
           email: user.email || null,
           displayName: userData?.displayName || user.displayName || null,
-          workspaceId: null, // Workspace seçimi yapılana kadar null
-          roles: [],
+          workspaceId: initialWorkspaceId,
+          roles: initialWorkspaceId ? [userWorkspaces.find(ws => ws.workspaceId === initialWorkspaceId)?.role || 'staff'] : [],
           userWorkspaces,
           isSuperAdmin: superAdmin,
         }
         
         setSession(sessionData)
-        console.log('✓ Session updated (workspace selection pending)')
+        console.log('✓ Session updated')
         
-        // Eğer kullanıcının birden fazla workspace'i varsa, seçim ekranını göster
-        if (userWorkspaces.length > 1) {
+        // Eğer zaten geçerli bir workspace seçilmişse, selector gösterme
+        if (initialWorkspaceId) {
+          console.log('Workspace already selected and valid - keeping:', initialWorkspaceId)
+          // Workspace zaten seçili, selector gösterme
+        } else if (userWorkspaces.length > 1) {
+          // Birden fazla workspace varsa ve henüz seçilmemişse selector göster
           console.log('Multiple workspaces found - showing workspace selector')
           setShowWorkspaceSelector(true)
         } else if (userWorkspaces.length === 1) {
@@ -132,6 +151,7 @@ function App() {
             role: defaultWorkspace.role,
           })
           switchWorkspace(defaultWorkspace.workspaceId)
+          localStorage.setItem('selectedWorkspaceId', defaultWorkspace.workspaceId)
           console.log('✓ Workspace auto-selected')
         } else {
           console.warn('⚠ No workspaces found - user needs to be added to a workspace')
@@ -156,6 +176,7 @@ function App() {
   // Workspace seçimi yapıldığında
   const handleWorkspaceSelect = (selectedWorkspaceId: string) => {
     switchWorkspace(selectedWorkspaceId)
+    localStorage.setItem('selectedWorkspaceId', selectedWorkspaceId)
     setShowWorkspaceSelector(false)
     console.log('✓ Workspace selected:', selectedWorkspaceId)
   }
@@ -205,7 +226,7 @@ function App() {
 
       {/* Main content */}
       <main className={`main-content ${isSidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
-        <div className="px-5 sm:px-8 md:px-10 lg:px-12 w-full max-w-full overflow-x-hidden">
+        <div className="w-full max-w-full overflow-x-hidden">
           <Outlet />
         </div>
       </main>

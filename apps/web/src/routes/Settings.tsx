@@ -34,9 +34,37 @@ import {
   type CompanyInformation,
   type CompanyInformationInput,
 } from '../api/company'
+import {
+  getQuickBooksConfig,
+  saveQuickBooksConfig,
+  getQuickBooksAuthUrl,
+  quickBooksOAuthCallback,
+  syncProductToQuickBooks,
+  syncInventoryFromQuickBooks,
+  importProductsFromQuickBooks,
+  getQuickBooksItems,
+  type QuickBooksConfig,
+  type QuickBooksConnectionStatus,
+} from '../api/quickbooks'
+import { listProducts } from '../api/inventory'
+import { PageShell } from '../components/layout/PageShell'
+import { showToast } from '../components/ui/Toast'
+import {
+  ArrowPathIcon,
+  CheckCircleIcon,
+  XCircleIcon,
+  LinkIcon,
+} from '@heroicons/react/24/outline'
 
 export function Settings() {
-  const [activeTab, setActiveTab] = useState<'uom' | 'categories' | 'subcategories' | 'custom-fields' | 'stock-reasons' | 'report-settings' | 'vendors' | 'addresses' | 'company-information'>('uom')
+  // Check for tab parameter in URL
+  const urlParams = new URLSearchParams(window.location.search)
+  const tabParam = urlParams.get('tab')
+  const initialTab = (tabParam && ['uom', 'categories', 'subcategories', 'custom-fields', 'stock-reasons', 'report-settings', 'vendors', 'addresses', 'company-information', 'quickbooks'].includes(tabParam))
+    ? tabParam as any
+    : 'uom'
+  
+  const [activeTab, setActiveTab] = useState<'uom' | 'categories' | 'subcategories' | 'custom-fields' | 'stock-reasons' | 'report-settings' | 'vendors' | 'addresses' | 'company-information' | 'quickbooks'>(initialTab)
   const [showCreate, setShowCreate] = useState(false)
   const [editingItem, setEditingItem] = useState<any>(null)
   const [formData, setFormData] = useState<any>({})
@@ -129,6 +157,20 @@ export function Settings() {
     queryKey: ['companyInformation', workspaceId],
     queryFn: () => getCompanyInformation(workspaceId!),
     enabled: !!workspaceId && activeTab === 'company-information'
+  })
+
+  // QuickBooks queries
+  const { data: quickBooksStatus, isLoading: quickBooksLoading, refetch: refetchQuickBooks } = useQuery({
+    queryKey: ['quickBooksConfig', workspaceId],
+    queryFn: () => getQuickBooksConfig(workspaceId!),
+    enabled: !!workspaceId && activeTab === 'quickbooks'
+  })
+
+  // Products query for sync
+  const { data: products = [] } = useQuery({
+    queryKey: ['products', workspaceId],
+    queryFn: () => listProducts(workspaceId!),
+    enabled: !!workspaceId && activeTab === 'quickbooks'
   })
 
   const handleCreate = async () => {
@@ -467,14 +509,12 @@ export function Settings() {
   }
 
   return (
-    <div className="p-6">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
-        <p className="text-gray-600">Manage units of measure, categories, subcategories, and custom fields</p>
-      </div>
-
+    <PageShell
+      title="Settings"
+      subtitle="Manage units of measure, categories, subcategories, and custom fields"
+    >
       {/* Tabs */}
-      <div className="border-b border-gray-200 mb-6">
+      <div className="border-b border-gray-200">
         <nav className="-mb-px flex space-x-8">
           {[
             { id: 'uom', name: 'Units of Measure', icon: '📏' },
@@ -485,12 +525,13 @@ export function Settings() {
             { id: 'report-settings', name: 'Report Settings', icon: '📊' },
             { id: 'vendors', name: 'Vendors', icon: '🏢' },
             { id: 'addresses', name: 'Addresses', icon: '📍' },
-            { id: 'company-information', name: 'Company Information', icon: '🏛️' }
+            { id: 'company-information', name: 'Company Information', icon: '🏛️' },
+            { id: 'quickbooks', name: 'QuickBooks', icon: '💼' }
           ].map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as any)}
-              className={`py-2 px-1 border-b-2 font-medium text-sm ${
+              className={`py-2 px-1 border-b-2 font-medium text-sm h-11 ${
                 activeTab === tab.id
                   ? 'border-blue-500 text-blue-600'
                   : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
@@ -504,7 +545,7 @@ export function Settings() {
       </div>
 
       {/* Content */}
-      <div className="bg-white rounded-lg border border-gray-200">
+      <div className="bg-white rounded-[14px] border border-gray-200">
         <div className="p-6 border-b border-gray-200">
           <div className="flex justify-between items-center">
             <h2 className="text-lg font-semibold text-gray-900">
@@ -517,8 +558,9 @@ export function Settings() {
               {activeTab === 'vendors' && 'Vendors'}
               {activeTab === 'addresses' && 'Addresses'}
               {activeTab === 'company-information' && 'Company Information'}
+              {activeTab === 'quickbooks' && 'QuickBooks Integration'}
             </h2>
-            {activeTab !== 'report-settings' && activeTab !== 'company-information' && canManageSettings && (
+            {activeTab !== 'report-settings' && activeTab !== 'company-information' && activeTab !== 'quickbooks' && canManageSettings && (
               <div className="flex space-x-2">
                 {activeTab === 'uom' && uoms.length === 0 && (
                   <button
@@ -681,6 +723,62 @@ export function Settings() {
                 } catch (error) {
                   console.error('Save error:', error)
                   alert('Error saving report settings: ' + (error instanceof Error ? error.message : 'Unknown error'))
+                }
+              }}
+            />
+          ) : activeTab === 'quickbooks' ? (
+            <QuickBooksTab
+              workspaceId={workspaceId || ''}
+              status={quickBooksStatus}
+              isLoading={quickBooksLoading}
+              products={products}
+              canManage={canManageSettings}
+              onConfigSave={async (config) => {
+                if (!workspaceId) return
+                try {
+                  await saveQuickBooksConfig(workspaceId, config)
+                  refetchQuickBooks()
+                  showToast('QuickBooks configuration saved successfully!', 'success')
+                } catch (error) {
+                  console.error('Save error:', error)
+                  showToast('Error saving configuration: ' + (error instanceof Error ? error.message : 'Unknown error'), 'error')
+                }
+              }}
+              onConnect={async () => {
+                if (!workspaceId) return
+                try {
+                  const authUrl = await getQuickBooksAuthUrl(workspaceId)
+                  window.open(authUrl, '_blank', 'width=600,height=700')
+                } catch (error) {
+                  console.error('Connect error:', error)
+                  showToast('Error connecting to QuickBooks: ' + (error instanceof Error ? error.message : 'Unknown error'), 'error')
+                }
+              }}
+              onImportProducts={async (skus?: string[]) => {
+                if (!workspaceId) return
+                try {
+                  showToast('Importing products from QuickBooks...', 'info')
+                  const result = await importProductsFromQuickBooks(workspaceId, skus)
+                  showToast(
+                    `Imported ${result.imported} products, updated ${result.updated} products. ${result.skipped > 0 ? `${result.skipped} skipped.` : ''} ${result.errors > 0 ? `${result.errors} errors.` : ''}`,
+                    result.imported > 0 || result.updated > 0 ? 'success' : 'error'
+                  )
+                  queryClient.invalidateQueries({ queryKey: ['products', workspaceId] })
+                } catch (error) {
+                  console.error('Import error:', error)
+                  showToast('Error importing products: ' + (error instanceof Error ? error.message : 'Unknown error'), 'error')
+                }
+              }}
+              onSyncInventory={async () => {
+                if (!workspaceId) return
+                try {
+                  showToast('Syncing inventory from QuickBooks...', 'info')
+                  await syncInventoryFromQuickBooks(workspaceId)
+                  showToast('Inventory synced successfully!', 'success')
+                  queryClient.invalidateQueries({ queryKey: ['products', workspaceId] })
+                } catch (error) {
+                  console.error('Sync error:', error)
+                  showToast('Error syncing inventory: ' + (error instanceof Error ? error.message : 'Unknown error'), 'error')
                 }
               }}
             />
@@ -935,7 +1033,7 @@ export function Settings() {
           </div>
         </div>
       )}
-    </div>
+    </PageShell>
   )
 }
 
@@ -1090,11 +1188,10 @@ function CompanyInformationTab({
   }
 
   return (
-    <div className="space-y-6">
-      <form onSubmit={(e) => {
-        e.preventDefault()
-        onSave(formData)
-      }}>
+    <form onSubmit={(e) => {
+      e.preventDefault()
+      onSave(formData)
+    }}>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="md:col-span-2">
             <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -1242,6 +1339,510 @@ function CompanyInformationTab({
           </button>
         </div>
       </form>
+  )
+}
+
+// QuickBooks Integration Tab Component
+export function QuickBooksTab({
+  workspaceId,
+  status,
+  isLoading,
+  products,
+  canManage,
+  onConfigSave,
+  onConnect,
+  onImportProducts,
+  onSyncInventory,
+}: {
+  workspaceId: string
+  status: QuickBooksConnectionStatus | undefined
+  isLoading: boolean
+  products: any[]
+  canManage: boolean
+  onConfigSave: (config: QuickBooksConfig) => Promise<void>
+  onConnect: () => Promise<void>
+  onImportProducts: (skus?: string[]) => Promise<void>
+  onSyncInventory: () => Promise<void>
+}) {
+  const [configForm, setConfigForm] = useState<QuickBooksConfig>({
+    clientId: '',
+    clientSecret: '',
+    redirectUri: window.location.origin + '/quickbooks/callback',
+    environment: 'sandbox',
+  })
+  const [showConfig, setShowConfig] = useState(false)
+  const [isSyncing, setIsSyncing] = useState(false)
+  const [showImportPreview, setShowImportPreview] = useState(false)
+  const [previewItems, setPreviewItems] = useState<any[]>([])
+  const [selectedSkus, setSelectedSkus] = useState<string[]>([])
+  const [isLoadingPreview, setIsLoadingPreview] = useState(false)
+
+  const isConnected = status?.connected || false
+
+  // Load existing config when status changes
+  useEffect(() => {
+    if (status && !isConnected) {
+      // Try to load existing config from Firestore via API
+      // We'll need to get the full config (not just status)
+      // For now, we'll keep the default redirectUri
+    }
+  }, [status, isConnected])
+
+  const handleSyncInventory = async () => {
+    setIsSyncing(true)
+    try {
+      await onSyncInventory()
+    } finally {
+      setIsSyncing(false)
+    }
+  }
+
+  if (isLoading) {
+    return (
+      <div className="animate-pulse space-y-4">
+        <div className="h-16 bg-gray-200 rounded"></div>
+        <div className="h-16 bg-gray-200 rounded"></div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Connection Status */}
+      <div className={`p-4 rounded-lg border-2 ${
+        isConnected 
+          ? 'border-green-300 bg-green-50' 
+          : 'border-yellow-300 bg-yellow-50'
+      }`}>
+          <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            {isConnected ? (
+              <CheckCircleIcon className="w-6 h-6 text-green-600" />
+            ) : (
+              <XCircleIcon className="w-6 h-6 text-yellow-600" />
+            )}
+            <div>
+              <h3 className="font-semibold text-gray-900">
+                {isConnected ? 'Connected to QuickBooks' : 'Not Connected'}
+              </h3>
+              <p className="text-sm text-gray-600">
+                {isConnected 
+                  ? `Environment: ${status?.environment || 'Unknown'} | Company ID: ${status?.realmId || 'Unknown'}`
+                  : 'Connect your QuickBooks account to sync products and inventory'
+                }
+              </p>
+            </div>
+          </div>
+          {canManage && (
+            <button
+              onClick={() => setShowConfig(!showConfig)}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              {showConfig ? 'Hide' : isConnected ? 'Edit configuration' : 'Configure'}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Configuration Form */}
+      {showConfig && canManage && (
+        <div className="bg-gray-50 rounded-lg border border-gray-200 p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">QuickBooks Configuration</h3>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Client ID *
+              </label>
+              <input
+                type="text"
+                value={configForm.clientId || ''}
+                onChange={(e) => setConfigForm({ ...configForm, clientId: e.target.value })}
+                placeholder="Your QuickBooks Client ID"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Client Secret *
+              </label>
+              <input
+                type="password"
+                value={configForm.clientSecret || ''}
+                onChange={(e) => setConfigForm({ ...configForm, clientSecret: e.target.value })}
+                placeholder="Your QuickBooks Client Secret"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Redirect URI
+              </label>
+              <input
+                type="text"
+                value={configForm.redirectUri || ''}
+                onChange={(e) => setConfigForm({ ...configForm, redirectUri: e.target.value })}
+                placeholder="https://yourdomain.com/quickbooks/callback"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                This must match the redirect URI in your Intuit Developer app settings
+              </p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Environment
+              </label>
+              <select
+                value={configForm.environment || 'sandbox'}
+                onChange={(e) => setConfigForm({ ...configForm, environment: e.target.value as 'sandbox' | 'production' })}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="sandbox">Sandbox (Testing)</option>
+                <option value="production">Production (Live)</option>
+              </select>
+            </div>
+            <div className="flex space-x-3">
+              <button
+                onClick={async () => {
+                  if (!configForm.clientId || !configForm.clientSecret) {
+                    showToast('Please fill in Client ID and Client Secret', 'error')
+                    return
+                  }
+                  await onConfigSave(configForm)
+                  setShowConfig(false)
+                }}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                Save Configuration
+              </button>
+              <button
+                onClick={() => setShowConfig(false)}
+                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Connect / Reconnect Button */}
+      {canManage && (isConnected || (configForm.clientId && configForm.clientSecret)) && (
+        <div className="bg-blue-50 rounded-lg border border-blue-200 p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="font-semibold text-gray-900">
+                {isConnected ? 'Reconnect to QuickBooks' : 'Ready to Connect'}
+              </h3>
+              <p className="text-sm text-gray-600">
+                {isConnected
+                  ? 'Click below to refresh the QuickBooks connection if there are authentication issues.'
+                  : 'Click below to authorize this app with QuickBooks.'}
+              </p>
+            </div>
+            <button
+              onClick={onConnect}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center space-x-2"
+            >
+              <LinkIcon className="w-5 h-5" />
+              <span>{isConnected ? 'Reconnect QuickBooks' : 'Connect to QuickBooks'}</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Sync Actions */}
+      {isConnected && canManage && (
+        <div className="space-y-4">
+          <div className="bg-white rounded-lg border border-gray-200 p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Import from QuickBooks</h3>
+            
+            {/* Product Import */}
+            <div className="mb-6">
+              <h4 className="font-medium text-gray-900 mb-2">Import Products from QuickBooks</h4>
+              <p className="text-sm text-gray-600 mb-4">
+                Import all inventory items from QuickBooks to your system. Products will be created with their SKU, name, price, and stock levels. Existing products (by SKU) will be skipped.
+              </p>
+              <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                <div>
+                  <p className="font-medium text-gray-900">Create products from QuickBooks</p>
+                  <p className="text-sm text-gray-600">All QuickBooks inventory items will be imported</p>
+                </div>
+                <button
+                  onClick={async () => {
+                    setShowImportPreview(true)
+                    setIsLoadingPreview(true)
+                    try {
+                      const items = await getQuickBooksItems(workspaceId)
+                      // Only inventory items with SKU and name
+                      const filtered = items.filter(
+                        (item: any) => item.Type === 'Inventory' && item.Sku && item.Name
+                      )
+                      const existingSkus = new Set(
+                        (products || []).map((p: any) => (p.sku || '').toString())
+                      )
+                      const withFlags = filtered.map((item: any) => ({
+                        ...item,
+                        _isExisting: existingSkus.has((item.Sku || '').toString()),
+                      }))
+                      setPreviewItems(withFlags)
+                      // Varsayılan: sadece yeni ürünleri seç
+                      setSelectedSkus(
+                        withFlags
+                          .filter((i: any) => !i._isExisting)
+                          .map((i: any) => (i.Sku || '').toString())
+                      )
+                    } catch (err) {
+                      console.error('Preview import error:', err)
+                      showToast(
+                        'Error loading products from QuickBooks for preview.',
+                        'error'
+                      )
+                      setShowImportPreview(false)
+                    } finally {
+                      setIsLoadingPreview(false)
+                    }
+                  }}
+                  disabled={isSyncing}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
+                >
+                  {isSyncing ? (
+                    <>
+                      <ArrowPathIcon className="w-5 h-5 animate-spin" />
+                      <span>Importing...</span>
+                    </>
+                  ) : (
+                    <>
+                      <ArrowPathIcon className="w-5 h-5" />
+                      <span>Import Products from QuickBooks</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Inventory Sync - Read Only */}
+            <div>
+              <h4 className="font-medium text-gray-900 mb-2">Import Inventory from QuickBooks</h4>
+              <p className="text-sm text-gray-600 mb-4">
+                Import inventory levels from QuickBooks to your system. Products are matched by SKU. This is a <strong>read-only</strong> operation - QuickBooks is not modified.
+              </p>
+              <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                <div>
+                  <p className="font-medium text-gray-900">Read-only import</p>
+                  <p className="text-sm text-gray-600">Import inventory levels from QuickBooks (no changes to QuickBooks)</p>
+                </div>
+                <button
+                  onClick={handleSyncInventory}
+                  disabled={isSyncing}
+                  className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
+                >
+                  {isSyncing ? (
+                    <>
+                      <ArrowPathIcon className="w-5 h-5 animate-spin" />
+                      <span>Syncing...</span>
+                    </>
+                  ) : (
+                    <>
+                      <ArrowPathIcon className="w-5 h-5" />
+                      <span>Sync Inventory from QuickBooks</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Info Box */}
+          <div className="bg-blue-50 rounded-lg border border-blue-200 p-4">
+            <h4 className="font-medium text-blue-900 mb-2">How it works</h4>
+            <ul className="text-sm text-blue-800 space-y-1 list-disc list-inside">
+              <li><strong>Import Products:</strong> Creates new products in your system from QuickBooks inventory items</li>
+              <li><strong>Import Inventory:</strong> Updates stock levels for existing products (matched by SKU)</li>
+              <li>Products are matched between systems using SKU codes</li>
+              <li>This is a <strong>read-only</strong> operation - QuickBooks is not modified</li>
+              <li>Existing products (by SKU) will be skipped during import</li>
+            </ul>
+          </div>
+        </div>
+      )}
+
+      {!canManage && (
+        <div className="text-center py-8 text-gray-500">
+          You don't have permission to manage QuickBooks integration.
+        </div>
+      )}
+
+      {/* Import Preview Modal */}
+      {showImportPreview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-30">
+          <div className="bg-white rounded-lg shadow-lg max-w-5xl w-full max-h-[80vh] flex flex-col">
+            <div className="px-6 py-4 border-b flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-gray-900">
+                Preview Products from QuickBooks
+              </h3>
+              <button
+                className="text-gray-500 hover:text-gray-700"
+                onClick={() => setShowImportPreview(false)}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="px-6 py-4 flex-1 overflow-auto">
+              {isLoadingPreview ? (
+                <div className="py-8 text-center text-gray-500">Loading products...</div>
+              ) : previewItems.length === 0 ? (
+                <div className="py-8 text-center text-gray-500">
+                  No inventory items found in QuickBooks.
+                </div>
+              ) : (
+                <>
+                  <div className="mb-3 flex items-center justify-between text-sm text-gray-600">
+                    <div>
+                      <span className="font-medium">
+                        {selectedSkus.length} selected
+                      </span>{' '}
+                      out of {previewItems.length} inventory items.
+                    </div>
+                    <div className="space-x-2">
+                      <button
+                        className="px-3 py-1 rounded border border-gray-300 text-gray-700 text-xs hover:bg-gray-50"
+                        onClick={() =>
+                          setSelectedSkus(
+                            previewItems
+                              .filter((i: any) => !i._isExisting)
+                              .map((i: any) => (i.Sku || '').toString())
+                          )
+                        }
+                      >
+                        Select all new
+                      </button>
+                      <button
+                        className="px-3 py-1 rounded border border-gray-300 text-gray-700 text-xs hover:bg-gray-50"
+                        onClick={() =>
+                          setSelectedSkus(
+                            previewItems.map((i: any) => (i.Sku || '').toString())
+                          )
+                        }
+                      >
+                        Select all
+                      </button>
+                      <button
+                        className="px-3 py-1 rounded border border-gray-300 text-gray-700 text-xs hover:bg-gray-50"
+                        onClick={() => setSelectedSkus([])}
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  </div>
+
+                  <table className="min-w-full text-sm border border-gray-200 rounded">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-3 py-2 border-b">
+                          <input
+                            type="checkbox"
+                            checked={
+                              previewItems.length > 0 &&
+                              selectedSkus.length === previewItems.length
+                            }
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedSkus(
+                                  previewItems.map((i: any) => (i.Sku || '').toString())
+                                )
+                              } else {
+                                setSelectedSkus([])
+                              }
+                            }}
+                          />
+                        </th>
+                        <th className="px-3 py-2 border-b text-left">SKU</th>
+                        <th className="px-3 py-2 border-b text-left">Name</th>
+                        <th className="px-3 py-2 border-b text-right">On Hand</th>
+                        <th className="px-3 py-2 border-b text-right">Unit Price</th>
+                        <th className="px-3 py-2 border-b text-left">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {previewItems.map((item: any) => {
+                        const sku = (item.Sku || '').toString()
+                        const isSelected = selectedSkus.includes(sku)
+                        return (
+                          <tr key={sku} className="hover:bg-gray-50">
+                            <td className="px-3 py-2 border-b text-center">
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setSelectedSkus((prev) =>
+                                      prev.includes(sku) ? prev : [...prev, sku]
+                                    )
+                                  } else {
+                                    setSelectedSkus((prev) =>
+                                      prev.filter((s) => s !== sku)
+                                    )
+                                  }
+                                }}
+                              />
+                            </td>
+                            <td className="px-3 py-2 border-b font-mono text-xs">{sku}</td>
+                            <td className="px-3 py-2 border-b">{item.Name}</td>
+                            <td className="px-3 py-2 border-b text-right">
+                              {item.QtyOnHand ?? 0}
+                            </td>
+                            <td className="px-3 py-2 border-b text-right">
+                              {item.UnitPrice != null ? item.UnitPrice : '-'}
+                            </td>
+                            <td className="px-3 py-2 border-b">
+                              {item._isExisting ? (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-800 text-xs">
+                                  Existing (will be skipped)
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-green-100 text-green-800 text-xs">
+                                  New product
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </>
+              )}
+            </div>
+
+            <div className="px-6 py-4 border-t flex items-center justify-end space-x-3">
+              <button
+                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 text-sm"
+                onClick={() => setShowImportPreview(false)}
+              >
+                Cancel
+              </button>
+              <button
+                disabled={selectedSkus.length === 0 || isSyncing}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                onClick={async () => {
+                  if (selectedSkus.length === 0) return
+                  setIsSyncing(true)
+                  try {
+                    await onImportProducts(selectedSkus)
+                    setShowImportPreview(false)
+                  } finally {
+                    setIsSyncing(false)
+                  }
+                }}
+              >
+                {isSyncing ? 'Importing...' : 'Import selected products'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

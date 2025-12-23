@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useSessionStore, type UserWorkspace } from '../state/sessionStore'
 import { BuildingOfficeIcon, ChevronDownIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline'
 import { LOGO_URL } from '../utils/logo'
@@ -11,6 +12,7 @@ interface WorkspaceSelectorProps {
 
 export function WorkspaceSelector({ workspaces, onSelect }: WorkspaceSelectorProps) {
   const { displayName, email } = useSessionStore()
+  const navigate = useNavigate()
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
@@ -80,6 +82,7 @@ export function WorkspaceSelector({ workspaces, onSelect }: WorkspaceSelectorPro
   const handleSignOut = async () => {
     try {
       await signOut()
+      navigate('/login', { replace: true })
     } catch (error) {
       console.error('Sign out error:', error)
     }

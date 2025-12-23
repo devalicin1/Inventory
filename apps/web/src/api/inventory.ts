@@ -98,10 +98,34 @@ export async function listProductStockTxns(
   return snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as StockTxn[]
 }
 
+export async function listAllStockTxns(
+  workspaceId: string,
+  max: number = 50
+): Promise<StockTxn[]> {
+  const col = collection(db, 'workspaces', workspaceId, 'stockTxns')
+  const qy = query(col, orderBy('timestamp', 'desc'), limit(max))
+  const snap = await getDocs(qy)
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as StockTxn[]
+}
+
 export async function getProductOnHand(workspaceId: string, productId: string): Promise<number> {
-  // Calculate on-hand quantity from transaction history
-  const txns = await listProductStockTxns(workspaceId, productId, 1000) // Get all transactions
-  return txns.reduce((sum, t) => sum + Number(t.qty || 0), 0)
+  // Calculate on-hand quantity from ALL transaction history (not limited)
+  // Use where query without orderBy to avoid index requirement and get all transactions
+  const txnsCol = collection(db, 'workspaces', workspaceId, 'stockTxns')
+  const txnsQuery = query(
+    txnsCol,
+    where('productId', '==', productId)
+  )
+  const txnsSnap = await getDocs(txnsQuery)
+  
+  // Sum all transaction quantities (qty already has correct sign from createStockTransaction)
+  let totalQty = 0
+  txnsSnap.docs.forEach(txnDoc => {
+    const txn = txnDoc.data()
+    totalQty += Number(txn.qty || 0)
+  })
+  
+  return totalQty
 }
 
 export interface ListedProduct {

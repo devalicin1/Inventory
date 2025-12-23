@@ -18,6 +18,7 @@ import { InventoryLedger } from '../components/reports/InventoryLedger'
 import { CycleCountAccuracy } from '../components/reports/CycleCountAccuracy'
 import { CogsGrossProfit } from '../components/reports/CogsGrossProfit'
 import { Returns } from '../components/reports/Returns'
+import { PageShell } from '../components/layout/PageShell'
 
 const reportTabs = [
   { id: 'stock-on-hand', name: 'Stock On-Hand', icon: CubeIcon, description: 'Current inventory levels and reorder points' },
@@ -46,17 +47,12 @@ export function Reports() {
   }
 
   return (
-    <div className="space-y-6 w-full max-w-full overflow-x-hidden">
-      {/* Header */}
-      <div className="border-b border-gray-200 pb-4">
-        <h1 className="text-2xl font-bold text-gray-900">Inventory Reports</h1>
-        <p className="mt-1 text-sm text-gray-500">
-          Comprehensive inventory analysis and reporting tools
-        </p>
-      </div>
-
+    <PageShell
+      title="Inventory Reports"
+      subtitle="Comprehensive inventory analysis and reporting tools"
+    >
       {/* Tab Navigation */}
-      <div className="border-b border-gray-200 overflow-x-auto -mx-5 sm:mx-0 px-5 sm:px-0">
+      <div className="border-b border-gray-200 overflow-x-auto">
         <nav className="-mb-px flex space-x-8 min-w-max">
           {reportTabs.map((tab) => {
             const Icon = tab.icon
@@ -64,7 +60,7 @@ export function Reports() {
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm flex items-center space-x-2 ${
+                className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm flex items-center space-x-2 h-11 ${
                   activeTab === tab.id
                     ? 'border-blue-500 text-blue-600'
                     : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
@@ -79,7 +75,7 @@ export function Reports() {
       </div>
 
       {/* Report Content */}
-      <div className="bg-white rounded-lg border border-gray-200 overflow-x-hidden">
+      <div className="bg-white rounded-[14px] border border-gray-200 overflow-x-hidden">
         <div className="p-6">
           {/* Report Description */}
           {(() => {
@@ -123,6 +119,6 @@ export function Reports() {
           )}
         </div>
       </div>
-    </div>
+    </PageShell>
   )
 }

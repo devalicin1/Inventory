@@ -38,6 +38,7 @@ import {
   ChevronLeftIcon,
   Bars3Icon,
   EllipsisVerticalIcon,
+  EllipsisHorizontalIcon,
   MinusIcon,
   PlusCircleIcon,
   MinusCircleIcon,
@@ -46,6 +47,7 @@ import {
 import { toCSV, downloadCSV, parseCSV } from '../utils/csv'
 import { Card } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
+import { PageShell } from '../components/layout/PageShell'
 
 interface Product {
   id: string
@@ -80,6 +82,8 @@ export function Inventory() {
   const [adjustQty, setAdjustQty] = useState<number>(1)
   const [isAdjusting, setIsAdjusting] = useState(false)
   const [canManageInventory, setCanManageInventory] = useState(false)
+  const [showMoreMenu, setShowMoreMenu] = useState(false)
+  const [rowActionMenuOpen, setRowActionMenuOpen] = useState<string | null>(null)
   const qc = useQueryClient()
   const { workspaceId, userId } = useSessionStore()
 
@@ -469,11 +473,11 @@ export function Inventory() {
             <div key={group.id} className="select-none">
               {/* Group Item */}
               <div
-                className={`group flex items-center gap-2 px-3 py-2 rounded-lg transition-colors cursor-pointer ${isSelected
+                className={`group flex items-start gap-1.5 px-2.5 py-2 rounded-lg transition-colors cursor-pointer ${isSelected
                   ? 'bg-blue-50 border border-blue-200 text-blue-700'
                   : 'hover:bg-gray-50 text-gray-700'
                   }`}
-                style={{ paddingLeft: `${depth * 16 + 12}px` }}
+                style={{ paddingLeft: `${depth * 12 + 8}px` }}
                 draggable
                 onDragStart={(e) => {
                   e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'group', id: group.id }))
@@ -499,7 +503,7 @@ export function Inventory() {
                 {hasChildren && (
                   <button
                     onClick={() => toggleGroupExpansion(group.id)}
-                    className="p-1 hover:bg-white rounded transition-colors"
+                    className="p-0.5 hover:bg-white rounded transition-colors flex-shrink-0"
                   >
                     {isExpanded ? (
                       <ChevronDownIcon className="h-3 w-3 text-gray-500" />
@@ -510,27 +514,29 @@ export function Inventory() {
                 )}
 
                 {/* Placeholder for groups without children */}
-                {!hasChildren && <div className="w-5" />}
+                {!hasChildren && <div className="w-4 flex-shrink-0" />}
 
                 {/* Folder Icon and Name */}
                 <div
-                  className="flex items-center gap-2 flex-1 min-w-0"
+                  className="flex items-start gap-1.5 flex-1 min-w-0"
                   onClick={() => {
                     setSelectedGroup(group.id)
                     setShowMobileSidebar(false)
                   }}
                 >
-                  <FolderIcon className={`h-4 w-4 flex-shrink-0 ${isSelected ? 'text-blue-600' : 'text-gray-400'
+                  <FolderIcon className={`h-3.5 w-3.5 flex-shrink-0 mt-0.5 ${isSelected ? 'text-blue-600' : 'text-gray-400'
                     }`} />
-                  <span className="truncate text-sm font-medium">{group.name}</span>
-                  <span className="text-xs text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">
+                  <span className="text-sm font-medium flex-1 min-w-0 line-clamp-2 break-words leading-snug">
+                    {group.name}
+                  </span>
+                  <span className="text-[10px] text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded flex-shrink-0 mt-0.5 font-medium">
                     {products.filter(p => (p as any).groupId === group.id).length}
                   </span>
                 </div>
 
                 {/* Group Actions */}
                 {canManageInventory && (
-                  <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
+                  <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5 flex-shrink-0">
                     <button
                       onClick={async (e) => {
                         e.stopPropagation()
@@ -632,13 +638,13 @@ export function Inventory() {
         </div>
 
         {/* Content Skeleton */}
-        <div className="grid grid-cols-1 lg:grid-cols-20 gap-6">
-          <div className="hidden lg:block lg:col-span-5">
+        <div className="flex flex-col lg:flex-row gap-6">
+          <div className="hidden lg:block flex-shrink-0" style={{ minWidth: '300px', maxWidth: '320px', width: '300px' }}>
             <Card>
               <div className="h-96 bg-gray-100 rounded animate-pulse"></div>
             </Card>
           </div>
-          <div className="lg:col-span-15">
+          <div className="flex-1 min-w-0">
             <Card>
               <div className="h-96 bg-gray-100 rounded animate-pulse"></div>
             </Card>
@@ -649,30 +655,106 @@ export function Inventory() {
   }
 
   return (
-    <div className="space-y-8">
-      {/* Header Section - Mobile Optimized for Field Workers */}
-      <div className="space-y-4">
-        {/* Mobile Header */}
-        <div className="md:hidden">
-          <div className="flex items-center justify-between mb-3">
-            <h1 className="text-xl font-bold text-gray-900">Inventory</h1>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setShowMobileSidebar(!showMobileSidebar)}
-                className="p-2.5 bg-white border border-gray-200 rounded-xl active:bg-gray-100"
-              >
-                <FolderIcon className="h-5 w-5 text-gray-600" />
-              </button>
-              <button
-                onClick={() => setShowMobileActions(!showMobileActions)}
-                className="p-2.5 bg-white border border-gray-200 rounded-xl active:bg-gray-100"
-              >
-                <EllipsisVerticalIcon className="h-5 w-5 text-gray-600" />
-              </button>
-            </div>
+    <PageShell
+      title="Inventory Management"
+      subtitle="Manage your product catalog, track stock levels, and monitor inventory performance."
+      actions={
+        <div className="hidden md:flex items-center gap-3">
+          {canManageInventory && (
+            <Button
+              variant="primary"
+              size="md"
+              onClick={() => setShowCreate(true)}
+            >
+              <PlusIcon className="h-4 w-4 mr-2" />
+              New Product
+            </Button>
+          )}
+          <div className="relative">
+            <Button
+              variant="secondary"
+              size="md"
+              onClick={() => setShowMoreMenu(!showMoreMenu)}
+            >
+              <EllipsisHorizontalIcon className="h-5 w-5" />
+            </Button>
+            {showMoreMenu && (
+              <>
+                <div 
+                  className="fixed inset-0 z-40" 
+                  onClick={() => setShowMoreMenu(false)}
+                />
+                <div className="absolute right-0 mt-2 w-48 bg-white border border-gray-200 rounded-lg shadow-xl z-50">
+                  <button
+                    onClick={() => {
+                      setShowImport(true)
+                      setShowMoreMenu(false)
+                    }}
+                    className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-t-lg flex items-center gap-2 transition-colors"
+                  >
+                    <ArrowUpTrayIcon className="h-4 w-4" />
+                    Import
+                  </button>
+                  <button
+                    onClick={() => {
+                      downloadCSV('inventory.csv', toCSV(products))
+                      setShowMoreMenu(false)
+                    }}
+                    className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 transition-colors"
+                  >
+                    <ArrowDownTrayIcon className="h-4 w-4" />
+                    Export
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowScanner(true)
+                      setShowMoreMenu(false)
+                    }}
+                    className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 transition-colors"
+                  >
+                    <QrCodeIcon className="h-4 w-4" />
+                    Scan
+                  </button>
+                  {duplicateProducts.length > 0 && (
+                    <button
+                      onClick={() => {
+                        setShowDuplicates(true)
+                        setShowMoreMenu(false)
+                      }}
+                      className="w-full text-left px-4 py-2 text-sm text-amber-700 hover:bg-amber-50 flex items-center gap-2 transition-colors border-t border-gray-200"
+                    >
+                      <ExclamationCircleIcon className="h-4 w-4" />
+                      Duplicates
+                      <span className="ml-auto bg-amber-600 text-white text-xs px-2 py-0.5 rounded-full font-bold">
+                        {duplicateProducts.length}
+                      </span>
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
           </div>
-          
-          {/* Mobile Actions Sheet */}
+        </div>
+      }
+    >
+      {/* Mobile Header */}
+      <div className="md:hidden mb-6">
+        <div className="flex items-center justify-end gap-2">
+          <button
+            onClick={() => setShowMobileSidebar(!showMobileSidebar)}
+            className="p-2.5 bg-white border border-gray-200 rounded-[14px] active:bg-gray-100 h-11 w-11 flex items-center justify-center"
+          >
+            <FolderIcon className="h-5 w-5 text-gray-600" />
+          </button>
+          <button
+            onClick={() => setShowMobileActions(!showMobileActions)}
+            className="p-2.5 bg-white border border-gray-200 rounded-[14px] active:bg-gray-100 h-11 w-11 flex items-center justify-center"
+          >
+            <EllipsisVerticalIcon className="h-5 w-5 text-gray-600" />
+          </button>
+        </div>
+        
+        {/* Mobile Actions Sheet */}
           {showMobileActions && (
             <>
               <div className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm" onClick={() => setShowMobileActions(false)}></div>
@@ -769,93 +851,18 @@ export function Inventory() {
               </div>
             </>
           )}
-        </div>
-
-        {/* Desktop Header */}
-        <div className="hidden md:flex md:items-center md:justify-between">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight text-gray-900">Inventory Management</h1>
-            <p className="mt-1 text-sm text-gray-500">
-              Manage your product catalog, track stock levels, and monitor inventory performance.
-            </p>
-          </div>
-          {/* Desktop Action Buttons */}
-          <div className="flex items-center gap-3 flex-wrap">
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => setShowFilters(!showFilters)}
-            >
-              <FunnelIcon className="h-4 w-4 mr-2" />
-              Filters
-              {(statusFilter !== 'all' || lowStockFilter) && (
-                <span className="ml-2 bg-blue-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
-                  {(statusFilter !== 'all' ? 1 : 0) + (lowStockFilter ? 1 : 0)}
-                </span>
-              )}
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => setShowImport(true)}
-            >
-              <ArrowUpTrayIcon className="h-4 w-4 mr-2" />
-              Import
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => downloadCSV('inventory.csv', toCSV(products))}
-            >
-              <ArrowDownTrayIcon className="h-4 w-4 mr-2" />
-              Export
-            </Button>
-            {duplicateProducts.length > 0 && (
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => setShowDuplicates(true)}
-                className="bg-amber-50 border-amber-300 text-amber-700 hover:bg-amber-100"
-              >
-                <ExclamationCircleIcon className="h-4 w-4 mr-2" />
-                Duplicates
-                <span className="ml-2 bg-amber-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
-                  {duplicateProducts.length}
-                </span>
-              </Button>
-            )}
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => setShowScanner(true)}
-            >
-              <QrCodeIcon className="h-4 w-4 mr-2" />
-              Scan
-            </Button>
-            {canManageInventory && (
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={() => setShowCreate(true)}
-              >
-                <PlusIcon className="h-4 w-4 mr-2" />
-                New Product
-              </Button>
-            )}
-          </div>
-        </div>
       </div>
 
-      {/* Search Bar */}
-      <div className="space-y-2">
-        <div className="relative">
+      {/* Controls Bar: Search + Filters */}
+      <div className="flex items-center gap-3">
+        <div className="flex-1 relative">
           <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
           <input
             type="text"
             placeholder="Search within products..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-10 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors text-sm"
+            className="w-full pl-10 pr-10 py-3 border border-gray-300 rounded-[14px] focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors text-sm h-11"
           />
           {searchTerm && (
             <button
@@ -866,9 +873,24 @@ export function Inventory() {
             </button>
           )}
         </div>
+        <Button
+          variant="secondary"
+          size="md"
+          onClick={() => setShowFilters(!showFilters)}
+          className="hidden md:flex"
+        >
+          <FunnelIcon className="h-4 w-4 mr-2" />
+          Filters
+          {(statusFilter !== 'all' || lowStockFilter) && (
+            <span className="ml-2 bg-blue-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+              {(statusFilter !== 'all' ? 1 : 0) + (lowStockFilter ? 1 : 0)}
+            </span>
+          )}
+        </Button>
+      </div>
 
-        {/* Mobile quick filters shown just under search */}
-        <div className="sm:hidden flex flex-col gap-2">
+      {/* Mobile quick filters shown just under search */}
+      <div className="sm:hidden flex flex-col gap-2">
           {/* Folder selector */}
           <div className="flex items-center gap-2">
             <select
@@ -929,7 +951,6 @@ export function Inventory() {
             </button>
           </div>
         </div>
-      </div>
 
       {/* Filters Panel */}
       {showFilters && (
@@ -1095,8 +1116,8 @@ export function Inventory() {
         </div>
       </div>
 
-      {/* Main Content Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-20 gap-6">
+      {/* Main Content: Split Layout */}
+      <div className="flex flex-col lg:flex-row gap-6">
         {/* Mobile Sidebar Overlay */}
         {showMobileSidebar && (
           <>
@@ -1136,7 +1157,7 @@ export function Inventory() {
                 </div>
 
                 <div
-                  className="space-y-1 max-h-[calc(100vh-200px)] overflow-y-auto"
+                  className="space-y-0.5 max-h-[calc(100vh-200px)] overflow-y-auto"
                   onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }}
                   onDrop={async (e) => {
                     const data = e.dataTransfer.getData('text/plain')
@@ -1160,9 +1181,11 @@ export function Inventory() {
                       setShowMobileSidebar(false)
                     }}
                   >
-                    <ArchiveBoxIcon className="h-4 w-4 text-gray-500" />
-                    <span className="text-sm font-medium flex-1">All Products</span>
-                    <span className="text-xs text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">
+                    <ArchiveBoxIcon className="h-3.5 w-3.5 text-gray-500 flex-shrink-0 mt-0.5" />
+                    <span className="text-sm font-medium flex-1 min-w-0 break-words leading-snug">
+                      All Products
+                    </span>
+                    <span className="text-[10px] text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded flex-shrink-0 mt-0.5 font-medium">
                       {products.length}
                     </span>
                   </div>
@@ -1214,11 +1237,11 @@ export function Inventory() {
         )}
 
         {/* Enhanced Sidebar - Desktop */}
-        <aside className="hidden lg:block lg:col-span-5 min-w-[280px]">
+        <aside className="hidden lg:block flex-shrink-0" style={{ minWidth: '300px', maxWidth: '320px', width: '300px' }}>
           <Card className="h-full">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-                <FolderIcon className="h-5 w-5 text-blue-600" />
+            <div className="flex items-center justify-between mb-3 px-1">
+              <h3 className="text-base font-semibold text-gray-900 flex items-center gap-1.5">
+                <FolderIcon className="h-4 w-4 text-blue-600" />
                 Product Folders
               </h3>
               <button
@@ -1228,15 +1251,15 @@ export function Inventory() {
                   await createGroup(workspaceId!, name)
                   qc.invalidateQueries({ queryKey: ['groups', workspaceId] })
                 }}
-                className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
                 title="New folder"
               >
-                <FolderPlusIcon className="h-4 w-4" />
+                <FolderPlusIcon className="h-3.5 w-3.5" />
               </button>
             </div>
 
             <div
-              className="space-y-1 max-h-[calc(100vh-400px)] overflow-y-auto"
+              className="space-y-0.5 max-h-[calc(100vh-400px)] overflow-y-auto"
               onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }}
               onDrop={async (e) => {
                 const data = e.dataTransfer.getData('text/plain')
@@ -1251,15 +1274,17 @@ export function Inventory() {
             >
               {/* All Products */}
               <div
-                className={`flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition-colors ${selectedGroup === ''
+                className={`flex items-start gap-1.5 px-2.5 py-2 rounded-lg cursor-pointer transition-colors ${selectedGroup === ''
                   ? 'bg-blue-50 border border-blue-200 text-blue-700'
                   : 'hover:bg-gray-50 text-gray-700'
                   }`}
                 onClick={() => setSelectedGroup('')}
               >
-                <ArchiveBoxIcon className="h-4 w-4 text-gray-500" />
-                <span className="text-sm font-medium flex-1">All Products</span>
-                <span className="text-xs text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">
+                <ArchiveBoxIcon className="h-3.5 w-3.5 text-gray-500 flex-shrink-0 mt-0.5" />
+                <span className="text-sm font-medium flex-1 min-w-0 break-words leading-snug">
+                  All Products
+                </span>
+                <span className="text-[10px] text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded flex-shrink-0 mt-0.5 font-medium">
                   {products.length}
                 </span>
               </div>
@@ -1308,7 +1333,7 @@ export function Inventory() {
         </aside>
 
         {/* Main Content */}
-        <section className="lg:col-span-15">
+        <section className="flex-1 min-w-0">
           {/* Bulk Actions */}
           {selectedIds.length > 0 && (
             <Card className="bg-blue-50 border-blue-200 mb-6">
@@ -1399,53 +1424,76 @@ export function Inventory() {
               onToggleSelectAll={(checked) => {
                 setSelectedIds(checked ? paginatedProducts.map((p: any) => p.id) : [])
               }}
-              renderActions={(item) => (
-                <div className="flex items-center justify-end gap-2">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setSelectedProduct(item)
-                    }}
-                    className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg border border-blue-200 transition-all duration-150 hover:shadow-sm"
-                    title="View details"
-                  >
-                    <EyeIcon className="h-4 w-4" />
-                    <span className="hidden lg:inline">View</span>
-                  </button>
-
-                  {canManageInventory && (
-                    <>
+              renderActions={(item) => {
+                const itemId = (item as any).id
+                const isOpen = rowActionMenuOpen === itemId
+                return (
+                  <div className="flex items-center justify-end">
+                    <div className="relative">
                       <button
-                        onClick={async (e) => {
+                        onClick={(e) => {
                           e.stopPropagation()
-                          const next = (item as any).status === 'active' ? 'draft' : 'active'
-                          await setProductStatus(workspaceId!, (item as any).id, next as any)
-                          qc.invalidateQueries({ queryKey: ['products', workspaceId] })
+                          setRowActionMenuOpen(isOpen ? null : itemId)
                         }}
-                        className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg border border-gray-200 transition-all duration-150 hover:shadow-sm"
-                        title={(item as any).status === 'active' ? 'Make Draft' : 'Activate'}
+                        className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                        title="Actions"
                       >
-                        <span className="hidden lg:inline">{(item as any).status === 'active' ? 'Draft' : 'Activate'}</span>
-                        <span className="lg:hidden">{(item as any).status === 'active' ? 'D' : 'A'}</span>
+                        <EllipsisHorizontalIcon className="h-5 w-5" />
                       </button>
-
-                      <button
-                        onClick={async (e) => {
-                          e.stopPropagation()
-                          if (!confirm('Are you sure you want to delete this product?')) return
-                          await deleteProduct(workspaceId!, (item as any).id)
-                          qc.invalidateQueries({ queryKey: ['products', workspaceId] })
-                        }}
-                        className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-red-700 bg-red-50 hover:bg-red-100 rounded-lg border border-red-200 transition-all duration-150 hover:shadow-sm"
-                        title="Delete product"
-                      >
-                        <TrashIcon className="h-4 w-4" />
-                        <span className="hidden lg:inline">Delete</span>
-                      </button>
-                    </>
-                  )}
-                </div>
-              )}
+                      {isOpen && (
+                        <>
+                          <div 
+                            className="fixed inset-0 z-40" 
+                            onClick={() => setRowActionMenuOpen(null)}
+                          />
+                          <div className="absolute right-0 mt-1 w-48 bg-white border border-gray-200 rounded-lg shadow-xl z-50">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setSelectedProduct(item)
+                                setRowActionMenuOpen(null)
+                              }}
+                              className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-t-lg flex items-center gap-2 transition-colors"
+                            >
+                              <EyeIcon className="h-4 w-4" />
+                              View
+                            </button>
+                            {canManageInventory && (
+                              <>
+                                <button
+                                  onClick={async (e) => {
+                                    e.stopPropagation()
+                                    const next = (item as any).status === 'active' ? 'draft' : 'active'
+                                    await setProductStatus(workspaceId!, itemId, next as any)
+                                    qc.invalidateQueries({ queryKey: ['products', workspaceId] })
+                                    setRowActionMenuOpen(null)
+                                  }}
+                                  className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 transition-colors"
+                                >
+                                  {(item as any).status === 'active' ? 'Draft' : 'Activate'}
+                                </button>
+                                <button
+                                  onClick={async (e) => {
+                                    e.stopPropagation()
+                                    if (!confirm('Are you sure you want to delete this product?')) return
+                                    await deleteProduct(workspaceId!, itemId)
+                                    qc.invalidateQueries({ queryKey: ['products', workspaceId] })
+                                    setRowActionMenuOpen(null)
+                                  }}
+                                  className="w-full text-left px-4 py-2 text-sm text-red-700 hover:bg-red-50 flex items-center gap-2 transition-colors rounded-b-lg border-t border-gray-200"
+                                >
+                                  <TrashIcon className="h-4 w-4" />
+                                  Delete
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )
+              }}
             />
           </Card>
 
@@ -2160,7 +2208,7 @@ export function Inventory() {
           }}
         />
       )}
-    </div>
+    </PageShell>
   )
 }
 

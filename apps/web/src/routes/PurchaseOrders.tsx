@@ -10,6 +10,8 @@ import {
 } from '../api/purchase-orders'
 import { useSessionStore } from '../state/sessionStore'
 import { hasWorkspacePermission } from '../utils/permissions'
+import { PageShell } from '../components/layout/PageShell'
+import { Button } from '../components/ui/Button'
 import {
   PlusIcon,
   MagnifyingGlassIcon,
@@ -183,26 +185,23 @@ export function PurchaseOrders() {
   }
 
   return (
-    <div className="space-y-4 sm:space-y-6 p-4 sm:p-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-gray-900">Purchase Orders</h1>
-          <p className="mt-1 text-xs sm:text-sm text-gray-500">
-            Start a new Purchase Order, select items and input the desired quantity for ordering. Export as a PDF and send to your supplier. Mark as 'Received' when items have been shipped.
-          </p>
-        </div>
-        {canManagePOs && (
-          <button
+    <PageShell
+      title="Purchase Orders"
+      subtitle="Start a new Purchase Order, select items and input the desired quantity for ordering. Export as a PDF and send to your supplier. Mark as 'Received' when items have been shipped."
+      actions={
+        canManagePOs ? (
+          <Button
+            variant="primary"
+            size="md"
             onClick={() => navigate('/purchase-orders/new')}
-            className="inline-flex items-center justify-center rounded-md bg-red-600 px-3 py-2 sm:px-4 sm:py-2 text-xs sm:text-sm font-semibold text-white shadow-sm hover:bg-red-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-600 w-full sm:w-auto"
           >
-            <PlusIcon className="-ml-0.5 mr-1.5 h-4 w-4 sm:h-5 sm:w-5" />
+            <PlusIcon className="h-4 w-4 mr-2" />
             <span className="hidden sm:inline">NEW PURCHASE ORDER</span>
             <span className="sm:hidden">NEW PO</span>
-          </button>
-        )}
-      </div>
+          </Button>
+        ) : undefined
+      }
+    >
 
       {/* Help Section */}
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 sm:p-4">
@@ -226,12 +225,12 @@ export function PurchaseOrders() {
             placeholder="Search PO #"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-9 sm:pl-10 pr-4 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            className="w-full pl-9 sm:pl-10 pr-4 py-2 text-sm border border-gray-300 rounded-[14px] focus:ring-2 focus:ring-blue-500 focus:border-blue-500 h-11"
           />
         </div>
         <button
           onClick={() => setShowFilters(!showFilters)}
-          className="inline-flex items-center justify-center px-3 py-2 sm:px-4 sm:py-2 border border-gray-300 rounded-md text-xs sm:text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 w-full sm:w-auto"
+          className="inline-flex items-center justify-center px-3 py-2 sm:px-4 sm:py-2 border border-gray-300 rounded-[14px] text-xs sm:text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 w-full sm:w-auto h-11"
         >
           <FunnelIcon className="h-4 w-4 sm:h-5 sm:w-5 mr-2" />
           Filter
@@ -264,39 +263,39 @@ export function PurchaseOrders() {
       )}
 
       {/* Table - Desktop */}
-      <div className="bg-white shadow-sm rounded-lg border border-gray-200 overflow-hidden hidden md:block">
+      <div className="bg-white shadow-sm rounded-[14px] border border-gray-200 overflow-hidden hidden md:block">
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 sm:px-6 h-11 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   PO #
                 </th>
-                <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 sm:px-6 h-11 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   VENDOR
                 </th>
-                <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 sm:px-6 h-11 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   ORDER TOTAL
                 </th>
-                <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 sm:px-6 h-11 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   STATUS
                 </th>
-                <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 sm:px-6 h-11 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   LAST UPDATED
                 </th>
-                <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 sm:px-6 h-11 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   DATE ORDERED
                 </th>
-                <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 sm:px-6 h-11 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   DATE EXPECTED
                 </th>
-                <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 sm:px-6 h-11 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   DATE RECEIVED
                 </th>
-                <th className="px-4 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 sm:px-6 h-11 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   SHIP TO
                 </th>
-                <th className="px-4 sm:px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-4 sm:px-6 h-11 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                   ACTIONS
                 </th>
               </tr>
@@ -605,6 +604,6 @@ export function PurchaseOrders() {
           </div>
         )}
       </div>
-    </div>
+    </PageShell>
   )
 }

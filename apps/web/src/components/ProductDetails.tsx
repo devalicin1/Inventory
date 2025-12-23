@@ -82,6 +82,8 @@ interface Product {
   galleryUrls?: string[]
   qrUrl?: string
   barcodeUrl?: string
+  quickBooksItemId?: string
+  quickBooksLastSyncAt?: any
 }
 
 interface Props {
@@ -1515,6 +1517,29 @@ export function ProductDetails({ product, onClose, onSaved, canManage = false }:
             {/* --- OVERVIEW TAB --- */}
             {activeTab === 'overview' && (
               <div className="space-y-4 sm:space-y-6 lg:space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-300">
+
+                {/* QuickBooks Info */}
+                <div className="bg-white rounded-2xl border border-blue-100 shadow-sm p-4 flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide mb-1">
+                      QuickBooks Link
+                    </p>
+                    <p className="text-sm text-gray-900">
+                      {product.quickBooksItemId
+                        ? `Linked to QuickBooks item: ${product.quickBooksItemId}`
+                        : 'Not linked to QuickBooks'}
+                    </p>
+                    {product.quickBooksLastSyncAt && (
+                      <p className="text-xs text-gray-500 mt-1">
+                        Last QuickBooks sync:{' '}
+                        {(
+                          (product.quickBooksLastSyncAt as any)?.toDate?.() ??
+                          new Date(product.quickBooksLastSyncAt)
+                        ).toLocaleString()}
+                      </p>
+                    )}
+                  </div>
+                </div>
 
                 {/* Stock Adjustment Card - Premium Design */}
                 <div className="bg-gradient-to-br from-white to-gray-50 rounded-2xl border border-gray-200 shadow-xl overflow-hidden">

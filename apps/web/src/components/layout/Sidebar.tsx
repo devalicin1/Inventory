@@ -22,7 +22,7 @@ import { useSessionStore } from '../../state/sessionStore';
 import { signOut } from '../../lib/auth';
 import { hasScreenAccess } from '../../utils/permissions';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
-import { LOGO_URL } from '../../utils/logo';
+import { LOGO_URL, LOGO_ICON_URL } from '../../utils/logo';
 import { listProducts } from '../../api/products';
 import { listJobs } from '../../api/production-jobs';
 import { listPurchaseOrders } from '../../api/purchase-orders';
@@ -131,6 +131,7 @@ export const Sidebar: React.FC = () => {
 
     const systemNav = [
         { name: 'Settings', to: '/settings', icon: CogIcon, screenId: 'settings', badge: null },
+        { name: 'Integrations', to: '/integrations', icon: CogIcon, screenId: 'settings', badge: null },
     ];
 
     // Filter navigation based on screen access
@@ -152,6 +153,7 @@ export const Sidebar: React.FC = () => {
     const handleSignOut = async () => {
         try {
             await signOut();
+            navigate('/login', { replace: true });
         } catch (error) {
             console.error('Sign out error:', error);
         }
@@ -319,9 +321,11 @@ export const Sidebar: React.FC = () => {
                     </NavLink>
                 ) : (
                     <NavLink to="/" className="inline-flex items-center justify-center focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white rounded-md">
-                        <div className="h-8 w-8 rounded bg-primary-600 flex items-center justify-center">
-                            <span className="text-white font-bold text-xs">I</span>
-                        </div>
+                        <img
+                            src={LOGO_ICON_URL}
+                            alt="Itory icon"
+                            className="h-8 w-8 rounded object-contain"
+                        />
                     </NavLink>
                 )}
             </div>

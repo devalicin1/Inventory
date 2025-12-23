@@ -27,6 +27,7 @@ import {
   XMarkIcon,
   ShieldCheckIcon,
 } from '@heroicons/react/24/outline'
+import { PageShell } from '../components/layout/PageShell'
 
 // Component to preview role permissions and screens
 function RolePermissionsPreview({ workspaceId, role }: { workspaceId: string; role: string }) {
@@ -556,34 +557,28 @@ export function Admin() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto py-8">
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Workspace Management</h1>
-          <p className="mt-1 text-sm text-gray-500">View and manage all workspaces</p>
-          {email && (
-            <p className="mt-1 text-xs text-gray-400">
-              User: {email} | To become super admin: add your email to <code className="bg-gray-100 px-1 rounded">apps/web/src/utils/permissions.ts</code>
-            </p>
-          )}
-        </div>
+    <PageShell
+      title="Workspace Management"
+      subtitle={email ? `User: ${email} | To become super admin: add your email to apps/web/src/utils/permissions.ts` : "View and manage all workspaces"}
+      actions={
         <div className="flex gap-2">
           <button
             onClick={() => createDemoWorkspaceMutation.mutate()}
             disabled={createDemoWorkspaceMutation.isPending}
-            className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50"
+            className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-[14px] shadow-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 disabled:opacity-50 h-10"
           >
             {createDemoWorkspaceMutation.isPending ? 'Creating...' : 'Create Demo Workspace'}
           </button>
           <button
             onClick={() => setShowCreateModal(true)}
-            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-[14px] shadow-sm text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 h-10"
           >
             <PlusIcon className="h-5 w-5 mr-2" />
             New Workspace
           </button>
         </div>
-      </div>
+      }
+    >
 
       {/* Error Message */}
       {workspacesError && (
@@ -1506,6 +1501,6 @@ export function Admin() {
           </div>
         </div>
       )}
-    </div>
+    </PageShell>
   )
 }

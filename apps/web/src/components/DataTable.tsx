@@ -34,13 +34,13 @@ export function DataTable<T extends Record<string, any>>({
   onToggleSelectAll,
 }: DataTableProps<T>) {
   return (
-    <div className={`overflow-hidden rounded-xl ${className}`}>
+    <div className={`overflow-hidden rounded-[14px] ${className}`}>
       <div className="overflow-x-auto">
         <table className="w-full">
           <thead className="bg-gradient-to-r from-gray-50 to-slate-50 border-b border-gray-200">
             <tr>
               {selectable && (
-                <th className="w-12 px-4 py-4">
+                <th className="w-12 px-4 h-11">
                   <input
                     type="checkbox"
                     aria-label="Select all"
@@ -54,12 +54,12 @@ export function DataTable<T extends Record<string, any>>({
                 <th
                   key={String(column.key)}
                   scope="col"
-                  className={`px-4 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider ${column.className || ''}`}
+                  className={`px-4 h-11 text-left text-xs font-bold text-gray-700 uppercase tracking-wider ${column.className || ''}`}
                 >
                   {column.label}
                 </th>
               ))}
-              <th scope="col" className="w-auto px-4 py-4 text-right">
+              <th scope="col" className="w-auto px-4 h-11 text-right">
                 <span className="sr-only">Actions</span>
               </th>
             </tr>

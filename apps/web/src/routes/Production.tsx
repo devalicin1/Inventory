@@ -1061,48 +1061,40 @@ export function Production() {
   }
 
   return (
-    <div className="space-y-8">
-      {/* Header Section - Matching Dashboard Style */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-gray-900">Production Management</h1>
-          <p className="mt-1 text-sm text-gray-500">
-            Plan, execute, and analyze production workflows and job management.
-          </p>
-        </div>
-        <div className="flex items-center gap-3 flex-wrap">
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => setShowFilters(!showFilters)}
-          >
-            <FunnelIcon className="h-4 w-4 mr-2" />
-            Filters
-            {(filters.status.length > 0 || filters.stageId || filters.workcenterId || filters.assigneeId || filters.priority.length > 0) && (
-              <span className="ml-2 bg-blue-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
-                {filters.status.length + (filters.stageId ? 1 : 0) + (filters.workcenterId ? 1 : 0) + (filters.assigneeId ? 1 : 0) + filters.priority.length}
-              </span>
-            )}
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => downloadCSV('production_jobs.csv', toCSV(filteredJobs))}
-          >
-            <ArrowDownTrayIcon className="h-4 w-4 mr-2" />
-            Export
-          </Button>
-          {canManageProduction && (
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => setShowCreateForm(true)}
-            >
-              <PlusIcon className="h-4 w-4 mr-2" />
-              Create Job
-            </Button>
+    <>
+      {/* Actions Bar - Only for index route */}
+      <div className="hidden md:flex items-center gap-3 flex-wrap mb-6">
+        <Button
+          variant="secondary"
+          size="md"
+          onClick={() => setShowFilters(!showFilters)}
+        >
+          <FunnelIcon className="h-4 w-4 mr-2" />
+          Filters
+          {(filters.status.length > 0 || filters.stageId || filters.workcenterId || filters.assigneeId || filters.priority.length > 0) && (
+            <span className="ml-2 bg-blue-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+              {filters.status.length + (filters.stageId ? 1 : 0) + (filters.workcenterId ? 1 : 0) + (filters.assigneeId ? 1 : 0) + filters.priority.length}
+            </span>
           )}
-        </div>
+        </Button>
+        <Button
+          variant="secondary"
+          size="md"
+          onClick={() => downloadCSV('production_jobs.csv', toCSV(filteredJobs))}
+        >
+          <ArrowDownTrayIcon className="h-4 w-4 mr-2" />
+          Export
+        </Button>
+        {canManageProduction && (
+          <Button
+            variant="primary"
+            size="md"
+            onClick={() => setShowCreateForm(true)}
+          >
+            <PlusIcon className="h-4 w-4 mr-2" />
+            Create Job
+          </Button>
+        )}
       </div>
 
       {/* Search Bar */}
@@ -1113,7 +1105,7 @@ export function Production() {
           placeholder="Search jobs, products, customers..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          className="w-full pl-10 pr-10 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors text-sm"
+          className="w-full pl-10 pr-10 py-3 border border-gray-300 rounded-[14px] focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors text-sm h-11"
         />
         {searchQuery && (
           <button
@@ -1422,22 +1414,22 @@ export function Production() {
       ) : (
         <>
           {/* Mobile Search Bar - Sticky for easy access */}
-          <div className="md:hidden sticky top-0 z-10 bg-white rounded-xl shadow-sm border border-gray-100 p-3 mb-3">
+          <div className="md:hidden sticky top-0 z-10 bg-white rounded-[14px] shadow-sm border border-gray-200 p-3 mb-6">
             <div className="relative">
-              <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
               <input
                 type="text"
                 placeholder="Search jobs, products, customers..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-10 py-2.5 text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                className="w-full pl-10 pr-10 py-3 border border-gray-300 rounded-[14px] focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors text-sm h-11"
               />
               {searchQuery && (
                 <button
                   onClick={() => setSearchQuery('')}
                   className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
                 >
-                  <XMarkIcon className="h-4 w-4" />
+                  <XMarkIcon className="h-5 w-5" />
                 </button>
               )}
             </div>
@@ -2049,6 +2041,6 @@ export function Production() {
           }}
         />
       )}
-    </div>
+    </>
   )
 }

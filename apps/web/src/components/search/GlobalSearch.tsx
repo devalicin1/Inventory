@@ -69,6 +69,7 @@ export const GlobalSearch: React.FC = () => {
     const inputRef = useRef<HTMLInputElement>(null);
     const resultRefs = useRef<(HTMLButtonElement | null)[]>([]);
     const [recentSearches, setRecentSearches] = useState<string[]>([]);
+    const [selectedType, setSelectedType] = useState<'job' | 'product' | 'po' | null>(null);
 
     // React Query hooks for cached data
     const { data: jobsData, refetch: refetchJobs } = useQuery({
@@ -151,6 +152,7 @@ export const GlobalSearch: React.FC = () => {
         } else {
             setQuery('');
             setActiveIndex(-1);
+            setSelectedType(null);
         }
     }, [isSearchOpen]);
 
@@ -243,9 +245,15 @@ export const GlobalSearch: React.FC = () => {
             });
         }
 
+        // Filter by selected type if any
+        let filteredResults = allResults;
+        if (selectedType) {
+            filteredResults = allResults.filter(result => result.type === selectedType);
+        }
+
         // Sort by score descending, limit to top 50
-        return allResults.sort((a, b) => b.score - a.score).slice(0, 50);
-    }, [query, jobsData, products, posData, workspaceId]);
+        return filteredResults.sort((a, b) => b.score - a.score).slice(0, 50);
+    }, [query, jobsData, products, posData, workspaceId, selectedType]);
 
     // Group results by type for display
     const groupedResults = useMemo(() => {
@@ -411,9 +419,9 @@ export const GlobalSearch: React.FC = () => {
                 onClick={closeSearch}
             />
 
-            <div className="flex min-h-full items-start justify-center p-4 text-center sm:p-0">
+            <div className="flex min-h-full items-stretch justify-center p-0 text-center sm:p-0">
                 <div
-                    className="relative transform overflow-hidden rounded-2xl bg-white/80 backdrop-blur-md text-left shadow-2xl transition-all sm:my-8 sm:w-full sm:max-w-2xl border border-white/20 ring-1 ring-black/5"
+                    className="relative flex flex-col w-full h-full max-h-screen transform overflow-hidden rounded-none bg-white/80 backdrop-blur-md text-left shadow-2xl transition-all sm:my-8 sm:h-auto sm:max-h-[80vh] sm:w-full sm:max-w-2xl sm:rounded-2xl border border-white/20 ring-1 ring-black/5"
                     onClick={(e) => e.stopPropagation()}
                 >
                     {/* Search Input Header */}
@@ -425,26 +433,31 @@ export const GlobalSearch: React.FC = () => {
                         <input
                             ref={inputRef}
                             type="text"
-                            className="h-12 w-full border-0 bg-transparent pl-11 pr-20 text-gray-900 placeholder:text-gray-400 focus:ring-0 sm:text-sm"
+                            className="h-12 w-full border-0 bg-transparent pl-11 pr-12 text-gray-900 placeholder:text-gray-400 focus:ring-0 sm:pr-24 sm:text-sm"
                             placeholder="Find anything... (Jobs, Products, POs)"
                             value={query}
                             onChange={(e) => setQuery(e.target.value)}
                         />
                         <div className="absolute top-3 right-3 flex items-center gap-2">
-                            {lastUpdated && (
-                                <div className="flex items-center gap-1 text-xs text-gray-400">
-                                    <ClockIcon className="h-3 w-3" />
-                                    <span>{formatLastUpdated(lastUpdated)}</span>
+                            {/* Last updated & refresh: only show on md+ to avoid crowding mobile header */}
+                            {(lastUpdated || isRefreshing) && (
+                                <div className="hidden sm:flex items-center gap-2 mr-1 text-xs text-gray-400">
+                                    {lastUpdated && (
+                                        <div className="flex items-center gap-1">
+                                            <ClockIcon className="h-3 w-3" />
+                                            <span>{formatLastUpdated(lastUpdated)}</span>
+                                        </div>
+                                    )}
+                                    <button
+                                        onClick={handleRefresh}
+                                        disabled={isRefreshing}
+                                        className="p-1 rounded-md text-gray-400 hover:text-gray-500 hover:bg-gray-100/50 disabled:opacity-50"
+                                        title="Refresh index"
+                                    >
+                                        <ArrowPathIcon className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+                                    </button>
                                 </div>
                             )}
-                            <button
-                                onClick={handleRefresh}
-                                disabled={isRefreshing}
-                                className="p-1 rounded-md text-gray-400 hover:text-gray-500 hover:bg-gray-100/50 disabled:opacity-50"
-                                title="Refresh index"
-                            >
-                                <ArrowPathIcon className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-                            </button>
                             <button
                                 onClick={closeSearch}
                                 className="p-1 rounded-md text-gray-400 hover:text-gray-500 hover:bg-gray-100/50"
@@ -454,15 +467,58 @@ export const GlobalSearch: React.FC = () => {
                         </div>
                     </div>
 
-                    {/* Description */}
-                    <div className="px-4 py-2 bg-gray-50/50 border-b border-gray-200/50">
-                        <p className="text-xs text-gray-500">
-                            Search across jobs, products, and purchase orders. Use arrow keys to navigate, Enter to select.
-                        </p>
+                    {/* Type Filter Buttons */}
+                    <div className="px-4 py-2 bg-gray-50/50 border-b border-gray-200/50 flex items-center gap-2 overflow-x-auto">
+                        <span className="text-xs text-gray-500 font-medium mr-1">Filter:</span>
+                        <button
+                            onClick={() => setSelectedType(null)}
+                            className={`px-3 py-1 text-xs font-medium rounded-full transition-all whitespace-nowrap ${
+                                selectedType === null
+                                    ? 'bg-blue-500 text-white shadow-sm'
+                                    : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
+                            }`}
+                        >
+                            All
+                        </button>
+                        <button
+                            onClick={() => setSelectedType('product')}
+                            className={`px-3 py-1 text-xs font-medium rounded-full transition-all flex items-center gap-1.5 whitespace-nowrap ${
+                                selectedType === 'product'
+                                    ? 'bg-emerald-500 text-white shadow-sm'
+                                    : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
+                            }`}
+                        >
+                            <CubeIcon className="h-3.5 w-3.5" />
+                            Product
+                        </button>
+                        <button
+                            onClick={() => setSelectedType('job')}
+                            className={`px-3 py-1 text-xs font-medium rounded-full transition-all flex items-center gap-1.5 whitespace-nowrap ${
+                                selectedType === 'job'
+                                    ? 'bg-indigo-500 text-white shadow-sm'
+                                    : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
+                            }`}
+                        >
+                            <ClipboardDocumentListIcon className="h-3.5 w-3.5" />
+                            Job
+                        </button>
+                        <button
+                            onClick={() => setSelectedType('po')}
+                            className={`px-3 py-1 text-xs font-medium rounded-full transition-all flex items-center gap-1.5 whitespace-nowrap ${
+                                selectedType === 'po'
+                                    ? 'bg-amber-500 text-white shadow-sm'
+                                    : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
+                            }`}
+                        >
+                            <ShoppingCartIcon className="h-3.5 w-3.5" />
+                            <span className="sm:hidden">PO</span>
+                            <span className="hidden sm:inline">Purchase Order</span>
+                        </button>
                     </div>
 
+
                     {/* Results Area */}
-                    <div className="h-[60vh] overflow-y-auto py-2">
+                    <div className="flex-1 overflow-y-auto py-2 max-h-[60vh] sm:max-h-[60vh]">
                         {query.trim() && hasResults ? (
                             <>
                                 {/* Jobs Section */}

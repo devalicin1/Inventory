@@ -74,18 +74,18 @@ body,
   /* Space for mobile bottom nav - increased to match new nav height */
   overflow-x: hidden;
   max-width: 100%;
-  padding-left: 16rem; /* Default sidebar width */
-  transition: padding-left 0.3s ease-in-out;
-}
-
-.main-content.sidebar-collapsed {
-  padding-left: 4rem; /* Collapsed sidebar width */
 }
 
 @media (min-width: 768px) {
   .main-content {
+    padding-left: 16rem; /* Default sidebar width on desktop */
     padding-bottom: 0;
     /* Remove padding on desktop */
+    transition: padding-left 0.3s ease-in-out;
+  }
+
+  .main-content.sidebar-collapsed {
+    padding-left: 4rem; /* Collapsed sidebar width on desktop */
   }
 }
 

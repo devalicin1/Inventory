@@ -239,6 +239,7 @@ export const MobileNav: React.FC = () => {
         try {
             await signOut();
             setShowMoreMenu(false);
+            navigate('/login', { replace: true });
         } catch (error) {
             console.error('Sign out error:', error);
         }

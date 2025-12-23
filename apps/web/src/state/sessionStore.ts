@@ -33,15 +33,18 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   userWorkspaces: [],
   isSuperAdmin: false,
   setSession: (s) => set((prev) => ({ ...prev, ...s })),
-  clear: () => set({ 
-    userId: null, 
-    email: null, 
-    displayName: null,
-    workspaceId: null, 
-    roles: [], 
-    userWorkspaces: [],
-    isSuperAdmin: false
-  }),
+  clear: () => {
+    localStorage.removeItem('selectedWorkspaceId')
+    set({ 
+      userId: null, 
+      email: null, 
+      displayName: null,
+      workspaceId: null, 
+      roles: [], 
+      userWorkspaces: [],
+      isSuperAdmin: false
+    })
+  },
   switchWorkspace: (workspaceId: string) => {
     const { userWorkspaces } = get()
     const workspace = userWorkspaces.find(ws => ws.workspaceId === workspaceId)
@@ -50,6 +53,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         workspaceId, 
         roles: [workspace.role] 
       })
+      // localStorage'a kaydet
+      localStorage.setItem('selectedWorkspaceId', workspaceId)
     }
   },
 }))

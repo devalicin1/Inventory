@@ -14,6 +14,8 @@ import { ProductionCalendar } from './components/ProductionCalendar'
 import { ProductionReports } from './components/ProductionReports'
 import { ProductionSettings } from './components/ProductionSettings'
 import { Settings } from './routes/Settings'
+import { Integrations } from './routes/Integrations'
+import { QuickBooksCallback } from './routes/QuickBooksCallback'
 import { Reports } from './routes/Reports'
 import { PurchaseOrders } from './routes/PurchaseOrders'
 import { PurchaseOrderForm } from './routes/PurchaseOrderForm'
@@ -209,6 +211,18 @@ const router = createBrowserRouter([
             <Settings />
           </ProtectedRoute>
         ),
+      },
+      {
+        path: 'integrations',
+        element: (
+          <ProtectedRoute requiredScreen="settings">
+            <Integrations />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: 'quickbooks/callback',
+        element: <QuickBooksCallback />,
       },
       {
         path: 'scan',
