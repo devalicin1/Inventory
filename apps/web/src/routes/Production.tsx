@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useSessionStore } from '../state/sessionStore'
+import { showToast } from '../components/ui/Toast'
 import { hasWorkspacePermission } from '../utils/permissions'
 import { DataTable } from '../components/DataTable'
 import { ProductionBoard } from '../components/ProductionBoard'
@@ -23,6 +24,7 @@ import {
   subscribeToJobs
 } from '../api/production-jobs'
 import { toCSV, downloadCSV } from '../utils/csv'
+import { downloadExcel } from '../utils/excel'
 import { generateJobPDFBlob, downloadJobPDF } from '../utils/pdfGenerator'
 import { storage } from '../lib/firebase'
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
@@ -372,7 +374,7 @@ function ConfirmCompleteModal({
             <button
               onClick={async () => {
                 if (qtyGood <= 0) {
-                  alert('Please enter Good Qty to add record.');
+                  showToast('Please enter Good Qty to add record.', 'warning')
                   return
                 }
                 const savedQty = qtyGood
@@ -395,7 +397,7 @@ function ConfirmCompleteModal({
                 const message = isIncomplete
                   ? `✓ Record added successfully!\n\nGood Qty: ${savedQty.toLocaleString()} ${currentStageInputUOM || ''} (${savedQtyOutputUOM.toFixed(2)} ${currentStageOutputUOM || currentStageInputUOM || ''})\nStage will remain until threshold (${completionThreshold.toLocaleString()} - ${completionThresholdUpper.toLocaleString()} ${plannedUOM}) is reached.`
                   : `✓ Record added successfully!\n\nGood Qty: ${savedQty.toLocaleString()} ${currentStageInputUOM || ''} (${savedQtyOutputUOM.toFixed(2)} ${currentStageOutputUOM || currentStageInputUOM || ''})\nThreshold reached. You can now complete the job using "Confirm Complete" button.`
-                alert(message)
+                showToast(message, 'success', 5000)
               }}
               className="px-4 py-2 rounded-lg bg-green-600 text-white hover:bg-green-700 transition-colors font-medium"
             >
@@ -406,7 +408,7 @@ function ConfirmCompleteModal({
             onClick={async () => {
               // Check completion based on cartoon to box conversion
               if (!canComplete) {
-                alert(`⚠️ Cannot complete: Box requirement not met.\n\nTotal Cartoon Output: ${totalCartoonOutput.toLocaleString()} cartoon\nCalculated Boxes: ${calculatedBoxes.toFixed(1)} boxes\nPlanned Boxes: ${plannedBoxes.toLocaleString()} boxes\nRemaining: ${Math.abs(boxesDifference).toFixed(1)} boxes\n\nTolerance: 5 boxes\nNeed at least ${Math.max(0, plannedBoxes - BOX_TOLERANCE).toLocaleString()} boxes to complete.`)
+                showToast(`Cannot complete: Box requirement not met. Need at least ${Math.max(0, plannedBoxes - BOX_TOLERANCE).toLocaleString()} boxes (currently ${calculatedBoxes.toFixed(1)}).`, 'warning', 6000)
                 return
               }
 
@@ -430,10 +432,11 @@ function ConfirmCompleteModal({
                 ? (totalCartoonOutput + (currentStageInputUOM === 'sheets' && numberUp > 0 ? convertToOutputUOM(qtyGood) : qtyGood)) / pcsPerBox
                 : calculatedBoxes
 
+              const totalCartoon = (qtyGood > 0 && currentStageOutputUOM === 'cartoon' ? totalCartoonOutput + (currentStageInputUOM === 'sheets' && numberUp > 0 ? convertToOutputUOM(qtyGood) : qtyGood) : totalCartoonOutput)
               if (finalBoxes >= plannedBoxes) {
-                alert(`✓ Job completed successfully!\n\nTotal Cartoon Output: ${(qtyGood > 0 && currentStageOutputUOM === 'cartoon' ? totalCartoonOutput + (currentStageInputUOM === 'sheets' && numberUp > 0 ? convertToOutputUOM(qtyGood) : qtyGood) : totalCartoonOutput).toLocaleString()} cartoon\nFinal Boxes: ${finalBoxes.toFixed(1)} boxes\nPlanned Boxes: ${plannedBoxes.toLocaleString()} boxes`)
+                showToast(`Job completed successfully! ${totalCartoon.toLocaleString()} cartoon, ${finalBoxes.toFixed(1)} boxes.`, 'success', 5000)
               } else {
-                alert(`✓ Job completed successfully!\n\nTotal Cartoon Output: ${(qtyGood > 0 && currentStageOutputUOM === 'cartoon' ? totalCartoonOutput + (currentStageInputUOM === 'sheets' && numberUp > 0 ? convertToOutputUOM(qtyGood) : qtyGood) : totalCartoonOutput).toLocaleString()} cartoon\nFinal Boxes: ${finalBoxes.toFixed(1)} boxes\nPlanned Boxes: ${plannedBoxes.toLocaleString()} boxes\nWithin tolerance (${(plannedBoxes - finalBoxes).toFixed(1)} boxes under)`)
+                showToast(`Job completed successfully! ${totalCartoon.toLocaleString()} cartoon, ${finalBoxes.toFixed(1)} boxes (within tolerance).`, 'success', 5000)
               }
 
               onConfirm()
@@ -695,7 +698,7 @@ export function Production() {
       await queryClient.invalidateQueries({ queryKey: ['jobs', workspaceId] })
     },
     onError: (err: any) => {
-      alert(err?.message || 'Move failed')
+      showToast(err?.message || 'Move failed', 'error')
     }
   })
 
@@ -738,7 +741,7 @@ export function Production() {
     } catch (error) {
       console.error('PDF generation/upload failed:', error)
       // Don't block the success flow if PDF generation fails
-      alert('Job created successfully, but PDF generation/upload failed. You can generate it later.')
+      showToast('Job created successfully, but PDF generation/upload failed. You can generate it later.', 'warning', 5000)
     }
   }
 
@@ -748,7 +751,7 @@ export function Production() {
 
   const handleDeleteJob = (jobId: string) => {
     if (!canManageProduction) {
-      alert('You do not have permission to delete jobs.')
+      showToast('You do not have permission to delete jobs.', 'error')
       return
     }
     if (confirm('Are you sure you want to delete this job? This action cannot be undone.')) {
@@ -1080,7 +1083,10 @@ export function Production() {
         <Button
           variant="secondary"
           size="md"
-          onClick={() => downloadCSV('production_jobs.csv', toCSV(filteredJobs))}
+          onClick={() => {
+            downloadCSV('production_jobs.csv', toCSV(filteredJobs))
+            showToast('Jobs exported to CSV successfully', 'success')
+          }}
         >
           <ArrowDownTrayIcon className="h-4 w-4 mr-2" />
           Export

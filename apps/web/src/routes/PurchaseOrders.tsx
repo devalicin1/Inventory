@@ -10,6 +10,7 @@ import {
 } from '../api/purchase-orders'
 import { useSessionStore } from '../state/sessionStore'
 import { hasWorkspacePermission } from '../utils/permissions'
+import { showToast } from '../components/ui/Toast'
 import { PageShell } from '../components/layout/PageShell'
 import { Button } from '../components/ui/Button'
 import {
@@ -108,7 +109,7 @@ export function PurchaseOrders() {
       queryClient.invalidateQueries({ queryKey: ['purchaseOrders', workspaceId] })
     } catch (error) {
       console.error('Failed to delete purchase order:', error)
-      alert('Failed to delete purchase order. Please try again.')
+      showToast('Failed to delete purchase order. Please try again.', 'error')
     }
   }
 

@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-quer
 import './index.css'
 import App from './App.tsx'
 import { Login } from './routes/Login'
+import { ForgotPassword } from './routes/ForgotPassword'
 import { Landing } from './routes/Landing'
 import { Admin } from './routes/Admin'
 import { Dashboard } from './routes/Dashboard'
@@ -154,6 +155,10 @@ const router = createBrowserRouter([
   {
     path: '/login',
     element: <Login />,
+  },
+  {
+    path: '/forgot-password',
+    element: <ForgotPassword />,
   },
   {
     path: '/create-workspace',

@@ -3,6 +3,7 @@ import { createProduct, updateProduct, type ProductInput, type Group } from '../
 import { listCustomFields, type CustomField } from '../api/settings'
 import { useSessionStore } from '../state/sessionStore'
 import { hasWorkspacePermission } from '../utils/permissions'
+import { showToast } from './ui/Toast'
 import { LABEL_SIZES, PAPER_SIZES, generateBarcodeDataURL, type LabelSize, type PaperSize, type BarcodeOptions } from '../utils/barcode'
 
 interface Props {
@@ -191,7 +192,32 @@ export function ProductForm({ workspaceId, groups, onCreated, onClose, productId
     
     // Check permission before submitting
     if (!canManageInventory) {
-      alert('You do not have permission to manage inventory.')
+      showToast('You do not have permission to manage inventory.', 'error')
+      return
+    }
+    
+    // Form validation
+    if (!form.name || !form.name.trim()) {
+      setError('Product name is required')
+      showToast('Product name is required', 'error')
+      return
+    }
+    
+    if (!form.sku || !form.sku.trim()) {
+      setError('SKU is required')
+      showToast('SKU is required', 'error')
+      return
+    }
+    
+    if (form.minStock < 0) {
+      setError('Minimum stock cannot be negative')
+      showToast('Minimum stock cannot be negative', 'error')
+      return
+    }
+    
+    if (form.reorderPoint < 0) {
+      setError('Reorder point cannot be negative')
+      showToast('Reorder point cannot be negative', 'error')
       return
     }
     

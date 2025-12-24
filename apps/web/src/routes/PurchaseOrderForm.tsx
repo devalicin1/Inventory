@@ -20,6 +20,7 @@ import { createStockTransaction } from '../api/inventory'
 import { downloadPurchaseOrderPDF } from '../utils/purchaseOrderPdfGenerator'
 import { useSessionStore } from '../state/sessionStore'
 import { hasWorkspacePermission } from '../utils/permissions'
+import { showToast } from '../components/ui/Toast'
 import { collection, query, where, getDocs } from 'firebase/firestore'
 import { db } from '../lib/firebase'
 import { generateQRCodeDataURL, downloadQRCode, copyQRCodeToClipboard } from '../utils/qrcode'
@@ -574,15 +575,38 @@ export function PurchaseOrderForm() {
   const handleSave = async () => {
     // Check permission before saving
     if (!canManagePOs) {
-      alert('You do not have permission to manage purchase orders.')
+      showToast('You do not have permission to manage purchase orders.', 'error')
       return
     }
     if (!workspaceId) return
 
+    // Form validation
+    if (!formData.vendorId) {
+      showToast('Please select a vendor', 'warning')
+      return
+    }
+
+    const lineItems = Array.isArray(formData.lineItems) ? formData.lineItems : []
+    if (lineItems.length === 0) {
+      showToast('Please add at least one line item', 'warning')
+      return
+    }
+
+    // Validate line items
+    for (let i = 0; i < lineItems.length; i++) {
+      const item = lineItems[i]
+      if (!item.description && !item.productId) {
+        showToast(`Line item ${i + 1}: Description or product is required`, 'warning')
+        return
+      }
+      if (!item.orderQuantity || item.orderQuantity <= 0) {
+        showToast(`Line item ${i + 1}: Quantity must be greater than 0`, 'warning')
+        return
+      }
+    }
+
     setIsSaving(true)
     try {
-      // Ensure lineItems is an array
-      const lineItems = Array.isArray(formData.lineItems) ? formData.lineItems : []
       
       const poData = {
         ...formData,
@@ -603,7 +627,7 @@ export function PurchaseOrderForm() {
       navigate('/purchase-orders')
     } catch (error) {
       console.error('Failed to save purchase order:', error)
-      alert('Failed to save purchase order. Please try again.')
+      showToast('Failed to save purchase order. Please try again.', 'error')
     } finally {
       setIsSaving(false)
     }
@@ -1987,7 +2011,7 @@ export function PurchaseOrderForm() {
               <button
                 onClick={async () => {
                   if (!existingPO) {
-                    alert('Purchase order data is not available.')
+                    showToast('Purchase order data is not available.', 'error')
                     return
                   }
                   
@@ -2001,7 +2025,7 @@ export function PurchaseOrderForm() {
                     setShowExportModal(false)
                   } catch (error) {
                     console.error('[Export] Export error:', error)
-                    alert(`Export failed: ${error instanceof Error ? error.message : 'Unknown error'}. Please check the console for details.`)
+                    showToast(`Export failed: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error', 5000)
                   } finally {
                     setIsExporting(false)
                   }
@@ -2091,7 +2115,7 @@ export function PurchaseOrderForm() {
                       : []
 
                     if (itemsToPost.length === 0) {
-                      alert('No items with product IDs found to post to inventory.')
+                      showToast('No items with product IDs found to post to inventory.', 'warning')
                       setShowPostToInventoryModal(false)
                       return
                     }
@@ -2120,7 +2144,7 @@ export function PurchaseOrderForm() {
                     )
 
                     if (itemsToPostFiltered.length === 0) {
-                      alert('All items have already been posted to inventory.')
+                      showToast('All items have already been posted to inventory.', 'info')
                       setShowPostToInventoryModal(false)
                       setIsPosting(false)
                       return
@@ -2148,11 +2172,11 @@ export function PurchaseOrderForm() {
 
                     queryClient.invalidateQueries({ queryKey: ['products', workspaceId] })
                     queryClient.invalidateQueries({ queryKey: ['stockTxns', workspaceId] })
-                    alert(`Successfully posted ${itemsToPostFiltered.length} item(s) to inventory.${alreadyPostedSet.size > 0 ? ` ${alreadyPostedSet.size} item(s) were already posted and skipped.` : ''}`)
+                    showToast(`Successfully posted ${itemsToPostFiltered.length} item(s) to inventory.${alreadyPostedSet.size > 0 ? ` ${alreadyPostedSet.size} item(s) were already posted and skipped.` : ''}`, 'success', 5000)
                     setShowPostToInventoryModal(false)
                   } catch (error) {
                     console.error('Post to inventory error:', error)
-                    alert(`Failed to post items to inventory: ${error instanceof Error ? error.message : 'Unknown error'}`)
+                    showToast(`Failed to post items to inventory: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error')
                   } finally {
                     setIsPosting(false)
                   }
@@ -2196,7 +2220,7 @@ export function PurchaseOrderForm() {
                         await downloadQRCode(qrCodeUrl, `PO_${existingPO.poNumber}_QR.png`)
                       } catch (error) {
                         console.error('QR kod indirme hatası:', error)
-                        alert('QR kod indirilemedi')
+                        showToast('QR kod indirilemedi', 'error')
                       }
                     }}
                     className="flex-1 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 flex items-center justify-center gap-2"
@@ -2208,10 +2232,10 @@ export function PurchaseOrderForm() {
                     onClick={async () => {
                       try {
                         await copyQRCodeToClipboard(qrCodeUrl)
-                        alert('QR kod panoya kopyalandı!')
+                        showToast('QR kod panoya kopyalandı!', 'success')
                       } catch (error) {
                         console.error('QR kod kopyalama hatası:', error)
-                        alert('QR kod kopyalanamadı')
+                        showToast('QR kod kopyalanamadı', 'error')
                       }
                     }}
                     className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"

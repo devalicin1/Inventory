@@ -26,10 +26,14 @@ import { listUOMs } from '../api/settings'
 import { hasWorkspacePermission } from '../utils/permissions'
 import { InlineNotification } from '../components/onboarding/InlineNotification'
 import { getConfigurationCheck } from '../api/onboarding'
+import { EmptyInventory } from '../components/ui/EmptyState'
+import { SkeletonTable, SkeletonList } from '../components/ui/Skeleton'
 import { scoreAndSort } from '../utils/search'
 import { toCSV, downloadCSV, parseCSV } from '../utils/csv'
+import { downloadExcel } from '../utils/excel'
 import { showToast } from '../components/ui/Toast'
 import { useSessionStore } from '../state/sessionStore'
+import logger from '../utils/logger'
 
 import {
   PlusIcon,
@@ -136,6 +140,9 @@ export function Inventory() {
 
   const isLoading = productsLoading || groupsLoading
 
+  // Empty state check
+  const hasProducts = products.length > 0
+
   // Real-time subscription (preserve qtyOnHand in cache, recompute safely)
   useEffect(() => {
     if (!workspaceId) return
@@ -166,12 +173,12 @@ export function Inventory() {
 
             if (isMounted) qc.setQueryData(['products', workspaceId], productsWithStock)
           } catch (err) {
-            console.error('[Inventory] Real-time update failed:', err)
+            logger.error('[Inventory] Real-time update failed:', err)
             if (isMounted) qc.setQueryData(['products', workspaceId], updatedProducts)
           }
         }, 120)
       },
-      (error) => console.error('[Inventory] Subscription error:', error)
+      (error) => logger.error('[Inventory] Subscription error:', error)
     )
 
     return () => {
@@ -308,7 +315,7 @@ export function Inventory() {
       setQuickAdjustProduct(null)
       setAdjustQty(1)
     } catch (err) {
-      console.error(err)
+      logger.error('Stock adjustment error:', err)
       showToast(`Failed to adjust stock: ${err instanceof Error ? err.message : 'Unknown error'}`, 'error', 4500)
     } finally {
       setIsAdjusting(false)
@@ -322,16 +329,17 @@ export function Inventory() {
     const existing = new Set(groups.map((g) => g.name.toLowerCase().trim()))
     const toCreate = templateNames.filter((n) => !existing.has(n.toLowerCase().trim()))
     if (toCreate.length === 0) {
-      alert('All recommended folders already exist.')
+      showToast('All recommended folders already exist.', 'info')
       return
     }
 
     try {
       await Promise.all(toCreate.map((name) => createGroup(workspaceId, name)))
       qc.invalidateQueries({ queryKey: ['groups', workspaceId] })
+      showToast(`Created ${toCreate.length} folder(s) successfully.`, 'success')
     } catch (err) {
-      console.error(err)
-      alert('Failed to create folders')
+      logger.error('Stock adjustment error:', err)
+      showToast('Failed to create folders. Please try again.', 'error')
     }
   }
 
@@ -556,11 +564,14 @@ export function Inventory() {
 
   if (isLoading) {
     return (
-      <div className="space-y-6">
-        <div className="h-8 bg-gray-200 rounded w-64 animate-pulse" />
-        <div className="h-4 bg-gray-200 rounded w-96 animate-pulse" />
-        <div className="h-96 bg-gray-100 rounded-xl animate-pulse" />
-      </div>
+      <PageShell
+        title="Inventory"
+        subtitle="Loading..."
+      >
+        <div className="space-y-6">
+          <SkeletonTable rows={5} cols={4} />
+        </div>
+      </PageShell>
     )
   }
 
@@ -627,6 +638,17 @@ export function Inventory() {
                     >
                       <ArrowDownTrayIcon className="h-4 w-4" />
                       Export CSV
+                    </button>
+                    <button
+                      onClick={() => {
+                        downloadExcel('inventory.xlsx', products, { sheetName: 'Inventory' })
+                        setShowMoreMenu(false)
+                        showToast('Inventory exported to Excel successfully', 'success')
+                      }}
+                      className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                    >
+                      <ArrowDownTrayIcon className="h-4 w-4" />
+                      Export Excel
                     </button>
                     <button
                       onClick={() => {
@@ -718,6 +740,17 @@ export function Inventory() {
             >
               <ArrowDownTrayIcon className="h-4 w-4" />
               Export CSV
+            </button>
+            <button
+              onClick={() => {
+                downloadExcel('inventory.xlsx', products, { sheetName: 'Inventory' })
+                setShowMoreMenu(false)
+                showToast('Inventory exported to Excel successfully', 'success')
+              }}
+              className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+            >
+              <ArrowDownTrayIcon className="h-4 w-4" />
+              Export Excel
             </button>
             {duplicateProducts.length > 0 && (
               <button
@@ -1062,6 +1095,23 @@ export function Inventory() {
                 <div className="flex items-center gap-3">
                   <div className="bg-blue-100 text-blue-800 px-3 py-1.5 rounded-full text-sm font-medium">
                     {selectedIds.length} selected
+                    <button
+                      onClick={async () => {
+                        if (!confirm(`Delete ${selectedIds.length} selected product(s)?`)) return
+                        try {
+                          await Promise.all(selectedIds.map((id) => deleteProduct(workspaceId!, id)))
+                          qc.invalidateQueries({ queryKey: ['products', workspaceId] })
+                          setSelectedIds([])
+                          showToast(`${selectedIds.length} product(s) deleted`, 'success')
+                        } catch (err) {
+                          logger.error('Bulk delete error:', err)
+                          showToast('Failed to delete some products', 'error')
+                        }
+                      }}
+                      className="ml-2 px-3 py-1 text-xs font-medium text-red-700 bg-red-50 rounded-lg hover:bg-red-100 transition-colors"
+                    >
+                      Delete Selected
+                    </button>
                   </div>
                 </div>
 
@@ -1073,6 +1123,7 @@ export function Inventory() {
                       if (target === '__noop__') return
                       await Promise.all(selectedIds.map((id) => moveProductToGroup(workspaceId!, id, target || null)))
                       setSelectedIds([])
+                      showToast(`${selectedIds.length} product(s) moved`, 'success')
                       qc.invalidateQueries({ queryKey: ['products', workspaceId] })
                       e.currentTarget.value = '__noop__'
                     }}
@@ -1092,6 +1143,7 @@ export function Inventory() {
                     onClick={async () => {
                       await Promise.all(selectedIds.map((id) => setProductStatus(workspaceId!, id, 'active' as any)))
                       setSelectedIds([])
+                      showToast(`${selectedIds.length} product(s) activated`, 'success')
                       qc.invalidateQueries({ queryKey: ['products', workspaceId] })
                     }}
                   >
@@ -1101,9 +1153,15 @@ export function Inventory() {
                   <button
                     className="text-sm px-3 py-1.5 bg-gray-700 text-white rounded-lg hover:bg-gray-800"
                     onClick={async () => {
-                      await Promise.all(selectedIds.map((id) => setProductStatus(workspaceId!, id, 'draft' as any)))
-                      setSelectedIds([])
-                      qc.invalidateQueries({ queryKey: ['products', workspaceId] })
+                      try {
+                        await Promise.all(selectedIds.map((id) => setProductStatus(workspaceId!, id, 'draft' as any)))
+                        setSelectedIds([])
+                        qc.invalidateQueries({ queryKey: ['products', workspaceId] })
+                        showToast(`${selectedIds.length} product(s) set to draft`, 'success')
+                      } catch (err) {
+                        logger.error('Bulk draft error:', err)
+                        showToast('Failed to update some products', 'error')
+                      }
                     }}
                   >
                     Draft
@@ -1114,9 +1172,15 @@ export function Inventory() {
                       className="text-sm px-3 py-1.5 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center gap-1"
                       onClick={async () => {
                         if (!confirm(`Delete ${selectedIds.length} product(s)? This cannot be undone.`)) return
-                        await Promise.all(selectedIds.map((id) => deleteProduct(workspaceId!, id)))
-                        setSelectedIds([])
-                        qc.invalidateQueries({ queryKey: ['products', workspaceId] })
+                        try {
+                          await Promise.all(selectedIds.map((id) => deleteProduct(workspaceId!, id)))
+                          setSelectedIds([])
+                          qc.invalidateQueries({ queryKey: ['products', workspaceId] })
+                          showToast(`${selectedIds.length} product(s) deleted successfully`, 'success')
+                        } catch (err) {
+                          logger.error('Bulk delete error:', err)
+                          showToast('Failed to delete some products', 'error')
+                        }
                       }}
                     >
                       <TrashIcon className="h-4 w-4" />
@@ -1671,9 +1735,10 @@ function DuplicatesModal({
     setDeletingId(productId)
     try {
       await onDelete(productId)
+      showToast('Product deleted successfully.', 'success')
     } catch (err) {
-      console.error(err)
-      alert('Failed to delete product')
+      logger.error('Stock adjustment error:', err)
+      showToast('Failed to delete product. Please try again.', 'error')
     } finally {
       setDeletingId(null)
     }

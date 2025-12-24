@@ -28,6 +28,7 @@ import {
   ShieldCheckIcon,
 } from '@heroicons/react/24/outline'
 import { PageShell } from '../components/layout/PageShell'
+import { showToast } from '../components/ui/Toast'
 
 // Component to preview role permissions and screens
 function RolePermissionsPreview({ workspaceId, role }: { workspaceId: string; role: string }) {
@@ -288,7 +289,7 @@ export function Admin() {
       setSelectedUserId('')
       setSelectedRole('staff')
       setUserSearchTerm('')
-      alert('User added to workspace successfully!')
+      showToast('User added to workspace successfully!', 'success')
     },
     onError: (error: any) => {
       console.error('[Admin] ❌ Error adding user:', error)
@@ -297,7 +298,7 @@ export function Admin() {
         code: error?.code,
         stack: error?.stack,
       })
-      alert(`Error adding user: ${error?.message || 'Unknown error'}\n\nCheck browser console (F12) for details.`)
+      showToast(`Error adding user: ${error?.message || 'Unknown error'}`, 'error', 5000)
     },
   })
 
@@ -349,10 +350,10 @@ export function Admin() {
       setNewRoleName('')
       setNewRolePermissions([])
       setNewRoleScreens([])
-      alert('Custom role created successfully!')
+      showToast('Custom role created successfully!', 'success')
     },
     onError: (error: any) => {
-      alert(`Error creating role: ${error?.message || 'Unknown error'}`)
+      showToast(`Error creating role: ${error?.message || 'Unknown error'}`, 'error')
     },
   })
 
@@ -364,7 +365,7 @@ export function Admin() {
       queryClient.invalidateQueries({ queryKey: ['workspace-users', selectedWorkspace?.id] })
     },
     onError: (error: any) => {
-      alert(`Error deleting role: ${error?.message || 'Unknown error'}`)
+      showToast(`Error deleting role: ${error?.message || 'Unknown error'}`, 'error')
     },
   })
 
@@ -406,11 +407,11 @@ export function Admin() {
     onSuccess: () => {
       console.log('Demo workspace created successfully!')
       queryClient.invalidateQueries({ queryKey: ['admin-workspaces'] })
-      alert('Demo workspace created successfully!')
+      showToast('Demo workspace created successfully!', 'success')
     },
     onError: (error: any) => {
       console.error('Error creating demo workspace:', error)
-      alert(`Error: ${error?.message || 'Failed to create demo workspace'}`)
+      showToast(`Error: ${error?.message || 'Failed to create demo workspace'}`, 'error')
     },
   })
 
@@ -422,7 +423,7 @@ export function Admin() {
   const handleAddUser = (e: React.FormEvent) => {
     e.preventDefault()
     if (!selectedUserId) {
-      alert('Please select a user')
+      showToast('Please select a user', 'warning')
       return
     }
     addUserMutation.mutate({
@@ -531,11 +532,11 @@ export function Admin() {
   const handleCreateCustomRole = (e: React.FormEvent) => {
     e.preventDefault()
     if (!newRoleName.trim()) {
-      alert('Role name is required')
+      showToast('Role name is required', 'warning')
       return
     }
     if (newRolePermissions.length === 0 && newRoleScreens.length === 0) {
-      alert('Please select at least one permission or screen')
+      showToast('Please select at least one permission or screen', 'warning')
       return
     }
     createCustomRoleMutation.mutate({

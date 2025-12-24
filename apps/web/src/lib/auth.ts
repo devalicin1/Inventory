@@ -4,6 +4,11 @@ import {
   signOut as firebaseSignOut,
   onAuthStateChanged as firebaseOnAuthStateChanged,
   updateProfile,
+  sendPasswordResetEmail,
+  sendEmailVerification,
+  applyActionCode,
+  verifyPasswordResetCode,
+  confirmPasswordReset,
 } from 'firebase/auth'
 import type { User } from 'firebase/auth'
 import { auth } from './firebase'
@@ -45,10 +50,95 @@ export async function signUp(
       await updateProfile(user, { displayName })
     }
     
+    // Email verification gönder
+    if (!user.emailVerified) {
+      await sendEmailVerification(user)
+    }
+    
     return user
   } catch (error: any) {
     console.error('SignUp error:', error)
     // Firebase Auth hata kodunu al
+    const errorCode = error?.code || error?.message || 'auth/unknown'
+    const authError: AuthError = {
+      code: errorCode,
+      message: getAuthErrorMessage(errorCode)
+    }
+    throw authError
+  }
+}
+
+// Send password reset email
+export async function sendPasswordReset(email: string): Promise<void> {
+  try {
+    await sendPasswordResetEmail(auth, email)
+  } catch (error: any) {
+    console.error('SendPasswordReset error:', error)
+    const errorCode = error?.code || error?.message || 'auth/unknown'
+    const authError: AuthError = {
+      code: errorCode,
+      message: getAuthErrorMessage(errorCode)
+    }
+    throw authError
+  }
+}
+
+// Verify password reset code
+export async function verifyResetCode(code: string): Promise<string> {
+  try {
+    const email = await verifyPasswordResetCode(auth, code)
+    return email
+  } catch (error: any) {
+    console.error('VerifyResetCode error:', error)
+    const errorCode = error?.code || error?.message || 'auth/unknown'
+    const authError: AuthError = {
+      code: errorCode,
+      message: getAuthErrorMessage(errorCode)
+    }
+    throw authError
+  }
+}
+
+// Confirm password reset
+export async function confirmPasswordReset(code: string, newPassword: string): Promise<void> {
+  try {
+    await confirmPasswordReset(auth, code, newPassword)
+  } catch (error: any) {
+    console.error('ConfirmPasswordReset error:', error)
+    const errorCode = error?.code || error?.message || 'auth/unknown'
+    const authError: AuthError = {
+      code: errorCode,
+      message: getAuthErrorMessage(errorCode)
+    }
+    throw authError
+  }
+}
+
+// Send email verification
+export async function resendEmailVerification(): Promise<void> {
+  try {
+    const user = auth.currentUser
+    if (!user) {
+      throw new Error('No user is currently signed in')
+    }
+    await sendEmailVerification(user)
+  } catch (error: any) {
+    console.error('ResendEmailVerification error:', error)
+    const errorCode = error?.code || error?.message || 'auth/unknown'
+    const authError: AuthError = {
+      code: errorCode,
+      message: getAuthErrorMessage(errorCode)
+    }
+    throw authError
+  }
+}
+
+// Verify email with action code
+export async function verifyEmail(code: string): Promise<void> {
+  try {
+    await applyActionCode(auth, code)
+  } catch (error: any) {
+    console.error('VerifyEmail error:', error)
     const errorCode = error?.code || error?.message || 'auth/unknown'
     const authError: AuthError = {
       code: errorCode,
@@ -91,6 +181,9 @@ function getAuthErrorMessage(code: string): string {
     'auth/invalid-api-key': 'Invalid API key. Please check your Firebase configuration.',
     'auth/unauthorized-domain': 'This domain is not authorized. Please add your domain to Authorized domains in Firebase Console.',
     'auth/configuration-not-found': 'Firebase Authentication is not configured. Please: 1) Enable Authentication service in Firebase Console, 2) Enable Email/Password in Sign-in method.',
+    'auth/expired-action-code': 'The password reset code has expired. Please request a new one.',
+    'auth/invalid-action-code': 'The password reset code is invalid. Please request a new one.',
+    'auth/user-token-expired': 'Your session has expired. Please sign in again.',
   }
   
   if (!errorMessages[code]) {

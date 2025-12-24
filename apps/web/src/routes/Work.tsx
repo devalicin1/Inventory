@@ -4,6 +4,7 @@ import { KanbanBoard } from '../components/KanbanBoard'
 import { DataTable } from '../components/DataTable'
 import { listMyTasks, updateTask, createTask, completeTask, type Task, type TaskInput } from '../api/work'
 import { useSessionStore } from '../state/sessionStore'
+import { showToast } from '../components/ui/Toast'
 import { 
   PlusIcon, 
   ViewColumnsIcon,
@@ -60,7 +61,7 @@ export function Work() {
       queryClient.invalidateQueries({ queryKey: ['myTasks', workspaceId, userId] })
     } catch (error) {
       console.error('Failed to move task:', error)
-      alert('Failed to move task. Please try again.')
+      showToast('Failed to move task. Please try again.', 'error')
     }
   }
 
@@ -125,10 +126,10 @@ export function Work() {
         await createTask(workspaceId, task)
       }
       queryClient.invalidateQueries({ queryKey: ['myTasks', workspaceId, userId] })
-      alert('Demo tasks created successfully!')
+      showToast('Demo tasks created successfully!', 'success')
     } catch (error) {
       console.error('Failed to create demo tasks:', error)
-      alert('Failed to create demo tasks. Please try again.')
+      showToast('Failed to create demo tasks. Please try again.', 'error')
     }
   }
 
@@ -355,7 +356,7 @@ const TaskDetail: FC<TaskDetailProps> = (props) => {
       onClose()
     } catch (error) {
       console.error('Failed to complete task:', error)
-      alert('Failed to complete task. Please try again.')
+      showToast('Failed to complete task. Please try again.', 'error')
     } finally {
       setIsCompleting(false)
     }
@@ -465,7 +466,7 @@ const CreateTaskForm: FC<CreateTaskFormProps> = ({ workspaceId, userId, onClose,
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!formData.title.trim()) {
-      alert('Please enter a task title')
+      showToast('Please enter a task title', 'warning')
       return
     }
 
@@ -475,7 +476,7 @@ const CreateTaskForm: FC<CreateTaskFormProps> = ({ workspaceId, userId, onClose,
       onCreated()
     } catch (error) {
       console.error('Failed to create task:', error)
-      alert('Failed to create task. Please try again.')
+      showToast('Failed to create task. Please try again.', 'error')
     } finally {
       setIsSubmitting(false)
     }

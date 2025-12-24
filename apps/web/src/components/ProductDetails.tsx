@@ -1312,9 +1312,9 @@ export function ProductDetails({ product, onClose, onSaved, canManage = false }:
                           queryClient.invalidateQueries({ queryKey: ['productOnHand', workspaceId, product.id] })
                           queryClient.invalidateQueries({ queryKey: ['stockTxns', workspaceId, product.id] })
                           refetchOnHand()
-                          alert(`Stock recalculated: ${newQty} ${product.uom || 'units'}`)
+                          showToast(`Stock recalculated: ${newQty} ${product.uom || 'units'}`, 'success')
                         } catch (e) {
-                          alert('Failed to recalculate stock: ' + (e instanceof Error ? e.message : 'Unknown error'))
+                          showToast('Failed to recalculate stock: ' + (e instanceof Error ? e.message : 'Unknown error'), 'error')
                         }
                       }}
                       className="p-2 hover:bg-white/50 rounded-xl transition-all active:scale-95"
@@ -2453,7 +2453,7 @@ export function ProductDetails({ product, onClose, onSaved, canManage = false }:
                                     queryClient.invalidateQueries({ queryKey: ['products', workspaceId] })
                                     onSaved?.()
                                   } catch (e) {
-                                    alert('Failed to delete image')
+                                    showToast('Failed to delete image', 'error')
                                   }
                                 }}
                                 className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 hover:bg-red-600"
@@ -2519,7 +2519,7 @@ export function ProductDetails({ product, onClose, onSaved, canManage = false }:
                                       queryClient.invalidateQueries({ queryKey: ['products', workspaceId] })
                                       onSaved?.()
                                     } catch (e) {
-                                      alert('Failed to delete image')
+                                      showToast('Failed to delete image', 'error')
                                     }
                                   }}
                                   className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 hover:bg-red-600"
@@ -2569,7 +2569,7 @@ export function ProductDetails({ product, onClose, onSaved, canManage = false }:
                       type="button"
                       onClick={async () => {
                         if (!mainImageFile && galleryImageFiles.length === 0) {
-                          alert('Please select at least one image to upload')
+                          showToast('Please select at least one image to upload', 'warning')
                           return
                         }
 
@@ -2584,7 +2584,7 @@ export function ProductDetails({ product, onClose, onSaved, canManage = false }:
                           setGalleryImageFiles([])
                           onSaved?.()
                         } catch (e) {
-                          alert('Failed to upload images: ' + (e instanceof Error ? e.message : 'Unknown error'))
+                          showToast('Failed to upload images: ' + (e instanceof Error ? e.message : 'Unknown error'), 'error')
                         } finally {
                           setUploadingImages(false)
                         }
@@ -2795,7 +2795,7 @@ export function ProductDetails({ product, onClose, onSaved, canManage = false }:
                                             refetchTickets()
                                             onSaved?.()
                                           } catch (e) {
-                                            alert('Failed to delete ticket: ' + (e instanceof Error ? e.message : 'Unknown error'))
+                                            showToast('Failed to delete ticket: ' + (e instanceof Error ? e.message : 'Unknown error'), 'error')
                                           }
                                         }}
                                         className="text-red-600 hover:text-red-900"
@@ -3502,7 +3502,7 @@ export function ProductDetails({ product, onClose, onSaved, canManage = false }:
               refetchTickets()
               onSaved?.()
             } catch (e) {
-              alert('Failed to create ticket: ' + (e instanceof Error ? e.message : 'Unknown error'))
+              showToast('Failed to create ticket: ' + (e instanceof Error ? e.message : 'Unknown error'), 'error')
             }
           }}
           onClose={() => setShowCreateTicket(false)}
@@ -3523,7 +3523,7 @@ export function ProductDetails({ product, onClose, onSaved, canManage = false }:
               refetchTickets()
               onSaved?.()
             } catch (e) {
-              alert('Failed to update ticket: ' + (e instanceof Error ? e.message : 'Unknown error'))
+              showToast('Failed to update ticket: ' + (e instanceof Error ? e.message : 'Unknown error'), 'error')
             }
           }}
           onClose={() => setSelectedTicket(null)}

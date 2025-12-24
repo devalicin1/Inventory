@@ -181,7 +181,7 @@ export function Settings() {
   const handleCreate = async () => {
     if (!workspaceId) return
     if (!canManageSettings) {
-      alert('You do not have permission to manage settings.')
+      showToast('You do not have permission to manage settings.', 'error')
       return
     }
     
@@ -355,7 +355,7 @@ export function Settings() {
 
   const handleDelete = async (id: string) => {
     if (!canManageSettings) {
-      alert('You do not have permission to manage settings.')
+      showToast('You do not have permission to manage settings.', 'error')
       return
     }
     if (!workspaceId || !confirm('Bu öğeyi silmek istediğinizden emin misiniz?')) return
@@ -386,10 +386,10 @@ export function Settings() {
       }
       
       queryClient.invalidateQueries({ queryKey: [activeTab === 'custom-fields' ? 'customFields' : activeTab + 's', workspaceId] })
-    } catch (error) {
-      console.error('Delete error:', error)
-      alert('An error occurred while deleting the item: ' + (error instanceof Error ? error.message : 'Unknown error'))
-    }
+      } catch (error) {
+        console.error('Delete error:', error)
+        showToast('An error occurred while deleting the item: ' + (error instanceof Error ? error.message : 'Unknown error'), 'error')
+      }
   }
 
   const getCurrentData = () => {
@@ -583,10 +583,10 @@ export function Settings() {
                         ]
                         await Promise.all(defaultUoms.map(uom => createUOM(workspaceId, uom)))
                         queryClient.invalidateQueries({ queryKey: ['uoms', workspaceId] })
-                        alert('Common units of measure have been created. You can edit or remove them anytime.')
+                        showToast('Common units of measure have been created. You can edit or remove them anytime.', 'success')
                       } catch (error) {
                         console.error('Initialize UOMs error:', error)
-                        alert('Error creating default units: ' + (error instanceof Error ? error.message : 'Unknown error'))
+                        showToast('Error creating default units: ' + (error instanceof Error ? error.message : 'Unknown error'), 'error')
                       }
                     }}
                     className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
@@ -609,10 +609,10 @@ export function Settings() {
                         ]
                         await Promise.all(defaultCategories.map(cat => createCategory(workspaceId, cat)))
                         queryClient.invalidateQueries({ queryKey: ['categories', workspaceId] })
-                        alert('Common categories have been created. You can edit or remove them anytime.')
+                        showToast('Common categories have been created. You can edit or remove them anytime.', 'success')
                       } catch (error) {
                         console.error('Initialize categories error:', error)
-                        alert('Error creating default categories: ' + (error instanceof Error ? error.message : 'Unknown error'))
+                        showToast('Error creating default categories: ' + (error instanceof Error ? error.message : 'Unknown error'), 'error')
                       }
                     }}
                     className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
@@ -645,10 +645,10 @@ export function Settings() {
                           )
                         )
                         queryClient.invalidateQueries({ queryKey: ['subcategories', workspaceId] })
-                        alert('Common subcategories have been created and linked to your categories. You can edit or remove them anytime.')
+                        showToast('Common subcategories have been created and linked to your categories. You can edit or remove them anytime.', 'success')
                       } catch (error) {
                         console.error('Initialize subcategories error:', error)
-                        alert('Error creating default subcategories: ' + (error instanceof Error ? error.message : 'Unknown error'))
+                        showToast('Error creating default subcategories: ' + (error instanceof Error ? error.message : 'Unknown error'), 'error')
                       }
                     }}
                     className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
@@ -664,10 +664,10 @@ export function Settings() {
                       try {
                         await initializeDefaultStockReasons(workspaceId)
                         queryClient.invalidateQueries({ queryKey: ['stockReasons', workspaceId] })
-                        alert('Default stock reasons have been initialized. You can edit or remove them anytime.')
+                        showToast('Default stock reasons have been initialized. You can edit or remove them anytime.', 'success')
                       } catch (error) {
                         console.error('Initialize error:', error)
-                        alert('Error initializing default reasons: ' + (error instanceof Error ? error.message : 'Unknown error'))
+                        showToast('Error initializing default reasons: ' + (error instanceof Error ? error.message : 'Unknown error'), 'error')
                       }
                     }}
                     className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
@@ -700,16 +700,16 @@ export function Settings() {
               onSave={async (data) => {
                 if (!workspaceId) return
                 if (!canManageSettings) {
-                  alert('You do not have permission to manage settings.')
+                  showToast('You do not have permission to manage settings.', 'error')
                   return
                 }
                 try {
                   await updateCompanyInformation(workspaceId, data)
                   queryClient.invalidateQueries({ queryKey: ['companyInformation', workspaceId] })
-                  alert('Company information saved successfully!')
+                  showToast('Company information saved successfully!', 'success')
                 } catch (error) {
                   console.error('Save error:', error)
-                  alert('Error saving company information: ' + (error instanceof Error ? error.message : 'Unknown error'))
+                  showToast('Error saving company information: ' + (error instanceof Error ? error.message : 'Unknown error'), 'error')
                 }
               }}
             />
@@ -721,16 +721,16 @@ export function Settings() {
               onSave={async (rawMaterialGroupIds) => {
                 if (!workspaceId) return
                 if (!canManageSettings) {
-                  alert('You do not have permission to manage settings.')
+                  showToast('You do not have permission to manage settings.', 'error')
                   return
                 }
                 try {
                   await updateReportSettings(workspaceId, { rawMaterialGroupIds })
                   queryClient.invalidateQueries({ queryKey: ['reportSettings', workspaceId] })
-                  alert('Report settings saved successfully!')
+                  showToast('Report settings saved successfully!', 'success')
                 } catch (error) {
                   console.error('Save error:', error)
-                  alert('Error saving report settings: ' + (error instanceof Error ? error.message : 'Unknown error'))
+                  showToast('Error saving report settings: ' + (error instanceof Error ? error.message : 'Unknown error'), 'error')
                 }
               }}
             />

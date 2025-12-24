@@ -3,6 +3,8 @@ import { useNavigate, Link } from 'react-router-dom'
 import { signIn, signUp, type AuthError } from '../lib/auth'
 import { EyeIcon, EyeSlashIcon, ArrowRightIcon, EnvelopeIcon } from '@heroicons/react/24/outline'
 import { LOGO_URL } from '../utils/logo'
+import { PasswordStrengthIndicator } from '../components/PasswordStrengthIndicator'
+import { showToast } from '../components/ui/Toast'
 
 export function Login() {
   const [email, setEmail] = useState('')
@@ -22,7 +24,10 @@ export function Login() {
 
     try {
       if (isSignUp) {
-        await signUp(email, password, displayName || undefined)
+        const user = await signUp(email, password, displayName || undefined)
+        if (!user.emailVerified) {
+          showToast('Verification email sent! Please check your inbox to verify your email.', 'info', 5000)
+        }
       } else {
         await signIn(email, password)
       }
@@ -32,7 +37,9 @@ export function Login() {
       navigate('/')
     } catch (err) {
       const authError = err as AuthError
-      setError(authError.message || 'An error occurred. Please try again.')
+      const errorMessage = authError.message || 'An error occurred. Please try again.'
+      setError(errorMessage)
+      showToast(errorMessage, 'error')
     } finally {
       setLoading(false)
     }
@@ -147,7 +154,7 @@ export function Login() {
                   </button>
                 </div>
                 {isSignUp && (
-                  <p className="mt-1.5 text-xs text-gray-500">Minimum 6 characters</p>
+                  <PasswordStrengthIndicator password={password} />
                 )}
               </div>
 
@@ -163,16 +170,12 @@ export function Login() {
                     />
                     <span className="ml-2 text-sm text-gray-700">Remember me</span>
                   </label>
-                  <a
-                    href="#"
+                  <Link
+                    to="/forgot-password"
                     className="text-sm text-blue-600 hover:text-blue-700 font-medium"
-                    onClick={(e) => {
-                      e.preventDefault()
-                      // TODO: Implement forgot password
-                    }}
                   >
                     Forgot password?
-                  </a>
+                  </Link>
                 </div>
               )}
 

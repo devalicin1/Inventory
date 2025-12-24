@@ -27,6 +27,7 @@ import { db } from '../lib/firebase'
 import { useMemo, useState, useEffect } from 'react'
 import { PageShell } from '../components/layout/PageShell'
 import { ConfigurationBanner } from '../components/onboarding/ConfigurationBanner'
+import { Skeleton, SkeletonCard } from '../components/ui/Skeleton'
 
 export function Dashboard() {
   const { workspaceId } = useSessionStore()
@@ -427,7 +428,7 @@ export function Dashboard() {
             </div>
             <div className="mt-2 sm:mt-3 flex items-baseline">
               {isLoading ? (
-                <div className="h-6 sm:h-8 w-14 sm:w-16 animate-pulse bg-gray-200 rounded" />
+                <Skeleton height={32} width={64} />
               ) : (
                 <p className="text-xl sm:text-3xl font-semibold text-gray-900">{stats.totalProducts}</p>
               )}
