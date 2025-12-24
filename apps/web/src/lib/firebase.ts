@@ -1,4 +1,5 @@
 import { initializeApp } from 'firebase/app'
+import { getAnalytics } from 'firebase/analytics'
 import { connectAuthEmulator, getAuth, signInAnonymously } from 'firebase/auth'
 import { connectFirestoreEmulator, getFirestore, initializeFirestore, type Firestore } from 'firebase/firestore'
 import { connectFunctionsEmulator, getFunctions } from 'firebase/functions'
@@ -16,6 +17,7 @@ const firebaseConfig = {
 }
 
 export const app = initializeApp(firebaseConfig)
+export const analytics = getAnalytics(app)
 export const auth = getAuth(app)
 
 // Firestore init (HMR-safe) 
