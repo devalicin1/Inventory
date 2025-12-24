@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-quer
 import './index.css'
 import App from './App.tsx'
 import { Login } from './routes/Login'
+import { Landing } from './routes/Landing'
 import { Admin } from './routes/Admin'
 import { Dashboard } from './routes/Dashboard'
 import { Inventory } from './routes/Inventory'
@@ -23,6 +24,7 @@ import { ProductionScanner } from './components/scanner/ProductionScanner'
 import { PurchaseOrderScanner } from './components/scanner/PurchaseOrderScanner'
 import { ProductDetails } from './components/ProductDetails'
 import { ProtectedRoute } from './components/auth/ProtectedRoute'
+import { CreateWorkspace } from './components/CreateWorkspace'
 import { useSessionStore } from './state/sessionStore'
 import { getDoc, doc } from 'firebase/firestore'
 import { db } from './lib/firebase'
@@ -143,8 +145,16 @@ function ScannerPage() {
 
 const router = createBrowserRouter([
   {
+    path: '/landing',
+    element: <Landing />,
+  },
+  {
     path: '/login',
     element: <Login />,
+  },
+  {
+    path: '/create-workspace',
+    element: <CreateWorkspace />,
   },
   {
     path: '/',

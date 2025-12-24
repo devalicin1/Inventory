@@ -1,5 +1,5 @@
 import { useState, FormEvent } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { signIn, signUp, type AuthError } from '../lib/auth'
 import { EyeIcon, EyeSlashIcon, ArrowRightIcon, EnvelopeIcon } from '@heroicons/react/24/outline'
 import { LOGO_URL } from '../utils/logo'
@@ -255,9 +255,17 @@ export function Login() {
           </div>
 
           {/* Footer */}
-          <p className="mt-8 text-center text-xs text-gray-400">
-            ©2025 Itory. All rights reserved.
-          </p>
+          <div className="mt-8 text-center space-y-2">
+            <p className="text-xs text-gray-400">
+              ©2025 Itory. All rights reserved.
+            </p>
+            <Link
+              to="/landing"
+              className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+            >
+              ← Back to Home
+            </Link>
+          </div>
         </div>
       </div>
     </div>

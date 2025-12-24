@@ -1,3 +1,6 @@
+/* Import Inter font - must be before @import "tailwindcss" */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
 @import "tailwindcss";
 
 @theme {
@@ -28,9 +31,6 @@
   --color-secondary-900: #0f172a;
   --color-secondary-950: #020617;
 }
-
-/* Import Inter font */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
 html,
 body,
