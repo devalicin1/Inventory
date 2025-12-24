@@ -49,6 +49,8 @@ import {
 import { listProducts } from '../api/inventory'
 import { PageShell } from '../components/layout/PageShell'
 import { showToast } from '../components/ui/Toast'
+import { ConfigurationBanner } from '../components/onboarding/ConfigurationBanner'
+import { getWorkspaceConfigurationStatus } from '../api/onboarding'
 import {
   ArrowPathIcon,
   CheckCircleIcon,
@@ -72,8 +74,9 @@ export function Settings() {
   const [formData, setFormData] = useState<any>({})
   const [canManageSettings, setCanManageSettings] = useState(false)
   const [modalError, setModalError] = useState<string | null>(null)
-  const { workspaceId, userId } = useSessionStore()
+  const { workspaceId, userId, roles } = useSessionStore()
   const queryClient = useQueryClient()
+  const isOwner = roles.includes('owner')
 
   // Check permission for managing settings
   useEffect(() => {
@@ -515,6 +518,9 @@ export function Settings() {
       title="Settings"
       subtitle="Manage units of measure, categories, subcategories, and custom fields"
     >
+      {/* Onboarding Banner */}
+      {isOwner && <ConfigurationBanner showOnlyCritical={false} compact={false} />}
+
       {/* Tabs */}
       <div className="border-b border-gray-200">
         <nav className="-mb-px flex space-x-8">

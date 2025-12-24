@@ -24,6 +24,8 @@ import {
 } from '../api/products'
 import { listUOMs } from '../api/settings'
 import { hasWorkspacePermission } from '../utils/permissions'
+import { InlineNotification } from '../components/onboarding/InlineNotification'
+import { getConfigurationCheck } from '../api/onboarding'
 import { scoreAndSort } from '../utils/search'
 import { toCSV, downloadCSV, parseCSV } from '../utils/csv'
 import { showToast } from '../components/ui/Toast'
@@ -659,6 +661,16 @@ export function Inventory() {
         </>
       }
     >
+      {/* Configuration Notifications */}
+      {uomCheck && !uomCheck.completed && (
+        <InlineNotification
+          type="warning"
+          title="Units of Measure Required"
+          message="Add units of measure (e.g., pieces, boxes, kg) to properly track your inventory quantities."
+          actionLabel="Add UOMs"
+          actionPath="/settings?tab=uom"
+        />
+      )}
 
       {/* Mobile more menu (same content as desktop dropdown, but positioned fixed) */}
       {showMoreMenu && (
@@ -1802,6 +1814,15 @@ function ImportModal({
     queryKey: ['uoms', workspaceId],
     queryFn: () => listUOMs(workspaceId),
     enabled: !!workspaceId,
+  })
+
+  // Check UOM configuration status
+  const { roles } = useSessionStore()
+  const isOwner = roles.includes('owner')
+  const { data: uomCheck } = useQuery({
+    queryKey: ['config-check-uom', workspaceId],
+    queryFn: () => getConfigurationCheck(workspaceId!, 'uom'),
+    enabled: !!workspaceId && isOwner,
   })
 
   const downloadTemplate = () => {

@@ -1,5 +1,8 @@
 import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useSessionStore } from '../state/sessionStore'
+import { getConfigurationCheck } from '../api/onboarding'
+import { InlineNotification } from '../components/onboarding/InlineNotification'
 import { 
   CubeIcon,
   ClockIcon,
@@ -32,8 +35,16 @@ const reportTabs = [
 ]
 
 export function Reports() {
-  const { workspaceId } = useSessionStore()
+  const { workspaceId, roles } = useSessionStore()
   const [activeTab, setActiveTab] = useState('stock-on-hand')
+  const isOwner = roles.includes('owner')
+
+  // Check configuration status
+  const { data: reportSettingsCheck } = useQuery({
+    queryKey: ['config-check-report-settings', workspaceId],
+    queryFn: () => getConfigurationCheck(workspaceId!, 'report-settings'),
+    enabled: !!workspaceId && isOwner,
+  })
 
   if (!workspaceId) {
     return (
@@ -51,6 +62,17 @@ export function Reports() {
       title="Inventory Reports"
       subtitle="Comprehensive inventory analysis and reporting tools"
     >
+      {/* Configuration Notifications */}
+      {reportSettingsCheck && !reportSettingsCheck.completed && (
+        <InlineNotification
+          type="info"
+          title="Configure Report Settings"
+          message="Set up report settings (e.g., raw material groups) for more accurate inventory analysis."
+          actionLabel="Configure"
+          actionPath="/settings?tab=report-settings"
+        />
+      )}
+
       {/* Tab Navigation */}
       <div className="border-b border-gray-200 overflow-x-auto">
         <nav className="-mb-px flex space-x-8 min-w-max">

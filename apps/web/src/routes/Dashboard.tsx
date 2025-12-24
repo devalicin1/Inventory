@@ -26,6 +26,7 @@ import { getDoc, doc } from 'firebase/firestore'
 import { db } from '../lib/firebase'
 import { useMemo, useState, useEffect } from 'react'
 import { PageShell } from '../components/layout/PageShell'
+import { ConfigurationBanner } from '../components/onboarding/ConfigurationBanner'
 
 export function Dashboard() {
   const { workspaceId } = useSessionStore()
@@ -393,6 +394,9 @@ export function Dashboard() {
         </div>
       }
     >
+      {/* Onboarding Banner */}
+      <ConfigurationBanner showOnlyCritical={false} />
+
       {/* Primary Stats Grid */}
       <div>
         {/* Mobile KPI Toggle Button */}
