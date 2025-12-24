@@ -25,6 +25,8 @@ import { PurchaseOrderScanner } from './components/scanner/PurchaseOrderScanner'
 import { ProductDetails } from './components/ProductDetails'
 import { ProtectedRoute } from './components/auth/ProtectedRoute'
 import { CreateWorkspace } from './components/CreateWorkspace'
+import { ErrorPage } from './components/ErrorPage'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import { useSessionStore } from './state/sessionStore'
 import { getDoc, doc } from 'firebase/firestore'
 import { db } from './lib/firebase'
@@ -147,18 +149,22 @@ const router = createBrowserRouter([
   {
     path: '/landing',
     element: <Landing />,
+    errorElement: <ErrorPage />,
   },
   {
     path: '/login',
     element: <Login />,
+    errorElement: <ErrorPage />,
   },
   {
     path: '/create-workspace',
     element: <CreateWorkspace />,
+    errorElement: <ErrorPage />,
   },
   {
     path: '/',
     element: <App />,
+    errorElement: <ErrorPage />,
     children: [
       {
         index: true,
@@ -284,12 +290,18 @@ const router = createBrowserRouter([
       },
     ]
   },
+  {
+    path: '*',
+    element: <ErrorPage />,
+  },
 ])
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <RouterProvider router={router} />
-    </QueryClientProvider>
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>
+    </ErrorBoundary>
   </StrictMode>,
 )

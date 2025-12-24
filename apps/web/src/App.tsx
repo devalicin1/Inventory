@@ -201,19 +201,25 @@ function App() {
 
   // Workspace seçilmemişse ve workspace yoksa - show workspace creation
   if (!workspaceId && userWorkspaces.length === 0) {
-    const { userId } = useSessionStore.getState()
+    const currentUserId = useSessionStore.getState().userId
     return (
       <CreateWorkspace
         onComplete={async () => {
           // After workspace creation, reload user workspaces
-          if (userId) {
-            const updatedWorkspaces = await getUserWorkspaces(userId)
-            if (updatedWorkspaces.length > 0) {
-              const defaultWorkspace = updatedWorkspaces[0]
-              switchWorkspace(defaultWorkspace.workspaceId)
-              localStorage.setItem('selectedWorkspaceId', defaultWorkspace.workspaceId)
-              setSession({ userWorkspaces: updatedWorkspaces })
-              // Force reload to refresh the app state
+          if (currentUserId) {
+            try {
+              const updatedWorkspaces = await getUserWorkspaces(currentUserId)
+              if (updatedWorkspaces.length > 0) {
+                const defaultWorkspace = updatedWorkspaces[0]
+                switchWorkspace(defaultWorkspace.workspaceId)
+                localStorage.setItem('selectedWorkspaceId', defaultWorkspace.workspaceId)
+                setSession({ userWorkspaces: updatedWorkspaces })
+                // Force reload to refresh the app state
+                window.location.reload()
+              }
+            } catch (error) {
+              console.error('Error loading workspaces after creation:', error)
+              // Still reload to refresh state
               window.location.reload()
             }
           }

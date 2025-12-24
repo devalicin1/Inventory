@@ -1,4 +1,4 @@
-import { useState, FormEvent } from 'react'
+import { useState, FormEvent, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useSessionStore } from '../state/sessionStore'
 import { createWorkspace } from '../api/workspaces'
@@ -43,6 +43,14 @@ export function CreateWorkspace({ onComplete, onSkip }: CreateWorkspaceProps) {
   const [timezone, setTimezone] = useState('UTC')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+
+  // Redirect to login if not authenticated (when used as standalone route)
+  useEffect(() => {
+    if (!userId && !onComplete) {
+      // Only redirect if this is a standalone route (no onComplete callback)
+      navigate('/login', { replace: true })
+    }
+  }, [userId, navigate, onComplete])
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault()
