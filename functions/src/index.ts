@@ -431,7 +431,11 @@ export const importProductsFromQuickBooks = onCall(async (request) => {
   console.log('[importProductsFromQuickBooks] Function called')
   console.log('[importProductsFromQuickBooks] Request data:', JSON.stringify(request.data))
   
-  const { workspaceId, skus } = request.data
+  const { workspaceId, skus, jobId } = request.data as {
+    workspaceId?: string
+    skus?: string[]
+    jobId?: string
+  }
   const userId = request.auth?.uid
   
   console.log('[importProductsFromQuickBooks] workspaceId:', workspaceId)
@@ -448,7 +452,10 @@ export const importProductsFromQuickBooks = onCall(async (request) => {
 
   try {
     console.log('[importProductsFromQuickBooks] Starting import...')
-    const result = await importProductsFromQB(workspaceId, skus)
+    const result = await importProductsFromQB(workspaceId, skus, {
+      jobId,
+      trigger: 'manual',
+    })
     console.log('[importProductsFromQuickBooks] Import completed:', JSON.stringify(result))
     return result
   } catch (error: any) {

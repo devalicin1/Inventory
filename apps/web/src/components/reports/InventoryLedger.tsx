@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getInventoryLedgerReport, exportToCSV } from '../../api/reports'
 import type { InventoryLedgerRow, ReportFilters } from '../../api/reports'
@@ -9,6 +9,8 @@ import {
   ExclamationTriangleIcon,
   ChevronDownIcon,
   ChevronUpIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
   FunnelIcon,
   XMarkIcon,
   ArrowPathIcon,
@@ -105,6 +107,8 @@ export function InventoryLedger({ workspaceId }: InventoryLedgerProps) {
   const [isExporting, setIsExporting] = useState(false)
   const [filters, setFilters] = useState<ReportFilters>({})
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set())
+  const [currentPage, setCurrentPage] = useState(1)
+  const [itemsPerPage, setItemsPerPage] = useState(50)
 
   // Fetch groups/folders for filter
   const { data: groups = [] } = useQuery<Group[]>({
@@ -171,6 +175,19 @@ export function InventoryLedger({ workspaceId }: InventoryLedgerProps) {
 
     return filtered
   }, [reportData, activeTab, searchTerm, sortField, sortDirection])
+
+  // Pagination calculations
+  const totalPages = Math.ceil(processedData.length / itemsPerPage)
+  const startIndex = (currentPage - 1) * itemsPerPage
+  const endIndex = startIndex + itemsPerPage
+  const paginatedData = useMemo(() => {
+    return processedData.slice(startIndex, endIndex)
+  }, [processedData, startIndex, endIndex])
+
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [activeTab, searchTerm, sortField, sortDirection, filters])
 
   // Calculate statistics
   const stats = useMemo(() => {
@@ -740,14 +757,15 @@ export function InventoryLedger({ workspaceId }: InventoryLedgerProps) {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {processedData.map((row, index) => {
+                  {paginatedData.map((row, index) => {
+                    const actualIndex = startIndex + index
                     const { date, time } = formatDate(row.dateTime)
                     return (
                       <>
                         <tr
-                          key={`row-${index}`}
+                          key={`row-${actualIndex}`}
                           className="hover:bg-gray-50 cursor-pointer transition-colors"
-                          onClick={() => toggleRowExpand(index)}
+                          onClick={() => toggleRowExpand(actualIndex)}
                         >
                           <td className="px-4 py-3">
                             <div>
@@ -803,11 +821,11 @@ export function InventoryLedger({ workspaceId }: InventoryLedgerProps) {
                             </div>
                           </td>
                           <td className="px-4 py-3">
-                            <ChevronDownIcon className={`h-4 w-4 text-gray-400 transition-transform ${expandedRows.has(index) ? 'rotate-180' : ''}`} />
+                            <ChevronDownIcon className={`h-4 w-4 text-gray-400 transition-transform ${expandedRows.has(actualIndex) ? 'rotate-180' : ''}`} />
                           </td>
                         </tr>
                         {/* Expanded Details Row */}
-                        {expandedRows.has(index) && (
+                        {expandedRows.has(actualIndex) && (
                           <tr className="bg-gray-50">
                             <td colSpan={9} className="px-4 py-4">
                               <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
@@ -847,13 +865,14 @@ export function InventoryLedger({ workspaceId }: InventoryLedgerProps) {
 
           {/* Mobile Card View */}
           <div className="md:hidden space-y-3">
-            {processedData.map((row, index) => {
+            {paginatedData.map((row, index) => {
+              const actualIndex = startIndex + index
               const { date, time } = formatDate(row.dateTime)
               const config = movementTypeConfig[row.movementType] || { bgClass: 'bg-gray-100', textClass: 'text-gray-800' }
               
               return (
                 <div
-                  key={`mobile-${index}`}
+                  key={`mobile-${actualIndex}`}
                   className={`bg-white rounded-xl border overflow-hidden ${
                     row.qtyIn > 0 ? 'border-green-200' :
                     row.qtyOut > 0 ? 'border-red-200' :
@@ -922,15 +941,89 @@ export function InventoryLedger({ workspaceId }: InventoryLedgerProps) {
             })}
           </div>
 
-          {/* Results Summary */}
-          <div className="text-center text-sm text-gray-500">
-            Showing {processedData.length} of {reportData.length} transactions
-            {activeTab !== 'all' && (
-              <span className="ml-2">
-                • {activeTab === 'in' ? 'Stock In' : activeTab === 'out' ? 'Stock Out' : activeTab === 'adjustments' ? 'Adjustments' : 'Transfers'}
-              </span>
-            )}
-        </div>
+          {/* Pagination Controls */}
+          {processedData.length > itemsPerPage && (
+            <div className="bg-white rounded-xl border border-gray-200 px-4 py-4 sm:px-6">
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+                {/* Items per page selector */}
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-gray-700">Show:</span>
+                  <select
+                    value={itemsPerPage}
+                    onChange={(e) => {
+                      setItemsPerPage(Number(e.target.value))
+                      setCurrentPage(1)
+                    }}
+                    className="px-3 py-1.5 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  >
+                    <option value={25}>25</option>
+                    <option value={50}>50</option>
+                    <option value={100}>100</option>
+                    <option value={200}>200</option>
+                  </select>
+                  <span className="text-sm text-gray-700">per page</span>
+                </div>
+
+                {/* Page info */}
+                <div className="text-sm text-gray-700">
+                  Showing <span className="font-medium text-gray-900">{startIndex + 1}</span> to{' '}
+                  <span className="font-medium text-gray-900">{Math.min(endIndex, processedData.length)}</span> of{' '}
+                  <span className="font-medium text-gray-900">{processedData.length.toLocaleString()}</span> transactions
+                </div>
+
+                {/* Pagination buttons */}
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                    disabled={currentPage === 1}
+                    className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                  >
+                    <ChevronLeftIcon className="h-4 w-4" />
+                    <span className="hidden sm:inline">Previous</span>
+                  </button>
+
+                  {/* Page numbers */}
+                  <div className="flex items-center gap-1">
+                    {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                      let pageNum: number
+                      if (totalPages <= 5) {
+                        pageNum = i + 1
+                      } else if (currentPage <= 3) {
+                        pageNum = i + 1
+                      } else if (currentPage >= totalPages - 2) {
+                        pageNum = totalPages - 4 + i
+                      } else {
+                        pageNum = currentPage - 2 + i
+                      }
+
+                      return (
+                        <button
+                          key={pageNum}
+                          onClick={() => setCurrentPage(pageNum)}
+                          className={`px-3 py-1.5 text-sm font-medium rounded-md ${
+                            currentPage === pageNum
+                              ? 'bg-blue-600 text-white'
+                              : 'text-gray-700 bg-white border border-gray-300 hover:bg-gray-50'
+                          }`}
+                        >
+                          {pageNum}
+                        </button>
+                      )
+                    })}
+                  </div>
+
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                    disabled={currentPage === totalPages}
+                    className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                  >
+                    <span className="hidden sm:inline">Next</span>
+                    <ChevronRightIcon className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>

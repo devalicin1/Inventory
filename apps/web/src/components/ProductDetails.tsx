@@ -26,7 +26,8 @@ import {
 import { listStockReasons, type StockReason } from '../api/settings'
 
 import { useSessionStore } from '../state/sessionStore'
-import { createStockTransaction, listProductStockTxns, type UiTxnType, getProductOnHand, recalculateProductStock } from '../api/inventory'
+import { createStockTransaction, listProductStockTxns, type UiTxnType, getProductOnHand, recalculateProductStock, deleteStockTransaction } from '../api/inventory'
+import { canManageWorkspace } from '../utils/permissions'
 import { showToast } from './ui/Toast'
 import { db } from '../lib/firebase'
 import { doc, getDoc } from 'firebase/firestore'
@@ -414,6 +415,34 @@ export function ProductDetails({ product, onClose, onSaved, canManage = false }:
 
   const queryClient = useQueryClient()
   const { workspaceId, userId } = useSessionStore()
+  const [isOwner, setIsOwner] = useState(false)
+
+  // Check if user is owner
+  useEffect(() => {
+    if (!workspaceId || !userId) {
+      setIsOwner(false)
+      return
+    }
+    canManageWorkspace(workspaceId, userId)
+      .then((canManage) => {
+        // Check if user is specifically owner (not just admin)
+        if (canManage) {
+          getDoc(doc(db, 'workspaces', workspaceId, 'users', userId))
+            .then((userDoc) => {
+              if (userDoc.exists()) {
+                const userData = userDoc.data()
+                setIsOwner(userData.role === 'owner')
+              } else {
+                setIsOwner(false)
+              }
+            })
+            .catch(() => setIsOwner(false))
+        } else {
+          setIsOwner(false)
+        }
+      })
+      .catch(() => setIsOwner(false))
+  }, [workspaceId, userId])
 
   // Fetch stock transactions and on-hand using TanStack Query for automatic refresh
   const { data: stockTxns = [], refetch: refetchStockTxns } = useQuery({
@@ -485,14 +514,18 @@ export function ProductDetails({ product, onClose, onSaved, canManage = false }:
     if (!stockTxns.length) return []
     let runningBalance = Number(onHand)
     const processedHistory: StockAdjustment[] = stockTxns.map((t) => {
+      // qty is already signed (positive for Receive/Produce, negative for Issue/Ship)
       const qty = Number(t.qty || 0)
       const newQuantity = runningBalance
-      runningBalance -= qty // Reverse calculation
+      // Reverse calculation: subtract the signed qty to go back in time
+      // If qty is positive (IN), subtracting it decreases balance (correct for reverse)
+      // If qty is negative (OUT), subtracting it increases balance (correct for reverse)
+      runningBalance -= qty
       const txn = t as any
       return {
         id: t.id,
         type: (t.type === 'Receive' || t.type === 'Produce' ? 'in' : t.type === 'Transfer' ? 'transfer' : 'out') as any,
-        quantity: Math.abs(qty),
+        quantity: Math.abs(qty), // Display absolute value for quantity
         previousQuantity: runningBalance,
         newQuantity,
         reason: t.reason || '',
@@ -1789,7 +1822,12 @@ export function ProductDetails({ product, onClose, onSaved, canManage = false }:
 
                   return (
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                      <div className="bg-gradient-to-br from-emerald-50 to-green-100 rounded-xl p-4 border border-emerald-200">
+                      <button
+                        onClick={() => {
+                          setHistoryFilters(prev => ({ ...prev, type: prev.type === 'in' ? 'all' : 'in' }))
+                        }}
+                        className={`bg-gradient-to-br from-emerald-50 to-green-100 rounded-xl p-4 border border-emerald-200 transition-all hover:shadow-md hover:scale-[1.02] active:scale-[0.98] cursor-pointer ${historyFilters.type === 'in' ? 'ring-2 ring-emerald-400' : ''}`}
+                      >
                         <div className="flex items-center gap-2 mb-2">
                           <div className="p-1.5 bg-emerald-500 rounded-lg">
                             <PlusIcon className="w-4 h-4 text-white" />
@@ -1797,9 +1835,14 @@ export function ProductDetails({ product, onClose, onSaved, canManage = false }:
                           <span className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider">Total In</span>
                         </div>
                         <div className="text-2xl font-black text-emerald-600">+{totalIn.toLocaleString()}</div>
-                      </div>
+                      </button>
 
-                      <div className="bg-gradient-to-br from-red-50 to-rose-100 rounded-xl p-4 border border-red-200">
+                      <button
+                        onClick={() => {
+                          setHistoryFilters(prev => ({ ...prev, type: prev.type === 'out' ? 'all' : 'out' }))
+                        }}
+                        className={`bg-gradient-to-br from-red-50 to-rose-100 rounded-xl p-4 border border-red-200 transition-all hover:shadow-md hover:scale-[1.02] active:scale-[0.98] cursor-pointer ${historyFilters.type === 'out' ? 'ring-2 ring-red-400' : ''}`}
+                      >
                         <div className="flex items-center gap-2 mb-2">
                           <div className="p-1.5 bg-red-500 rounded-lg">
                             <MinusIcon className="w-4 h-4 text-white" />
@@ -1807,9 +1850,14 @@ export function ProductDetails({ product, onClose, onSaved, canManage = false }:
                           <span className="text-[10px] font-bold text-red-700 uppercase tracking-wider">Total Out</span>
                         </div>
                         <div className="text-2xl font-black text-red-600">-{totalOut.toLocaleString()}</div>
-                      </div>
+                      </button>
 
-                      <div className="bg-gradient-to-br from-blue-50 to-indigo-100 rounded-xl p-4 border border-blue-200">
+                      <button
+                        onClick={() => {
+                          setHistoryFilters(prev => ({ ...prev, type: prev.type === 'transfer' ? 'all' : 'transfer' }))
+                        }}
+                        className={`bg-gradient-to-br from-blue-50 to-indigo-100 rounded-xl p-4 border border-blue-200 transition-all hover:shadow-md hover:scale-[1.02] active:scale-[0.98] cursor-pointer ${historyFilters.type === 'transfer' ? 'ring-2 ring-blue-400' : ''}`}
+                      >
                         <div className="flex items-center gap-2 mb-2">
                           <div className="p-1.5 bg-blue-500 rounded-lg">
                             <ArrowPathIcon className="w-4 h-4 text-white" />
@@ -1817,7 +1865,7 @@ export function ProductDetails({ product, onClose, onSaved, canManage = false }:
                           <span className="text-[10px] font-bold text-blue-700 uppercase tracking-wider">Transfers</span>
                         </div>
                         <div className="text-2xl font-black text-blue-600">{totalTransfers}</div>
-                      </div>
+                      </button>
 
                       <div className={`rounded-xl p-4 border ${netMovement >= 0 ? 'bg-gradient-to-br from-slate-50 to-gray-100 border-slate-200' : 'bg-gradient-to-br from-orange-50 to-amber-100 border-orange-200'}`}>
                         <div className="flex items-center gap-2 mb-2">
@@ -1982,6 +2030,47 @@ export function ProductDetails({ product, onClose, onSaved, canManage = false }:
                                 <span className="text-xs text-gray-500 font-medium">User</span>
                                 <span className="text-xs text-gray-700 font-semibold">{userNames[h.createdBy] || h.createdBy || 'System'}</span>
                               </div>
+                              {isOwner && (
+                                <div className="flex items-center justify-between pt-2 border-t border-gray-100">
+                                  <span className="text-xs text-gray-500 font-medium">Action</span>
+                                  <button
+                                    onClick={async () => {
+                                      if (!workspaceId || !product.id) return
+                                      if (!confirm(`Are you sure you want to delete this transaction? This will recalculate the product stock.`)) return
+                                      
+                                      try {
+                                        // Find the original transaction ID from stockTxns
+                                        const originalTxn = stockTxns.find(t => {
+                                          // Match by timestamp and type
+                                          const txnDate = t.timestamp?.toDate?.() || new Date(t.timestamp)
+                                          return Math.abs(txnDate.getTime() - new Date(h.createdAt).getTime()) < 1000 &&
+                                                 ((t.type === 'Receive' || t.type === 'Produce') && h.type === 'in' ||
+                                                  (t.type === 'Issue' || t.type === 'Ship') && h.type === 'out' ||
+                                                  t.type === 'Transfer' && h.type === 'transfer')
+                                        })
+                                        
+                                        if (originalTxn) {
+                                          await deleteStockTransaction(workspaceId, originalTxn.id, product.id)
+                                          queryClient.invalidateQueries({ queryKey: ['stockTxns', workspaceId, product.id] })
+                                          queryClient.invalidateQueries({ queryKey: ['productOnHand', workspaceId, product.id] })
+                                          refetchStockTxns()
+                                          refetchOnHand()
+                                          showToast('Transaction deleted successfully', 'success')
+                                        } else {
+                                          showToast('Transaction not found', 'error')
+                                        }
+                                      } catch (error) {
+                                        console.error('Error deleting transaction:', error)
+                                        showToast('Failed to delete transaction', 'error')
+                                      }
+                                    }}
+                                    className="p-1.5 text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors"
+                                    title="Delete transaction"
+                                  >
+                                    <TrashIcon className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -2007,12 +2096,15 @@ export function ProductDetails({ product, onClose, onSaved, canManage = false }:
                           <th className="py-3.5 px-3 text-left text-[11px] font-bold text-gray-700 uppercase tracking-wider hidden xl:table-cell">Ref</th>
                           <th className="py-3.5 px-3 text-left text-[11px] font-bold text-gray-700 uppercase tracking-wider hidden lg:table-cell max-w-[120px]">User</th>
                           <th className="py-3.5 px-4 pr-6 text-left text-[11px] font-bold text-gray-700 uppercase tracking-wider">Date & Time</th>
+                          {isOwner && (
+                            <th className="py-3.5 px-4 pr-6 text-center text-[11px] font-bold text-gray-700 uppercase tracking-wider w-20">Action</th>
+                          )}
                         </tr>
                       </thead>
                       <tbody className="bg-white divide-y divide-gray-100">
                         {history.length === 0 ? (
                           <tr>
-                            <td colSpan={7} className="py-16 text-center">
+                            <td colSpan={isOwner ? 8 : 7} className="py-16 text-center">
                               <div className="flex flex-col items-center">
                                 <ClockIcon className="w-14 h-14 text-gray-300 mb-4" />
                                 <p className="text-base font-semibold text-gray-600 mb-1">No transactions found</p>
@@ -2108,6 +2200,48 @@ export function ProductDetails({ product, onClose, onSaved, canManage = false }:
                                     </time>
                                   </div>
                                 </td>
+
+                                {/* Delete Action - Owner only */}
+                                {isOwner && (
+                                  <td className="py-3 px-4 text-center">
+                                    <button
+                                      onClick={async () => {
+                                        if (!workspaceId || !product.id) return
+                                        if (!confirm(`Are you sure you want to delete this transaction? This will recalculate the product stock.`)) return
+                                        
+                                        try {
+                                          // Find the original transaction ID from stockTxns
+                                          const originalTxn = stockTxns.find(t => {
+                                            // Match by timestamp and type
+                                            const txnDate = t.timestamp?.toDate?.() || new Date(t.timestamp)
+                                            return Math.abs(txnDate.getTime() - new Date(h.createdAt).getTime()) < 1000 &&
+                                                   ((t.type === 'Receive' || t.type === 'Produce') && h.type === 'in' ||
+                                                    (t.type === 'Issue' || t.type === 'Ship') && h.type === 'out' ||
+                                                    t.type === 'Transfer' && h.type === 'transfer')
+                                          })
+                                          
+                                          if (originalTxn) {
+                                            await deleteStockTransaction(workspaceId, originalTxn.id, product.id)
+                                            queryClient.invalidateQueries({ queryKey: ['stockTxns', workspaceId, product.id] })
+                                            queryClient.invalidateQueries({ queryKey: ['productOnHand', workspaceId, product.id] })
+                                            refetchStockTxns()
+                                            refetchOnHand()
+                                            showToast('Transaction deleted successfully', 'success')
+                                          } else {
+                                            showToast('Transaction not found', 'error')
+                                          }
+                                        } catch (error) {
+                                          console.error('Error deleting transaction:', error)
+                                          showToast('Failed to delete transaction', 'error')
+                                        }
+                                      }}
+                                      className="p-1.5 text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
+                                      title="Delete transaction"
+                                    >
+                                      <TrashIcon className="w-4 h-4" />
+                                    </button>
+                                  </td>
+                                )}
                               </tr>
                             )
                           })

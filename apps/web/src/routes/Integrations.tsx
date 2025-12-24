@@ -167,6 +167,9 @@ export function Integrations() {
   const [page, setPage] = React.useState(1)
   const [pageSize, setPageSize] = React.useState(10)
 
+  // Activity details (row click)
+  const [selectedLog, setSelectedLog] = React.useState<QuickBooksLogEntry | null>(null)
+
   const filteredLogs = React.useMemo(() => {
     return quickBooksLogs.filter((log: QuickBooksLogEntry) => {
       const errors = log.errors ?? 0
@@ -255,11 +258,10 @@ export function Integrations() {
                     )
                   }
                 }}
-                onImportProducts={async (skus?: string[]) => {
+                onImportProducts={async (skus?: string[], jobId?: string) => {
                   if (!workspaceId) return
                   try {
-                    showToast('Importing products from QuickBooks...', 'info')
-                    const result = await importProductsFromQuickBooks(workspaceId, skus)
+                    const result = await importProductsFromQuickBooks(workspaceId, skus, jobId)
                     showToast(
                       `Imported ${result.imported} products, updated ${result.updated} products. ${
                         result.skipped > 0 ? `${result.skipped} skipped.` : ''
@@ -545,7 +547,13 @@ export function Integrations() {
                       const trigger = (log.trigger ?? 'manual') as 'manual' | 'auto'
 
                       return (
-                        <tr key={log.id} className={idx % 2 === 0 ? 'bg-white' : 'bg-gray-50/40'}>
+                        <tr
+                          key={log.id}
+                          className={`${
+                            idx % 2 === 0 ? 'bg-white' : 'bg-gray-50/40'
+                          } cursor-pointer hover:bg-indigo-50/60`}
+                          onClick={() => setSelectedLog(log)}
+                        >
                           <td className="px-3 py-2 whitespace-nowrap text-xs text-gray-800">
                             {formatDateTime(date)}
                           </td>
@@ -647,6 +655,209 @@ export function Integrations() {
             </div>
           )}
         </Card>
+
+        {/* Activity detail modal */}
+        {selectedLog ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 px-4">
+            <div className="bg-white rounded-xl shadow-xl max-w-3xl w-full max-h-[80vh] overflow-hidden flex flex-col">
+              <div className="px-5 py-3 border-b border-gray-200 flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-900">QuickBooks Activity Details</h3>
+                  <p className="mt-0.5 text-xs text-gray-500">
+                    {selectedLog.type === 'product_import'
+                      ? 'Product import details from QuickBooks.'
+                      : selectedLog.type === 'inventory_sync'
+                      ? 'Inventory sync details with QuickBooks.'
+                      : 'QuickBooks activity details.'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedLog(null)}
+                  className="inline-flex items-center justify-center rounded-full p-1 text-gray-500 hover:text-gray-700 hover:bg-gray-100"
+                >
+                  <span className="sr-only">Close</span>
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                    className="h-4 w-4"
+                  >
+                    <path
+                      fillRule="evenodd"
+                      d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+                      clipRule="evenodd"
+                    />
+                  </svg>
+                </button>
+              </div>
+
+              <div className="px-5 py-3 border-b border-gray-100 grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-500">Type:</span>
+                    <span className="font-medium text-gray-900">
+                      {selectedLog.type === 'product_import'
+                        ? 'Product Import'
+                        : selectedLog.type === 'inventory_sync'
+                        ? 'Inventory Sync'
+                        : selectedLog.type}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-500">Trigger:</span>
+                    <span className="font-medium text-gray-900 capitalize">
+                      {selectedLog.trigger ?? 'manual'}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-500">Status:</span>
+                    <span className="font-medium text-gray-900 capitalize">
+                      {selectedLog.status ?? (selectedLog.errors && selectedLog.errors > 0 ? 'failed' : 'success')}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-500">Imported:</span>
+                    <span className="font-medium text-gray-900">{selectedLog.imported ?? 0}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-500">Updated:</span>
+                    <span className="font-medium text-gray-900">
+                      {selectedLog.updated ?? selectedLog.updatedProducts ?? 0}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-500">Skipped:</span>
+                    <span className="font-medium text-gray-900">
+                      {selectedLog.skipped ?? selectedLog.unchangedProducts ?? 0}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-500">Errors:</span>
+                    <span className="font-medium text-gray-900">{selectedLog.errors ?? 0}</span>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  {selectedLog.totalItemsFromQuickBooks !== undefined ? (
+                    <div className="flex items-center gap-2">
+                      <span className="text-gray-500">Total items from QuickBooks:</span>
+                      <span className="font-medium text-gray-900">
+                        {selectedLog.totalItemsFromQuickBooks}
+                      </span>
+                    </div>
+                  ) : null}
+                  {selectedLog.allowedSkus && selectedLog.allowedSkus.length > 0 ? (
+                    <div className="flex items-center gap-2">
+                      <span className="text-gray-500">Filtered by SKUs:</span>
+                      <span className="font-medium text-gray-900">
+                        {selectedLog.allowedSkus.length} SKU
+                      </span>
+                    </div>
+                  ) : null}
+                  {selectedLog.errorMessage ? (
+                    <div className="mt-1">
+                      <span className="block text-gray-500 mb-0.5">Error message:</span>
+                      <p className="text-xs text-red-700 bg-red-50 border border-red-100 rounded-md px-2 py-1">
+                        {selectedLog.errorMessage}
+                      </p>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto px-5 py-3 text-xs">
+                {selectedLog.details?.items && selectedLog.details.items.length > 0 ? (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-semibold text-gray-900">Item details</h4>
+                      <span className="text-[11px] text-gray-500">
+                        Showing {selectedLog.details.items.length} item(s)
+                        {selectedLog.details.truncated ? ' (truncated)' : ''}
+                      </span>
+                    </div>
+                    <div className="border border-gray-200 rounded-lg overflow-hidden">
+                      <table className="min-w-full text-xs">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-3 py-2 text-left font-semibold text-gray-500 uppercase tracking-wide">
+                              SKU
+                            </th>
+                            <th className="px-3 py-2 text-left font-semibold text-gray-500 uppercase tracking-wide">
+                              Name
+                            </th>
+                            <th className="px-3 py-2 text-left font-semibold text-gray-500 uppercase tracking-wide">
+                              Action
+                            </th>
+                            <th className="px-3 py-2 text-left font-semibold text-gray-500 uppercase tracking-wide">
+                              Reason
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100 bg-white">
+                          {selectedLog.details.items.map((item, idx) => (
+                            <tr key={`${item.sku || item.name || idx}-${idx}`} className={idx % 2 === 0 ? 'bg-white' : 'bg-gray-50/40'}>
+                              <td className="px-3 py-2 whitespace-nowrap text-gray-800">
+                                {item.sku || '-'}
+                              </td>
+                              <td className="px-3 py-2 whitespace-nowrap text-gray-800">
+                                {item.name || '-'}
+                              </td>
+                              <td className="px-3 py-2 whitespace-nowrap">
+                                <Badge
+                                  tone={
+                                    item.action === 'imported'
+                                      ? 'green'
+                                      : item.action === 'updated'
+                                      ? 'blue'
+                                      : item.action === 'skipped'
+                                      ? 'gray'
+                                      : 'red'
+                                  }
+                                >
+                                  {item.action === 'imported'
+                                    ? 'Imported'
+                                    : item.action === 'updated'
+                                    ? 'Updated'
+                                    : item.action === 'skipped'
+                                    ? 'Skipped'
+                                    : 'Error'}
+                                </Badge>
+                              </td>
+                              <td className="px-3 py-2 text-gray-700">
+                                {item.reason || '-'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    {selectedLog.details.truncated ? (
+                      <p className="text-[11px] text-gray-500">
+                        Only a subset of items is shown for this run to keep the log compact.
+                      </p>
+                    ) : null}
+                  </div>
+                ) : (
+                  <p className="text-xs text-gray-500">
+                    No detailed per-item data is available for this activity entry. You can still
+                    review the summary numbers above.
+                  </p>
+                )}
+              </div>
+
+              <div className="px-5 py-3 border-t border-gray-200 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setSelectedLog(null)}
+                  className="inline-flex items-center justify-center rounded-lg bg-gray-900 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-gray-800"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     </PageShell>
   )

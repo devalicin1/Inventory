@@ -1,17 +1,34 @@
-import { useMemo, useState, useEffect } from 'react'
+import React, { useMemo, useState, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { PageShell } from '../components/layout/PageShell'
+import { Card } from '../components/ui/Card'
+import { Button } from '../components/ui/Button'
 import { DataTable } from '../components/DataTable'
 import { Scanner } from '../components/Scanner'
-import { listProducts } from '../api/inventory'
-import { listGroups, type Group, setProductStatus, deleteProduct, moveProductToGroup, createGroup, deleteGroup, renameGroup, moveGroupParent, createProduct, subscribeToProducts } from '../api/products'
-import { listUOMs } from '../api/settings'
-import { createStockTransaction } from '../api/inventory'
 import { ProductForm } from '../components/ProductForm'
 import { ProductDetails } from '../components/ProductDetails'
-import { useSessionStore } from '../state/sessionStore'
+
+import { listProducts, getProductOnHand, createStockTransaction } from '../api/inventory'
+import {
+  listGroups,
+  type Group,
+  setProductStatus,
+  deleteProduct,
+  moveProductToGroup,
+  createGroup,
+  deleteGroup,
+  renameGroup,
+  moveGroupParent,
+  createProduct,
+  subscribeToProducts,
+} from '../api/products'
+import { listUOMs } from '../api/settings'
 import { hasWorkspacePermission } from '../utils/permissions'
 import { scoreAndSort } from '../utils/search'
+import { toCSV, downloadCSV, parseCSV } from '../utils/csv'
 import { showToast } from '../components/ui/Toast'
+import { useSessionStore } from '../state/sessionStore'
+
 import {
   PlusIcon,
   QrCodeIcon,
@@ -27,27 +44,17 @@ import {
   TrashIcon,
   EyeIcon,
   ArchiveBoxIcon,
-  CubeIcon,
-  CurrencyDollarIcon,
-  XMarkIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  ChevronLeftIcon,
+  EllipsisHorizontalIcon,
+  EllipsisVerticalIcon,
   DocumentArrowDownIcon,
   ArrowPathIcon,
   ExclamationCircleIcon,
-  ChevronLeftIcon,
-  Bars3Icon,
-  EllipsisVerticalIcon,
-  EllipsisHorizontalIcon,
+  XMarkIcon,
   MinusIcon,
-  PlusCircleIcon,
-  MinusCircleIcon,
-  AdjustmentsHorizontalIcon
 } from '@heroicons/react/24/outline'
-import { toCSV, downloadCSV, parseCSV } from '../utils/csv'
-import { Card } from '../components/ui/Card'
-import { Button } from '../components/ui/Button'
-import { PageShell } from '../components/layout/PageShell'
 
 interface Product {
   id: string
@@ -61,93 +68,63 @@ interface Product {
 }
 
 export function Inventory() {
-  const [showScanner, setShowScanner] = useState(false)
+  const qc = useQueryClient()
+  const { workspaceId, userId } = useSessionStore()
+
+  // Core UI
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
   const [showCreate, setShowCreate] = useState(false)
   const [showImport, setShowImport] = useState(false)
+  const [showScanner, setShowScanner] = useState(false)
   const [showDuplicates, setShowDuplicates] = useState(false)
+
+  // Filters / selection
   const [selectedGroup, setSelectedGroup] = useState<string>('')
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [lowStockFilter, setLowStockFilter] = useState<boolean>(false)
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
   const [showFilters, setShowFilters] = useState(false)
-  const [currentPage, setCurrentPage] = useState(1)
-  const [itemsPerPage, setItemsPerPage] = useState(10)
+
+  // Layout
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
   const [showMobileSidebar, setShowMobileSidebar] = useState(false)
-  const [showMobileActions, setShowMobileActions] = useState(false)
-  const [showKPIs, setShowKPIs] = useState(false)
+  const [showMoreMenu, setShowMoreMenu] = useState(false)
+  const [rowActionMenuOpen, setRowActionMenuOpen] = useState<string | null>(null)
+
+  // Pagination
+  const [currentPage, setCurrentPage] = useState(1)
+  const [itemsPerPage, setItemsPerPage] = useState(25)
+
+  // Quick adjust (mobile-first, minimal)
   const [quickAdjustProduct, setQuickAdjustProduct] = useState<string | null>(null)
   const [adjustQty, setAdjustQty] = useState<number>(1)
   const [isAdjusting, setIsAdjusting] = useState(false)
-  const [canManageInventory, setCanManageInventory] = useState(false)
-  const [showMoreMenu, setShowMoreMenu] = useState(false)
-  const [rowActionMenuOpen, setRowActionMenuOpen] = useState<string | null>(null)
-  const qc = useQueryClient()
-  const { workspaceId, userId } = useSessionStore()
 
-  // Check permission for managing inventory
+  // Permission
+  const [canManageInventory, setCanManageInventory] = useState(false)
+
+  // Permission check
   useEffect(() => {
     if (!workspaceId || !userId) {
       setCanManageInventory(false)
       return
     }
-
     hasWorkspacePermission(workspaceId, userId, 'manage_inventory')
-      .then((hasPermission) => {
-        setCanManageInventory(hasPermission)
-      })
-      .catch(() => {
-        setCanManageInventory(false)
-      })
+      .then(setCanManageInventory)
+      .catch(() => setCanManageInventory(false))
   }, [workspaceId, userId])
 
-  const { data: products = [], isLoading: productsLoading, refetch: refetchProducts } = useQuery({
+  const {
+    data: products = [],
+    isLoading: productsLoading,
+    refetch: refetchProducts,
+  } = useQuery({
     queryKey: ['products', workspaceId],
     queryFn: () => listProducts(workspaceId!),
     enabled: !!workspaceId,
-    staleTime: Infinity, // Don't refetch automatically - we use real-time subscription
+    staleTime: Infinity, // real-time subscription drives updates
   })
-
-  // Real-time subscription for products - updates immediately when data changes in Firestore
-  useEffect(() => {
-    if (!workspaceId) return
-
-    const unsubscribe = subscribeToProducts(
-      workspaceId,
-      (updatedProducts) => {
-        // Update the query cache with real-time data
-        qc.setQueryData(['products', workspaceId], updatedProducts)
-      },
-      (error) => {
-        console.error('[Inventory] Real-time subscription error:', error)
-      }
-    )
-
-    return () => {
-      unsubscribe()
-    }
-  }, [workspaceId, qc])
-
-  // Force a fresh calculation of products when Inventory screen is opened
-  useEffect(() => {
-    if (!workspaceId) return
-    refetchProducts()
-  }, [workspaceId, refetchProducts])
-
-  // Listen for global stock update events to refresh product quantities
-  useEffect(() => {
-    if (!workspaceId) return
-
-    const handleStockUpdate = () => {
-      // Invalidate products so React Query refetches latest qtyOnHand from history
-      qc.invalidateQueries({ queryKey: ['products', workspaceId] })
-    }
-
-    window.addEventListener('stockTransactionCreated', handleStockUpdate as EventListener)
-    return () => window.removeEventListener('stockTransactionCreated', handleStockUpdate as EventListener)
-  }, [workspaceId, qc])
 
   const { data: groups = [], isLoading: groupsLoading } = useQuery<Group[]>({
     queryKey: ['groups', workspaceId],
@@ -157,7 +134,64 @@ export function Inventory() {
 
   const isLoading = productsLoading || groupsLoading
 
-  // Auto-open product details from URL parameter or create form
+  // Real-time subscription (preserve qtyOnHand in cache, recompute safely)
+  useEffect(() => {
+    if (!workspaceId) return
+    let isMounted = true
+    let pendingUpdate: ReturnType<typeof setTimeout> | null = null
+
+    const unsubscribe = subscribeToProducts(
+      workspaceId,
+      (updatedProducts) => {
+        if (pendingUpdate) clearTimeout(pendingUpdate)
+        pendingUpdate = setTimeout(async () => {
+          if (!isMounted) return
+          try {
+            const currentCache = (qc.getQueryData(['products', workspaceId]) as Product[]) || []
+            const cacheMap = new Map(currentCache.map((p) => [p.id, p]))
+
+            const productsWithStock = await Promise.all(
+              updatedProducts.map(async (p: any) => {
+                try {
+                  const onHand = await getProductOnHand(workspaceId, p.id)
+                  return { ...p, qtyOnHand: onHand }
+                } catch {
+                  const cached = cacheMap.get(p.id)
+                  return { ...p, qtyOnHand: cached?.qtyOnHand ?? p.qtyOnHand ?? 0 }
+                }
+              })
+            )
+
+            if (isMounted) qc.setQueryData(['products', workspaceId], productsWithStock)
+          } catch (err) {
+            console.error('[Inventory] Real-time update failed:', err)
+            if (isMounted) qc.setQueryData(['products', workspaceId], updatedProducts)
+          }
+        }, 120)
+      },
+      (error) => console.error('[Inventory] Subscription error:', error)
+    )
+
+    return () => {
+      isMounted = false
+      if (pendingUpdate) clearTimeout(pendingUpdate)
+      unsubscribe()
+    }
+  }, [workspaceId, qc])
+
+  // Refetch on open
+  useEffect(() => {
+    if (!workspaceId) return
+    refetchProducts()
+  }, [workspaceId, refetchProducts])
+
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setCurrentPage(1)
+    setSelectedIds([])
+  }, [selectedGroup, searchTerm, statusFilter, lowStockFilter])
+
+  // Open details from URL param
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const productId = params.get('productId')
@@ -165,128 +199,95 @@ export function Inventory() {
 
     if (action === 'new') {
       setShowCreate(true)
-      // Clean up URL
       const newParams = new URLSearchParams(window.location.search)
       newParams.delete('action')
-      const newUrl = newParams.toString() ? `${window.location.pathname}?${newParams.toString()}` : window.location.pathname
+      const newUrl = newParams.toString()
+        ? `${window.location.pathname}?${newParams.toString()}`
+        : window.location.pathname
       window.history.replaceState({}, '', newUrl)
-    } else if (productId && products.length > 0 && !selectedProduct) {
-      const product = products.find(p => p.id === productId)
-      if (product) {
-        setSelectedProduct(product)
-        // Clean up URL
+      return
+    }
+
+    if (productId && products.length > 0 && !selectedProduct) {
+      const p = products.find((x) => x.id === productId)
+      if (p) {
+        setSelectedProduct(p)
         window.history.replaceState({}, '', '/inventory')
       }
     }
   }, [products, selectedProduct])
 
-  // Filter products based on search and filters
+  // Filtered products (search + filters)
   const filteredProducts = useMemo(() => {
     let filtered = products
 
-    if (selectedGroup) {
-      filtered = filtered.filter(p => (p as any).groupId === selectedGroup)
-    }
+    if (selectedGroup) filtered = filtered.filter((p: any) => p.groupId === selectedGroup)
+    if (statusFilter !== 'all') filtered = filtered.filter((p) => p.status === statusFilter)
+    if (lowStockFilter) filtered = filtered.filter((p) => (p.qtyOnHand || 0) < (p.minStock || 0))
 
-    if (statusFilter !== 'all') {
-      filtered = filtered.filter(p => p.status === statusFilter)
-    }
-
-    if (lowStockFilter) {
-      filtered = filtered.filter(p => (p.qtyOnHand || 0) < p.minStock)
-    }
-
-    // Use fuzzy search if search term exists
-    if (searchTerm) {
-      const scored = scoreAndSort(
-        filtered,
-        searchTerm,
-        (p) => [
-          p.name || '',
-          p.sku || '',
-          p.id || ''
-        ]
-      )
-      filtered = scored.map(result => result.item)
+    if (searchTerm.trim()) {
+      const scored = scoreAndSort(filtered, searchTerm, (p) => [p.name || '', p.sku || '', p.id || ''])
+      filtered = scored.map((r) => r.item)
     }
 
     return filtered
-  }, [products, selectedGroup, searchTerm, statusFilter, lowStockFilter])
+  }, [products, selectedGroup, statusFilter, lowStockFilter, searchTerm])
 
   // Pagination
-  const totalPages = Math.ceil(filteredProducts.length / itemsPerPage)
+  const totalPages = Math.max(1, Math.ceil(filteredProducts.length / itemsPerPage))
   const startIndex = (currentPage - 1) * itemsPerPage
   const endIndex = startIndex + itemsPerPage
-  const paginatedProducts = useMemo(() => {
-    return filteredProducts.slice(startIndex, endIndex)
-  }, [filteredProducts, startIndex, endIndex])
+  const paginatedProducts = useMemo(() => filteredProducts.slice(startIndex, endIndex), [filteredProducts, startIndex, endIndex])
 
-  // Reset to page 1 when filters change
-  useEffect(() => {
-    setCurrentPage(1)
-  }, [selectedGroup, searchTerm, statusFilter, lowStockFilter])
-
-  // Find duplicate products by SKU
+  // Duplicates by SKU (ignore empty)
   const duplicateProducts = useMemo(() => {
     const skuMap = new Map<string, Product[]>()
-
-    products.forEach(p => {
-      const sku = p.sku.toLowerCase().trim()
-      if (!skuMap.has(sku)) {
-        skuMap.set(sku, [])
-      }
+    for (const p of products) {
+      const sku = (p.sku || '').toLowerCase().trim()
+      if (!sku) continue
+      if (!skuMap.has(sku)) skuMap.set(sku, [])
       skuMap.get(sku)!.push(p)
-    })
-
-    // Return only SKUs with more than one product
+    }
     const duplicates: Array<{ sku: string; products: Product[] }> = []
-    skuMap.forEach((products, sku) => {
-      if (products.length > 1) {
-        duplicates.push({ sku, products })
-      }
+    skuMap.forEach((arr, sku) => {
+      if (arr.length > 1) duplicates.push({ sku, products: arr })
     })
-
     return duplicates.sort((a, b) => a.sku.localeCompare(b.sku))
   }, [products])
 
-  // Calculate statistics
+  // Simple stats (minimal)
   const stats = useMemo(() => {
-    const totalProducts = products.length
-    const lowStockCount = products.filter(p => (p.qtyOnHand || 0) < p.minStock).length
-    const inventoryValue = products.reduce((sum, p: any) => sum + (p.totalValue || 0), 0)
-    const activeCount = products.filter(p => p.status === 'active').length
-    const outOfStockCount = products.filter(p => (p.qtyOnHand || 0) <= 0).length
-
-    return {
-      totalProducts,
-      lowStockCount,
-      inventoryValue,
-      activeCount,
-      outOfStockCount
-    }
+    const total = products.length
+    const low = products.filter((p) => (p.qtyOnHand || 0) < (p.minStock || 0)).length
+    const out = products.filter((p) => (p.qtyOnHand || 0) <= 0).length
+    const active = products.filter((p) => p.status === 'active').length
+    return { total, low, out, active }
   }, [products])
 
+  const toggleGroupExpansion = (groupId: string) => {
+    setExpandedGroups((prev) => {
+      const s = new Set(prev)
+      if (s.has(groupId)) s.delete(groupId)
+      else s.add(groupId)
+      return s
+    })
+  }
 
   const handleScan = (result: string) => {
-    console.log('Scanned:', result)
-    const product = products.find(p => p.sku === result || p.id === result)
-    if (product) {
-      setSelectedProduct(product)
-    }
+    const product = products.find((p) => p.sku === result || p.id === result)
+    if (product) setSelectedProduct(product)
     setShowScanner(false)
   }
 
-  // Quick stock adjustment for field workers
   const handleQuickAdjust = async (productId: string, type: 'in' | 'out', qty: number) => {
+    if (!workspaceId) return
     if (qty <= 0 || isAdjusting) return
-    
+
     setIsAdjusting(true)
     try {
-      const product = products.find(p => p.id === productId)
-      const sku = product?.sku || productId.substring(0, 8)
-      
+      const p = products.find((x) => x.id === productId)
       await createStockTransaction({
-        workspaceId: workspaceId!,
+        workspaceId,
         productId,
         type,
         qty,
@@ -295,307 +296,256 @@ export function Inventory() {
       })
       qc.invalidateQueries({ queryKey: ['products', workspaceId] })
       window.dispatchEvent(new Event('stockTransactionCreated'))
-      
+
       showToast(
-        `Stock ${type === 'in' ? 'added' : 'removed'}: ${type === 'in' ? '+' : '-'}${qty} ${product?.uom || 'units'} for ${sku}`,
+        `Stock ${type === 'in' ? 'added' : 'removed'}: ${type === 'in' ? '+' : '-'}${qty} ${p?.uom || 'units'} (${p?.sku || productId.slice(0, 8)})`,
         'success',
-        3000
+        2500
       )
-      
+
       setQuickAdjustProduct(null)
       setAdjustQty(1)
     } catch (err) {
-      console.error('Failed to adjust stock:', err)
-      showToast(
-        `Failed to adjust stock: ${err instanceof Error ? err.message : 'Unknown error'}`,
-        'error',
-        5000
-      )
+      console.error(err)
+      showToast(`Failed to adjust stock: ${err instanceof Error ? err.message : 'Unknown error'}`, 'error', 4500)
     } finally {
       setIsAdjusting(false)
     }
   }
 
-  const toggleGroupExpansion = (groupId: string) => {
-    setExpandedGroups(prev => {
-      const newSet = new Set(prev)
-      if (newSet.has(groupId)) {
-        newSet.delete(groupId)
-      } else {
-        newSet.add(groupId)
-      }
-      return newSet
-    })
-  }
-
-  const columns = [
-    {
-      key: 'name' as keyof Product,
-      label: 'Product',
-      sortable: true,
-      className: 'min-w-[250px]',
-      render: (value: string, item: Product) => {
-        if (!value) return <span className="text-gray-400">—</span>
-        // Clean up encoding issues - remove replacement characters and invalid unicode
-        let cleaned = value
-          .replace(/\uFFFD/g, '') // Remove replacement characters ()
-          .replace(/\u0000/g, '') // Remove null characters
-          .trim()
-
-        // Try to decode HTML entities if any
-        try {
-          const textarea = document.createElement('textarea')
-          textarea.innerHTML = cleaned
-          cleaned = textarea.value || cleaned
-        } catch (e) {
-          // If decoding fails, use original
-        }
-
-        const product = products.find(p => p.id === item.id)
-        const sku = product?.sku || ''
-        
-        return (
-          <div className="flex flex-col gap-1">
-            <span className="font-semibold text-gray-900 leading-tight">{cleaned || value}</span>
-            {sku && (
-              <span className="text-xs text-gray-500 font-mono bg-gray-50 px-2 py-0.5 rounded inline-block w-fit">{sku}</span>
-            )}
-          </div>
-        )
-      }
-    },
-    {
-      key: 'uom' as keyof Product,
-      label: 'Unit',
-      sortable: true,
-      className: 'w-20',
-      render: (value: string) => (
-        <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-gray-100 text-gray-700">
-          {value || '—'}
-        </span>
-      )
-    },
-    {
-      key: 'qtyOnHand' as keyof Product,
-      label: 'On Hand',
-      className: 'w-32',
-      render: (value: number, item: Product) => {
-        const product = products.find(p => p.id === item.id)
-        const minStock = product?.minStock || 0
-        const qty = value || 0
-        const isLow = qty < minStock && qty > 0
-        const isOut = qty === 0
-        
-        return (
-          <span className={`font-medium ${qty === 0 ? 'text-red-600' :
-            qty < minStock ? 'text-orange-600' : 'text-gray-900'
-            }`}>
-            {qty.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </span>
-        )
-      },
-      sortable: true
-    },
-    {
-      key: 'minStock' as keyof Product,
-      label: 'Min Stock',
-      render: (value: number) => value?.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00',
-      sortable: true
-    },
-    {
-      key: 'status' as keyof Product,
-      label: 'Status',
-      render: (value: string) => (
-        <span className={`px-3 py-1.5 rounded-full text-xs font-medium inline-flex items-center gap-1 ${value === 'active'
-          ? 'bg-green-100 text-green-800 border border-green-200'
-          : value === 'draft'
-            ? 'bg-gray-100 text-gray-800 border border-gray-200'
-            : 'bg-red-100 text-red-800 border border-red-200'
-          }`}>
-          {value === 'active' && <CheckCircleIcon className="h-3 w-3" />}
-          {value.charAt(0).toUpperCase() + value.slice(1)}
-        </span>
-      ),
-      sortable: true
-    },
-  ]
-
   const handleCreateDefaultGroups = async () => {
     if (!workspaceId) return
+    const templateNames = ['Raw Materials', 'Work In Progress', 'Finished Goods', 'Consumables', 'Tools & Equipment']
+
+    const existing = new Set(groups.map((g) => g.name.toLowerCase().trim()))
+    const toCreate = templateNames.filter((n) => !existing.has(n.toLowerCase().trim()))
+    if (toCreate.length === 0) {
+      alert('All recommended folders already exist.')
+      return
+    }
 
     try {
-      const templateNames = [
-        'Raw Materials',
-        'Work In Progress',
-        'Finished Goods',
-        'Consumables',
-        'Tools & Equipment'
-      ]
-
-      const existingNames = new Set(
-        (groups || []).map(g => g.name.toLowerCase().trim())
-      )
-
-      const toCreate = templateNames.filter(
-        name => !existingNames.has(name.toLowerCase().trim())
-      )
-
-      if (toCreate.length === 0) {
-        alert('All recommended folders already exist.')
-        return
-      }
-
-      await Promise.all(
-        toCreate.map(name => createGroup(workspaceId!, name))
-      )
-
+      await Promise.all(toCreate.map((name) => createGroup(workspaceId, name)))
       qc.invalidateQueries({ queryKey: ['groups', workspaceId] })
     } catch (err) {
-      console.error('Failed to create default folders', err)
-      alert('Failed to create default folders')
+      console.error(err)
+      alert('Failed to create folders')
     }
   }
 
-  // Folder tree component
-  const FolderTree = ({ groups, parentId = null, depth = 0 }: { groups: Group[], parentId?: string | null, depth?: number }) => {
-    // Normalize null/undefined so root groups (parentId null) render correctly
+  // Folder tree (unchanged behavior, slightly simpler UI)
+  const FolderTree = ({
+    groups,
+    parentId = null,
+    depth = 0,
+  }: {
+    groups: Group[]
+    parentId?: string | null
+    depth?: number
+  }) => {
     const normalizedParent = parentId ?? null
-    const childGroups = groups.filter(g => (g.parentId ?? null) === normalizedParent)
+    const children = groups.filter((g) => (g.parentId ?? null) === normalizedParent)
 
     return (
       <div className="space-y-1">
-        {childGroups.sort((a, b) => a.name.localeCompare(b.name)).map(group => {
-          const hasChildren = groups.some(g => g.parentId === group.id)
-          const isExpanded = expandedGroups.has(group.id)
-          const isSelected = selectedGroup === group.id
+        {children
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map((group) => {
+            const hasChildren = groups.some((g) => g.parentId === group.id)
+            const isExpanded = expandedGroups.has(group.id)
+            const isSelected = selectedGroup === group.id
 
-          return (
-            <div key={group.id} className="select-none">
-              {/* Group Item */}
-              <div
-                className={`group flex items-start gap-1.5 px-2.5 py-2 rounded-lg transition-colors cursor-pointer ${isSelected
-                  ? 'bg-blue-50 border border-blue-200 text-blue-700'
-                  : 'hover:bg-gray-50 text-gray-700'
-                  }`}
-                style={{ paddingLeft: `${depth * 12 + 8}px` }}
-                draggable
-                onDragStart={(e) => {
-                  e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'group', id: group.id }))
-                  e.dataTransfer.effectAllowed = 'move'
-                }}
-                onDragOver={(e) => {
-                  e.preventDefault()
-                  e.dataTransfer.dropEffect = 'move'
-                }}
-                onDrop={async (e) => {
-                  e.preventDefault()
-                  const data = e.dataTransfer.getData('text/plain')
-                  try {
-                    const parsed = JSON.parse(data)
-                    if (parsed?.type === 'group' && parsed?.id && parsed.id !== group.id) {
-                      await moveGroupParent(workspaceId!, parsed.id, group.id)
-                      qc.invalidateQueries({ queryKey: ['groups', workspaceId] })
-                    }
-                  } catch { }
-                }}
-              >
-                {/* Expand/Collapse Button */}
-                {hasChildren && (
-                  <button
-                    onClick={() => toggleGroupExpansion(group.id)}
-                    className="p-0.5 hover:bg-white rounded transition-colors flex-shrink-0"
-                  >
-                    {isExpanded ? (
-                      <ChevronDownIcon className="h-3 w-3 text-gray-500" />
-                    ) : (
-                      <ChevronRightIcon className="h-3 w-3 text-gray-500" />
-                    )}
-                  </button>
-                )}
-
-                {/* Placeholder for groups without children */}
-                {!hasChildren && <div className="w-4 flex-shrink-0" />}
-
-                {/* Folder Icon and Name */}
+            return (
+              <div key={group.id} className="select-none">
                 <div
-                  className="flex items-start gap-1.5 flex-1 min-w-0"
+                  className={`group flex items-center gap-2 px-2.5 py-2 rounded-lg cursor-pointer transition-colors ${
+                    isSelected ? 'bg-blue-50 border border-blue-200 text-blue-700' : 'hover:bg-gray-50 text-gray-700'
+                  }`}
+                  style={{ paddingLeft: `${depth * 12 + 8}px` }}
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'group', id: group.id }))
+                    e.dataTransfer.effectAllowed = 'move'
+                  }}
+                  onDragOver={(e) => {
+                    e.preventDefault()
+                    e.dataTransfer.dropEffect = 'move'
+                  }}
+                  onDrop={async (e) => {
+                    e.preventDefault()
+                    const data = e.dataTransfer.getData('text/plain')
+                    try {
+                      const parsed = JSON.parse(data)
+                      if (parsed?.type === 'group' && parsed?.id && parsed.id !== group.id) {
+                        await moveGroupParent(workspaceId!, parsed.id, group.id)
+                        qc.invalidateQueries({ queryKey: ['groups', workspaceId] })
+                      }
+                    } catch {}
+                  }}
                   onClick={() => {
                     setSelectedGroup(group.id)
                     setShowMobileSidebar(false)
                   }}
                 >
-                  <FolderIcon className={`h-3.5 w-3.5 flex-shrink-0 mt-0.5 ${isSelected ? 'text-blue-600' : 'text-gray-400'
-                    }`} />
-                  <span className="text-sm font-medium flex-1 min-w-0 line-clamp-2 break-words leading-snug">
-                    {group.name}
+                  {hasChildren ? (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        toggleGroupExpansion(group.id)
+                      }}
+                      className="p-1 rounded hover:bg-white"
+                      title={isExpanded ? 'Collapse' : 'Expand'}
+                    >
+                      {isExpanded ? (
+                        <ChevronDownIcon className="h-3.5 w-3.5 text-gray-500" />
+                      ) : (
+                        <ChevronRightIcon className="h-3.5 w-3.5 text-gray-500" />
+                      )}
+                    </button>
+                  ) : (
+                    <div className="w-7" />
+                  )}
+
+                  <FolderIcon className={`h-4 w-4 ${isSelected ? 'text-blue-600' : 'text-gray-400'}`} />
+                  <span className="text-sm font-medium flex-1 min-w-0 truncate">{group.name}</span>
+                  <span className="text-[10px] text-gray-600 bg-gray-100 px-1.5 py-0.5 rounded">
+                    {products.filter((p: any) => p.groupId === group.id).length}
                   </span>
-                  <span className="text-[10px] text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded flex-shrink-0 mt-0.5 font-medium">
-                    {products.filter(p => (p as any).groupId === group.id).length}
-                  </span>
+
+                  {canManageInventory && (
+                    <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
+                      <button
+                        onClick={async (e) => {
+                          e.stopPropagation()
+                          const name = prompt('New subfolder name?')
+                          if (!name) return
+                          await createGroup(workspaceId!, name, group.id)
+                          qc.invalidateQueries({ queryKey: ['groups', workspaceId] })
+                          setExpandedGroups((prev) => new Set(prev).add(group.id))
+                        }}
+                        className="p-1 text-gray-400 hover:text-blue-600"
+                        title="New subfolder"
+                      >
+                        <FolderPlusIcon className="h-4 w-4" />
+                      </button>
+                      <button
+                        onClick={async (e) => {
+                          e.stopPropagation()
+                          const name = prompt('Rename folder', group.name)
+                          if (!name) return
+                          await renameGroup(workspaceId!, group.id, name)
+                          qc.invalidateQueries({ queryKey: ['groups', workspaceId] })
+                        }}
+                        className="p-1 text-gray-400 hover:text-green-600"
+                        title="Rename"
+                      >
+                        <PencilIcon className="h-4 w-4" />
+                      </button>
+                      <button
+                        onClick={async (e) => {
+                          e.stopPropagation()
+                          if (!confirm('Delete this folder and all its contents?')) return
+                          await deleteGroup(workspaceId!, group.id)
+                          qc.invalidateQueries({ queryKey: ['groups', workspaceId] })
+                        }}
+                        className="p-1 text-gray-400 hover:text-red-600"
+                        title="Delete"
+                      >
+                        <TrashIcon className="h-4 w-4" />
+                      </button>
+                    </div>
+                  )}
                 </div>
 
-                {/* Group Actions */}
-                {canManageInventory && (
-                  <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5 flex-shrink-0">
-                    <button
-                      onClick={async (e) => {
-                        e.stopPropagation()
-                        const name = prompt('New subfolder name?')
-                        if (!name) return
-                        await createGroup(workspaceId!, name, group.id)
-                        qc.invalidateQueries({ queryKey: ['groups', workspaceId] })
-                        setExpandedGroups(prev => new Set(prev).add(group.id))
-                      }}
-                      className="p-1 text-gray-400 hover:text-blue-600 transition-colors"
-                      title="New subfolder"
-                    >
-                      <FolderPlusIcon className="h-3 w-3" />
-                    </button>
-                    <button
-                      onClick={async (e) => {
-                        e.stopPropagation()
-                        const name = prompt('Rename folder', group.name)
-                        if (!name) return
-                        await renameGroup(workspaceId!, group.id, name)
-                        qc.invalidateQueries({ queryKey: ['groups', workspaceId] })
-                      }}
-                      className="p-1 text-gray-400 hover:text-green-600 transition-colors"
-                      title="Rename folder"
-                    >
-                      <PencilIcon className="h-3 w-3" />
-                    </button>
-                    <button
-                      onClick={async (e) => {
-                        e.stopPropagation()
-                        if (!confirm('Delete this folder and all its contents?')) return
-                        await deleteGroup(workspaceId!, group.id)
-                        qc.invalidateQueries({ queryKey: ['groups', workspaceId] })
-                      }}
-                      className="p-1 text-gray-400 hover:text-red-600 transition-colors"
-                      title="Delete folder"
-                    >
-                      <TrashIcon className="h-3 w-3" />
-                    </button>
-                  </div>
-                )}
+                {hasChildren && isExpanded && <FolderTree groups={groups} parentId={group.id} depth={depth + 1} />}
               </div>
-
-              {/* Children */}
-              {hasChildren && isExpanded && (
-                <FolderTree groups={groups} parentId={group.id} depth={depth + 1} />
-              )}
-            </div>
-          )
-        })}
+            )
+          })}
       </div>
     )
   }
+
+  // Desktop table columns (kept clean)
+  const columns = [
+    {
+      key: 'name' as keyof Product,
+      label: 'Product',
+      sortable: true,
+      className: 'min-w-[260px]',
+      render: (value: string, item: Product) => {
+        const cleaned = (value || '')
+          .replace(/\uFFFD/g, '')
+          .replace(/\u0000/g, '')
+          .trim()
+
+        const sku = products.find((p) => p.id === item.id)?.sku || ''
+        return (
+          <div className="flex flex-col gap-1">
+            <span className="font-semibold text-gray-900 leading-tight">{cleaned || '—'}</span>
+            {sku ? <span className="text-xs text-gray-500 font-mono">{sku}</span> : null}
+          </div>
+        )
+      },
+    },
+    {
+      key: 'uom' as keyof Product,
+      label: 'Unit',
+      sortable: true,
+      className: 'w-24',
+      render: (value: string) => (
+        <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-gray-100 text-gray-700">
+          {value || '—'}
+        </span>
+      ),
+    },
+    {
+      key: 'qtyOnHand' as keyof Product,
+      label: 'On Hand',
+      sortable: true,
+      className: 'w-32',
+      render: (value: number, item: Product) => {
+        const p = products.find((x) => x.id === item.id)
+        const qty = value || 0
+        const min = p?.minStock || 0
+        const cls =
+          qty <= 0 ? 'text-red-600' : qty < min ? 'text-amber-600' : 'text-gray-900'
+        return <span className={`font-medium ${cls}`}>{qty.toLocaleString('en-GB', { maximumFractionDigits: 2 })}</span>
+      },
+    },
+    {
+      key: 'minStock' as keyof Product,
+      label: 'Min Stock',
+      sortable: true,
+      className: 'w-32',
+      render: (value: number) => (value || 0).toLocaleString('en-GB', { maximumFractionDigits: 2 }),
+    },
+    {
+      key: 'status' as keyof Product,
+      label: 'Status',
+      sortable: true,
+      className: 'w-28',
+      render: (value: string) => (
+        <span
+          className={`px-2.5 py-1 rounded-full text-xs font-medium inline-flex items-center gap-1 ${
+            value === 'active'
+              ? 'bg-green-100 text-green-800 border border-green-200'
+              : value === 'draft'
+              ? 'bg-gray-100 text-gray-800 border border-gray-200'
+              : 'bg-red-100 text-red-800 border border-red-200'
+          }`}
+        >
+          {value === 'active' ? <CheckCircleIcon className="h-3 w-3" /> : null}
+          {(value || '—').charAt(0).toUpperCase() + (value || '').slice(1)}
+        </span>
+      ),
+    },
+  ]
 
   if (!workspaceId) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto" />
           <p className="mt-4 text-gray-600">Loading workspace...</p>
         </div>
       </div>
@@ -604,366 +554,271 @@ export function Inventory() {
 
   if (isLoading) {
     return (
-      <div className="space-y-8">
-        {/* Header Skeleton */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <div className="h-8 bg-gray-200 rounded w-64 animate-pulse"></div>
-            <div className="h-4 bg-gray-200 rounded w-96 mt-2 animate-pulse"></div>
-          </div>
-          <div className="flex gap-3">
-            <div className="h-9 bg-gray-200 rounded w-24 animate-pulse"></div>
-            <div className="h-9 bg-gray-200 rounded w-28 animate-pulse"></div>
-          </div>
-        </div>
-
-        {/* Stats Skeleton */}
-        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
-          {[...Array(4)].map((_, i) => (
-            <Card key={i} className="relative overflow-hidden">
-              <div className="p-1">
-                <div className="flex items-center justify-between">
-                  <div className="h-4 bg-gray-200 rounded w-24 animate-pulse"></div>
-                  <div className="h-10 w-10 bg-gray-200 rounded-md animate-pulse"></div>
-                </div>
-                <div className="mt-4">
-                  <div className="h-8 bg-gray-200 rounded w-16 animate-pulse"></div>
-                </div>
-                <div className="mt-1">
-                  <div className="h-3 bg-gray-200 rounded w-32 animate-pulse"></div>
-                </div>
-              </div>
-            </Card>
-          ))}
-        </div>
-
-        {/* Content Skeleton */}
-        <div className="flex flex-col lg:flex-row gap-6">
-          <div className="hidden lg:block flex-shrink-0" style={{ minWidth: '300px', maxWidth: '320px', width: '300px' }}>
-            <Card>
-              <div className="h-96 bg-gray-100 rounded animate-pulse"></div>
-            </Card>
-          </div>
-          <div className="flex-1 min-w-0">
-            <Card>
-              <div className="h-96 bg-gray-100 rounded animate-pulse"></div>
-            </Card>
-          </div>
-        </div>
+      <div className="space-y-6">
+        <div className="h-8 bg-gray-200 rounded w-64 animate-pulse" />
+        <div className="h-4 bg-gray-200 rounded w-96 animate-pulse" />
+        <div className="h-96 bg-gray-100 rounded-xl animate-pulse" />
       </div>
     )
   }
 
+  const activeFilterCount = (statusFilter !== 'all' ? 1 : 0) + (lowStockFilter ? 1 : 0) + (selectedGroup ? 1 : 0)
+
   return (
     <PageShell
-      title="Inventory Management"
-      subtitle="Manage your product catalog, track stock levels, and monitor inventory performance."
+      title="Inventory"
+      subtitle="Search, filter, and update stock quickly."
+      headerClassName="mb-3 sm:mb-4"
       actions={
-        <div className="hidden md:flex items-center gap-3">
-          {canManageInventory && (
-            <Button
-              variant="primary"
-              size="md"
-              onClick={() => setShowCreate(true)}
+        <>
+          {/* Mobile actions */}
+          <div className="flex md:hidden items-center gap-2">
+            <button
+              onClick={() => setShowMobileSidebar(true)}
+              className="h-9 w-9 inline-flex items-center justify-center bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+              title="Folders"
             >
-              <PlusIcon className="h-4 w-4 mr-2" />
-              New Product
-            </Button>
-          )}
-          <div className="relative">
-            <Button
-              variant="secondary"
-              size="md"
-              onClick={() => setShowMoreMenu(!showMoreMenu)}
+              <FolderIcon className="h-4 w-4 text-gray-700" />
+            </button>
+            <button
+              onClick={() => setShowMoreMenu(true)}
+              className="h-9 w-9 inline-flex items-center justify-center bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+              title="More"
             >
-              <EllipsisHorizontalIcon className="h-5 w-5" />
-            </Button>
-            {showMoreMenu && (
-              <>
-                <div 
-                  className="fixed inset-0 z-40" 
-                  onClick={() => setShowMoreMenu(false)}
-                />
-                <div className="absolute right-0 mt-2 w-48 bg-white border border-gray-200 rounded-lg shadow-xl z-50">
-                  <button
-                    onClick={() => {
-                      setShowImport(true)
-                      setShowMoreMenu(false)
-                    }}
-                    className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-t-lg flex items-center gap-2 transition-colors"
-                  >
-                    <ArrowUpTrayIcon className="h-4 w-4" />
-                    Import
-                  </button>
-                  <button
-                    onClick={() => {
-                      downloadCSV('inventory.csv', toCSV(products))
-                      setShowMoreMenu(false)
-                    }}
-                    className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 transition-colors"
-                  >
-                    <ArrowDownTrayIcon className="h-4 w-4" />
-                    Export
-                  </button>
-                  <button
-                    onClick={() => {
-                      setShowScanner(true)
-                      setShowMoreMenu(false)
-                    }}
-                    className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 transition-colors"
-                  >
-                    <QrCodeIcon className="h-4 w-4" />
-                    Scan
-                  </button>
-                  {duplicateProducts.length > 0 && (
-                    <button
-                      onClick={() => {
-                        setShowDuplicates(true)
-                        setShowMoreMenu(false)
-                      }}
-                      className="w-full text-left px-4 py-2 text-sm text-amber-700 hover:bg-amber-50 flex items-center gap-2 transition-colors border-t border-gray-200"
-                    >
-                      <ExclamationCircleIcon className="h-4 w-4" />
-                      Duplicates
-                      <span className="ml-auto bg-amber-600 text-white text-xs px-2 py-0.5 rounded-full font-bold">
-                        {duplicateProducts.length}
-                      </span>
-                    </button>
-                  )}
-                </div>
-              </>
-            )}
+              <EllipsisVerticalIcon className="h-4 w-4 text-gray-700" />
+            </button>
           </div>
-        </div>
-      }
-    >
-      {/* Mobile Header */}
-      <div className="md:hidden mb-6">
-        <div className="flex items-center justify-end gap-2">
-          <button
-            onClick={() => setShowMobileSidebar(!showMobileSidebar)}
-            className="p-2.5 bg-white border border-gray-200 rounded-[14px] active:bg-gray-100 h-11 w-11 flex items-center justify-center"
-          >
-            <FolderIcon className="h-5 w-5 text-gray-600" />
-          </button>
-          <button
-            onClick={() => setShowMobileActions(!showMobileActions)}
-            className="p-2.5 bg-white border border-gray-200 rounded-[14px] active:bg-gray-100 h-11 w-11 flex items-center justify-center"
-          >
-            <EllipsisVerticalIcon className="h-5 w-5 text-gray-600" />
-          </button>
-        </div>
-        
-        {/* Mobile Actions Sheet */}
-          {showMobileActions && (
-            <>
-              <div className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm" onClick={() => setShowMobileActions(false)}></div>
-              <div className="fixed bottom-0 left-0 right-0 z-50 bg-white rounded-t-3xl shadow-2xl sm:hidden animate-slide-up"
-                   style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
-                {/* Handle bar */}
-                <div className="w-full flex justify-center pt-3 pb-2">
-                  <div className="w-12 h-1.5 bg-gray-300 rounded-full" />
-                </div>
-                
-                <div className="px-4 pb-6">
-                  <h3 className="text-lg font-bold text-gray-900 mb-4">Quick Actions</h3>
-                  
-                  {/* Primary Actions Grid */}
-                  <div className="grid grid-cols-2 gap-3 mb-4">
-                    <button
-                      onClick={() => {
-                        setShowScanner(true)
-                        setShowMobileActions(false)
-                      }}
-                      className="flex flex-col items-center justify-center gap-2 p-4 bg-blue-50 text-blue-700 rounded-2xl active:bg-blue-100"
-                    >
-                      <QrCodeIcon className="h-8 w-8" />
-                      <span className="font-semibold">Scan</span>
-                    </button>
-                    {canManageInventory && (
-                      <button
-                        onClick={() => {
-                          setShowCreate(true)
-                          setShowMobileActions(false)
-                        }}
-                        className="flex flex-col items-center justify-center gap-2 p-4 bg-green-50 text-green-700 rounded-2xl active:bg-green-100"
-                      >
-                        <PlusIcon className="h-8 w-8" />
-                        <span className="font-semibold">New Product</span>
-                      </button>
-                    )}
-                  </div>
-                  
-                  {/* Secondary Actions */}
-                  <div className="space-y-2">
-                    <button
-                      onClick={() => {
-                        setShowFilters(!showFilters)
-                        setShowMobileActions(false)
-                      }}
-                      className="w-full flex items-center gap-3 px-4 py-3.5 bg-gray-50 rounded-xl active:bg-gray-100"
-                    >
-                      <FunnelIcon className="h-5 w-5 text-gray-600" />
-                      <span className="font-medium text-gray-700">Filters</span>
-                      {(statusFilter !== 'all' || lowStockFilter) && (
-                        <span className="ml-auto bg-blue-600 text-white text-xs px-2 py-0.5 rounded-full font-bold">
-                          {(statusFilter !== 'all' ? 1 : 0) + (lowStockFilter ? 1 : 0)}
-                        </span>
-                      )}
-                    </button>
+
+          {/* Desktop actions */}
+          <div className="hidden md:flex items-center gap-2">
+            {canManageInventory && (
+              <Button variant="primary" size="sm" onClick={() => setShowCreate(true)}>
+                <PlusIcon className="h-4 w-4 mr-1.5" />
+                New Product
+              </Button>
+            )}
+
+            <div className="relative">
+              <Button variant="secondary" size="sm" onClick={() => setShowMoreMenu((s) => !s)}>
+                <EllipsisHorizontalIcon className="h-4 w-4" />
+              </Button>
+              {showMoreMenu && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowMoreMenu(false)} />
+                  <div className="absolute right-0 mt-2 w-52 bg-white border border-gray-200 rounded-lg shadow-xl z-50 overflow-hidden">
                     <button
                       onClick={() => {
                         setShowImport(true)
-                        setShowMobileActions(false)
+                        setShowMoreMenu(false)
                       }}
-                      className="w-full flex items-center gap-3 px-4 py-3.5 bg-gray-50 rounded-xl active:bg-gray-100"
+                      className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
                     >
-                      <ArrowUpTrayIcon className="h-5 w-5 text-gray-600" />
-                      <span className="font-medium text-gray-700">Import CSV</span>
+                      <ArrowUpTrayIcon className="h-4 w-4" />
+                      Import CSV
                     </button>
                     <button
                       onClick={() => {
                         downloadCSV('inventory.csv', toCSV(products))
-                        setShowMobileActions(false)
+                        setShowMoreMenu(false)
                       }}
-                      className="w-full flex items-center gap-3 px-4 py-3.5 bg-gray-50 rounded-xl active:bg-gray-100"
+                      className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
                     >
-                      <ArrowDownTrayIcon className="h-5 w-5 text-gray-600" />
-                      <span className="font-medium text-gray-700">Export CSV</span>
+                      <ArrowDownTrayIcon className="h-4 w-4" />
+                      Export CSV
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowScanner(true)
+                        setShowMoreMenu(false)
+                      }}
+                      className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                    >
+                      <QrCodeIcon className="h-4 w-4" />
+                      Scan
                     </button>
                     {duplicateProducts.length > 0 && (
                       <button
                         onClick={() => {
                           setShowDuplicates(true)
-                          setShowMobileActions(false)
+                          setShowMoreMenu(false)
                         }}
-                        className="w-full flex items-center gap-3 px-4 py-3.5 bg-amber-50 rounded-xl active:bg-amber-100"
+                        className="w-full text-left px-4 py-2.5 text-sm text-amber-700 hover:bg-amber-50 flex items-center gap-2 border-t border-gray-200"
                       >
-                        <ExclamationCircleIcon className="h-5 w-5 text-amber-600" />
-                        <span className="font-medium text-amber-700">Duplicates</span>
-                        <span className="ml-auto bg-amber-500 text-white text-xs px-2 py-0.5 rounded-full font-bold">
+                        <ExclamationCircleIcon className="h-4 w-4" />
+                        Duplicates
+                        <span className="ml-auto bg-amber-600 text-white text-xs px-2 py-0.5 rounded-full font-bold">
                           {duplicateProducts.length}
                         </span>
                       </button>
                     )}
                   </div>
-                </div>
-              </div>
-            </>
-          )}
-      </div>
-
-      {/* Controls Bar: Search + Filters */}
-      <div className="flex items-center gap-3">
-        <div className="flex-1 relative">
-          <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
-          <input
-            type="text"
-            placeholder="Search within products..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-10 py-3 border border-gray-300 rounded-[14px] focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors text-sm h-11"
-          />
-          {searchTerm && (
-            <button
-              onClick={() => setSearchTerm('')}
-              className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
-            >
-              <XMarkIcon className="h-5 w-5" />
-            </button>
-          )}
-        </div>
-        <Button
-          variant="secondary"
-          size="md"
-          onClick={() => setShowFilters(!showFilters)}
-          className="hidden md:flex"
-        >
-          <FunnelIcon className="h-4 w-4 mr-2" />
-          Filters
-          {(statusFilter !== 'all' || lowStockFilter) && (
-            <span className="ml-2 bg-blue-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
-              {(statusFilter !== 'all' ? 1 : 0) + (lowStockFilter ? 1 : 0)}
-            </span>
-          )}
-        </Button>
-      </div>
-
-      {/* Mobile quick filters shown just under search */}
-      <div className="sm:hidden flex flex-col gap-2">
-          {/* Folder selector */}
-          <div className="flex items-center gap-2">
-            <select
-              value={selectedGroup}
-              onChange={(e) => setSelectedGroup(e.target.value)}
-              className="flex-1 rounded-lg border-gray-300 focus:border-primary-500 focus:ring-primary-500 py-2 text-sm bg-white"
-            >
-              <option value="">
-                All folders
-              </option>
-              {groups.map((g) => (
-                <option key={g.id} value={g.id}>
-                  {g.name}
-                </option>
-              ))}
-            </select>
-
-            <button
-              type="button"
-              onClick={() => setShowFilters(true)}
-              className="inline-flex items-center gap-1 px-3 py-2 rounded-lg border border-gray-300 bg-white text-xs font-medium text-gray-700"
-            >
-              <FunnelIcon className="h-4 w-4" />
-              <span>Filters</span>
-              {(statusFilter !== 'all' || lowStockFilter) && (
-                <span className="ml-1 bg-blue-600 text-white text-[10px] rounded-full min-w-[18px] h-[18px] flex items-center justify-center">
-                  {(statusFilter !== 'all' ? 1 : 0) + (lowStockFilter ? 1 : 0)}
-                </span>
+                </>
               )}
-            </button>
+            </div>
           </div>
+        </>
+      }
+    >
 
-          {/* Quick toggles */}
-          <div className="flex flex-wrap gap-2">
+      {/* Mobile more menu (same content as desktop dropdown, but positioned fixed) */}
+      {showMoreMenu && (
+        <div className="md:hidden">
+          <div className="fixed inset-0 z-40 bg-black/30" onClick={() => setShowMoreMenu(false)} />
+          <div className="fixed z-50 right-3 top-20 w-60 bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden">
+            {canManageInventory && (
+              <button
+                onClick={() => {
+                  setShowCreate(true)
+                  setShowMoreMenu(false)
+                }}
+                className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+              >
+                <PlusIcon className="h-4 w-4" />
+                New Product
+              </button>
+            )}
             <button
-              type="button"
-              onClick={() => setStatusFilter(statusFilter === 'active' ? 'all' : 'active')}
-              className={`px-3 py-1.5 rounded-full text-xs font-medium border ${
-                statusFilter === 'active'
-                  ? 'bg-green-50 border-green-300 text-green-700'
-                  : 'bg-white border-gray-300 text-gray-700'
-              }`}
+              onClick={() => {
+                setShowScanner(true)
+                setShowMoreMenu(false)
+              }}
+              className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
             >
-              {statusFilter === 'active' ? 'Active only' : 'All status'}
+              <QrCodeIcon className="h-4 w-4" />
+              Scan
             </button>
-
             <button
-              type="button"
-              onClick={() => setLowStockFilter(!lowStockFilter)}
-              className={`px-3 py-1.5 rounded-full text-xs font-medium border flex items-center gap-1 ${
-                lowStockFilter
-                  ? 'bg-amber-50 border-amber-300 text-amber-700'
-                  : 'bg-white border-gray-300 text-gray-700'
-              }`}
+              onClick={() => {
+                setShowImport(true)
+                setShowMoreMenu(false)
+              }}
+              className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
             >
-              <ExclamationTriangleIcon className="h-3 w-3" />
-              <span>Low stock</span>
+              <ArrowUpTrayIcon className="h-4 w-4" />
+              Import CSV
             </button>
+            <button
+              onClick={() => {
+                downloadCSV('inventory.csv', toCSV(products))
+                setShowMoreMenu(false)
+              }}
+              className="w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+            >
+              <ArrowDownTrayIcon className="h-4 w-4" />
+              Export CSV
+            </button>
+            {duplicateProducts.length > 0 && (
+              <button
+                onClick={() => {
+                  setShowDuplicates(true)
+                  setShowMoreMenu(false)
+                }}
+                className="w-full text-left px-4 py-3 text-sm text-amber-700 hover:bg-amber-50 flex items-center gap-2 border-t border-gray-200"
+              >
+                <ExclamationCircleIcon className="h-4 w-4" />
+                Duplicates
+                <span className="ml-auto bg-amber-600 text-white text-xs px-2 py-0.5 rounded-full font-bold">
+                  {duplicateProducts.length}
+                </span>
+              </button>
+            )}
           </div>
         </div>
+      )}
 
-      {/* Filters Panel */}
+      {/* Search + filters row (focus on products) */}
+      <div className="sticky top-0 z-10 bg-white/95 backdrop-blur-md supports-[backdrop-filter]:bg-white/80 -mx-2 px-2 py-2.5 border-b border-gray-200/60 shadow-sm">
+        <div className="flex items-center gap-2">
+          <div className="flex-1 relative">
+            <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
+            <input
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Search products…"
+              className="w-full h-9 rounded-lg border border-gray-300 bg-white pl-10 pr-8 text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-all shadow-sm"
+            />
+            {searchTerm && (
+              <button
+                onClick={() => setSearchTerm('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors p-0.5 rounded"
+                title="Clear"
+              >
+                <XMarkIcon className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setShowFilters((s) => !s)}
+            className="shrink-0 h-9 px-3"
+          >
+            <FunnelIcon className="h-4 w-4 mr-1.5" />
+            Filters
+            {activeFilterCount > 0 && (
+              <span className="ml-1.5 bg-primary-600 text-white text-[10px] font-semibold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1.5">
+                {activeFilterCount}
+              </span>
+            )}
+          </Button>
+        </div>
+
+        {/* Professional summary line with badges */}
+        <div className="mt-2.5 flex items-center justify-between">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="inline-flex items-center gap-1.5 px-2 py-1 bg-gray-50 rounded-md border border-gray-200">
+              <span className="text-xs font-semibold text-gray-900">{filteredProducts.length}</span>
+              <span className="text-xs text-gray-600">products</span>
+            </div>
+            {stats.low > 0 && (
+              <div className="inline-flex items-center gap-1 px-2 py-1 bg-amber-50 rounded-md border border-amber-200">
+                <ExclamationTriangleIcon className="h-3 w-3 text-amber-600" />
+                <span className="text-xs font-medium text-amber-700">{stats.low}</span>
+                <span className="text-xs text-amber-600">low</span>
+              </div>
+            )}
+            {stats.out > 0 && (
+              <div className="inline-flex items-center gap-1 px-2 py-1 bg-red-50 rounded-md border border-red-200">
+                <span className="text-xs font-medium text-red-700">{stats.out}</span>
+                <span className="text-xs text-red-600">out</span>
+              </div>
+            )}
+          </div>
+          <div className="hidden sm:flex items-center text-xs text-gray-500 font-medium">
+            Page {currentPage}/{totalPages}
+          </div>
+        </div>
+      </div>
+
+      {/* Filters panel (simple) */}
       {showFilters && (
         <Card className="bg-gray-50">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Status</label>
+              <label className="block text-xs font-medium text-gray-700 mb-1.5">Folder</label>
+              <select
+                value={selectedGroup}
+                onChange={(e) => setSelectedGroup(e.target.value)}
+                className="w-full rounded-lg border-gray-300 focus:border-primary-500 focus:ring-primary-500 py-1.5 px-2 text-sm h-9"
+              >
+                <option value="">All folders</option>
+                {groups.map((g) => (
+                  <option key={g.id} value={g.id}>
+                    {g.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1.5">Status</label>
               <select
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
-                className="w-full rounded-lg border-gray-300 focus:border-primary-500 focus:ring-primary-500 py-2 text-sm"
+                className="w-full rounded-lg border-gray-300 focus:border-primary-500 focus:ring-primary-500 py-1.5 px-2 text-sm h-9"
               >
-                <option value="all">All Status</option>
+                <option value="all">All</option>
                 <option value="active">Active</option>
                 <option value="draft">Draft</option>
                 <option value="inactive">Inactive</option>
@@ -978,153 +833,35 @@ export function Inventory() {
                   onChange={(e) => setLowStockFilter(e.target.checked)}
                   className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
                 />
-                <span className="text-sm font-medium text-gray-700">Show Low Stock Only</span>
+                <span className="text-sm font-medium text-gray-700">Low stock only</span>
               </label>
             </div>
           </div>
 
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mt-4 pt-4 border-t border-gray-200">
+          <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-200">
             <button
               onClick={() => {
+                setSelectedGroup('')
                 setStatusFilter('all')
                 setLowStockFilter(false)
               }}
-              className="text-sm text-gray-600 hover:text-gray-800 transition-colors"
+              className="text-xs text-gray-600 hover:text-gray-800"
             >
-              Clear all filters
+              Clear filters
             </button>
-            <span className="text-sm text-gray-500">
-              Showing {filteredProducts.length} of {products.length} products
-            </span>
+            <button onClick={() => setShowFilters(false)} className="text-xs text-blue-700 hover:text-blue-900">
+              Close
+            </button>
           </div>
         </Card>
       )}
 
-      {/* Primary Stats Grid - Matching Dashboard Style */}
-      <div className="space-y-4">
-        {/* Mobile KPI Toggle Button */}
-        <div className="sm:hidden">
-          <button
-            onClick={() => setShowKPIs(!showKPIs)}
-            className="w-full flex items-center justify-between p-4 bg-white rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors"
-          >
-            <span className="text-sm font-medium text-gray-700">View KPIs</span>
-            <ChevronDownIcon className={`h-5 w-5 text-gray-500 transition-transform ${showKPIs ? 'rotate-180' : ''}`} />
-          </button>
-        </div>
-        
-        {/* KPI Cards - Hidden on mobile by default */}
-        <div className={`grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4 ${showKPIs ? 'block' : 'hidden sm:grid'}`}>
-        {/* Total Products */}
-        <Card className="relative overflow-hidden border-l-4 border-l-primary-500">
-          <div className="p-1">
-            <div className="flex items-center justify-between">
-              <p className="truncate text-sm font-medium text-gray-500">Total Products</p>
-              <div className="rounded-md bg-primary-50 p-2">
-                <CubeIcon className="h-5 w-5 text-primary-600" aria-hidden="true" />
-              </div>
-            </div>
-            <div className="mt-4 flex items-baseline">
-              {isLoading ? (
-                <div className="h-8 w-16 animate-pulse bg-gray-200 rounded" />
-              ) : (
-                <p className="text-3xl font-semibold text-gray-900">{stats.totalProducts}</p>
-              )}
-            </div>
-            <div className="mt-1">
-              <p className="text-xs text-gray-500">{stats.activeCount} active products</p>
-            </div>
-          </div>
-        </Card>
-
-        {/* Low Stock */}
-        <Card className={`relative overflow-hidden border-l-4 ${stats.lowStockCount > 0 ? 'border-l-amber-500' : 'border-l-green-500'}`}>
-          <div className="p-1">
-            <div className="flex items-center justify-between">
-              <p className="truncate text-sm font-medium text-gray-500">Low Stock Items</p>
-              <div className={`rounded-md p-2 ${stats.lowStockCount > 0 ? 'bg-amber-50' : 'bg-green-50'}`}>
-                <ExclamationTriangleIcon className={`h-5 w-5 ${stats.lowStockCount > 0 ? 'text-amber-600' : 'text-green-600'}`} aria-hidden="true" />
-              </div>
-            </div>
-            <div className="mt-4 flex items-baseline">
-              {isLoading ? (
-                <div className="h-8 w-16 animate-pulse bg-gray-200 rounded" />
-              ) : (
-                <>
-                  <p className="text-3xl font-semibold text-gray-900">{stats.lowStockCount}</p>
-                  {stats.outOfStockCount > 0 && (
-                    <span className="ml-2 text-sm font-medium text-red-600">
-                      ({stats.outOfStockCount} out)
-                    </span>
-                  )}
-                </>
-              )}
-            </div>
-            <div className="mt-1">
-              <p className="text-xs text-gray-500">Items below reorder point</p>
-            </div>
-          </div>
-        </Card>
-
-        {/* Inventory Value */}
-        <Card className="relative overflow-hidden border-l-4 border-l-emerald-500">
-          <div className="p-1">
-            <div className="flex items-center justify-between">
-              <p className="truncate text-sm font-medium text-gray-500">Inventory Value</p>
-              <div className="rounded-md bg-emerald-50 p-2">
-                <CurrencyDollarIcon className="h-5 w-5 text-emerald-600" aria-hidden="true" />
-              </div>
-            </div>
-            <div className="mt-4 flex items-baseline">
-              {isLoading ? (
-                <div className="h-8 w-24 animate-pulse bg-gray-200 rounded" />
-              ) : (
-                <p className="text-3xl font-semibold text-gray-900">
-                  £{stats.inventoryValue.toLocaleString('en-GB', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
-                </p>
-              )}
-            </div>
-            <div className="mt-1">
-              <p className="text-xs text-gray-500">Total asset value</p>
-            </div>
-          </div>
-        </Card>
-
-        {/* Active Products */}
-        <Card className="relative overflow-hidden border-l-4 border-l-blue-500">
-          <div className="p-1">
-            <div className="flex items-center justify-between">
-              <p className="truncate text-sm font-medium text-gray-500">Active Products</p>
-              <div className="rounded-md bg-blue-50 p-2">
-                <CheckCircleIcon className="h-5 w-5 text-blue-600" aria-hidden="true" />
-              </div>
-            </div>
-            <div className="mt-4 flex items-baseline">
-              {isLoading ? (
-                <div className="h-8 w-16 animate-pulse bg-gray-200 rounded" />
-              ) : (
-                <p className="text-3xl font-semibold text-gray-900">{stats.activeCount}</p>
-              )}
-            </div>
-            <div className="mt-1">
-              <p className="text-xs text-gray-500">
-                {stats.totalProducts > 0 ? Math.round((stats.activeCount / stats.totalProducts) * 100) : 0}% of total
-              </p>
-            </div>
-          </div>
-        </Card>
-        </div>
-      </div>
-
-      {/* Main Content: Split Layout */}
+      {/* Main content split */}
       <div className="flex flex-col lg:flex-row gap-6">
-        {/* Mobile Sidebar Overlay */}
+        {/* Mobile sidebar */}
         {showMobileSidebar && (
           <>
-            <div
-              className="fixed inset-0 bg-black/50 z-40 lg:hidden"
-              onClick={() => setShowMobileSidebar(false)}
-            ></div>
+            <div className="fixed inset-0 z-40 bg-black/40 lg:hidden" onClick={() => setShowMobileSidebar(false)} />
             <aside className="fixed inset-y-0 left-0 w-72 bg-white shadow-xl z-50 lg:hidden overflow-y-auto">
               <div className="p-4 border-b border-gray-200 flex items-center justify-between">
                 <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
@@ -1133,32 +870,38 @@ export function Inventory() {
                 </h3>
                 <button
                   onClick={() => setShowMobileSidebar(false)}
-                  className="p-2 text-gray-400 hover:text-gray-600 rounded-lg transition-colors"
+                  className="p-2 text-gray-400 hover:text-gray-600 rounded-lg"
+                  title="Close"
                 >
                   <XMarkIcon className="h-5 w-5" />
                 </button>
               </div>
+
               <div className="p-4">
-                <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center justify-between mb-3">
                   <span className="text-sm font-medium text-gray-700">Product Folders</span>
-                  <button
-                    onClick={async () => {
-                      const name = prompt('New folder name?')
-                      if (!name) return
-                      await createGroup(workspaceId!, name)
-                      qc.invalidateQueries({ queryKey: ['groups', workspaceId] })
-                      setShowMobileSidebar(false)
-                    }}
-                    className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                    title="New folder"
-                  >
-                    <FolderPlusIcon className="h-4 w-4" />
-                  </button>
+                  {canManageInventory && (
+                    <button
+                      onClick={async () => {
+                        const name = prompt('New folder name?')
+                        if (!name) return
+                        await createGroup(workspaceId!, name)
+                        qc.invalidateQueries({ queryKey: ['groups', workspaceId] })
+                      }}
+                      className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg"
+                      title="New folder"
+                    >
+                      <FolderPlusIcon className="h-4 w-4" />
+                    </button>
+                  )}
                 </div>
 
                 <div
-                  className="space-y-0.5 max-h-[calc(100vh-200px)] overflow-y-auto"
-                  onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }}
+                  className="space-y-0.5"
+                  onDragOver={(e) => {
+                    e.preventDefault()
+                    e.dataTransfer.dropEffect = 'move'
+                  }}
                   onDrop={async (e) => {
                     const data = e.dataTransfer.getData('text/plain')
                     try {
@@ -1167,49 +910,34 @@ export function Inventory() {
                         await moveGroupParent(workspaceId!, parsed.id, null)
                         qc.invalidateQueries({ queryKey: ['groups', workspaceId] })
                       }
-                    } catch { }
+                    } catch {}
                   }}
                 >
-                  {/* All Products */}
                   <div
-                    className={`flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition-colors ${selectedGroup === ''
-                      ? 'bg-blue-50 border border-blue-200 text-blue-700'
-                      : 'hover:bg-gray-50 text-gray-700'
-                      }`}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition-colors ${
+                      selectedGroup === '' ? 'bg-blue-50 border border-blue-200 text-blue-700' : 'hover:bg-gray-50 text-gray-700'
+                    }`}
                     onClick={() => {
                       setSelectedGroup('')
                       setShowMobileSidebar(false)
                     }}
                   >
-                    <ArchiveBoxIcon className="h-3.5 w-3.5 text-gray-500 flex-shrink-0 mt-0.5" />
-                    <span className="text-sm font-medium flex-1 min-w-0 break-words leading-snug">
-                      All Products
-                    </span>
-                    <span className="text-[10px] text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded flex-shrink-0 mt-0.5 font-medium">
-                      {products.length}
-                    </span>
+                    <ArchiveBoxIcon className="h-4 w-4 text-gray-500" />
+                    <span className="text-sm font-medium flex-1">All Products</span>
+                    <span className="text-[10px] text-gray-600 bg-gray-100 px-1.5 py-0.5 rounded">{products.length}</span>
                   </div>
 
-                  {/* Folder Onboarding - Mobile */}
                   {canManageInventory && groups.length === 0 && (
                     <div className="mt-3 rounded-xl border border-dashed border-blue-200 bg-blue-50/60 px-3 py-3 space-y-2">
-                      <div className="text-xs font-semibold text-blue-900">
-                        Set up your first folders
-                      </div>
+                      <div className="text-xs font-semibold text-blue-900">Set up folders</div>
                       <p className="text-[11px] text-blue-900/80 leading-snug">
-                        Create folders to group products by type, stage, or location. This makes filtering and reporting much easier later.
+                        Use folders to organise inventory (raw materials, finished goods, etc.).
                       </p>
-                      <div className="flex flex-wrap gap-2">
-                        <Button
-                          size="sm"
-                          variant="primary"
-                          className="text-xs"
-                          onClick={handleCreateDefaultGroups}
-                        >
-                          Use recommended folders
+                      <div className="flex gap-2">
+                        <Button size="sm" variant="primary" onClick={handleCreateDefaultGroups}>
+                          Use recommended
                         </Button>
                         <button
-                          type="button"
                           className="text-xs font-medium text-blue-700 hover:text-blue-900 underline underline-offset-2"
                           onClick={async () => {
                             const name = prompt('Folder name?')
@@ -1218,17 +946,12 @@ export function Inventory() {
                             qc.invalidateQueries({ queryKey: ['groups', workspaceId] })
                           }}
                         >
-                          Create custom folder
+                          Create custom
                         </button>
-                      </div>
-                      <div className="text-[11px] text-blue-900/80">
-                        <span className="font-semibold">Suggested structure: </span>
-                        <span>Raw Materials · Work In Progress · Finished Goods · Consumables · Tools &amp; Equipment</span>
                       </div>
                     </div>
                   )}
 
-                  {/* Folder Tree */}
                   <FolderTree groups={groups} />
                 </div>
               </div>
@@ -1236,31 +959,36 @@ export function Inventory() {
           </>
         )}
 
-        {/* Enhanced Sidebar - Desktop */}
+        {/* Desktop sidebar */}
         <aside className="hidden lg:block flex-shrink-0" style={{ minWidth: '300px', maxWidth: '320px', width: '300px' }}>
           <Card className="h-full">
             <div className="flex items-center justify-between mb-3 px-1">
-              <h3 className="text-base font-semibold text-gray-900 flex items-center gap-1.5">
+              <h3 className="text-base font-semibold text-gray-900 flex items-center gap-2">
                 <FolderIcon className="h-4 w-4 text-blue-600" />
-                Product Folders
+                Folders
               </h3>
-              <button
-                onClick={async () => {
-                  const name = prompt('New folder name?')
-                  if (!name) return
-                  await createGroup(workspaceId!, name)
-                  qc.invalidateQueries({ queryKey: ['groups', workspaceId] })
-                }}
-                className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                title="New folder"
-              >
-                <FolderPlusIcon className="h-3.5 w-3.5" />
-              </button>
+              {canManageInventory && (
+                <button
+                  onClick={async () => {
+                    const name = prompt('New folder name?')
+                    if (!name) return
+                    await createGroup(workspaceId!, name)
+                    qc.invalidateQueries({ queryKey: ['groups', workspaceId] })
+                  }}
+                  className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg"
+                  title="New folder"
+                >
+                  <FolderPlusIcon className="h-4 w-4" />
+                </button>
+              )}
             </div>
 
             <div
-              className="space-y-0.5 max-h-[calc(100vh-400px)] overflow-y-auto"
-              onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }}
+              className="space-y-0.5 max-h-[calc(100vh-240px)] overflow-y-auto"
+              onDragOver={(e) => {
+                e.preventDefault()
+                e.dataTransfer.dropEffect = 'move'
+              }}
               onDrop={async (e) => {
                 const data = e.dataTransfer.getData('text/plain')
                 try {
@@ -1269,45 +997,31 @@ export function Inventory() {
                     await moveGroupParent(workspaceId!, parsed.id, null)
                     qc.invalidateQueries({ queryKey: ['groups', workspaceId] })
                   }
-                } catch { }
+                } catch {}
               }}
             >
-              {/* All Products */}
               <div
-                className={`flex items-start gap-1.5 px-2.5 py-2 rounded-lg cursor-pointer transition-colors ${selectedGroup === ''
-                  ? 'bg-blue-50 border border-blue-200 text-blue-700'
-                  : 'hover:bg-gray-50 text-gray-700'
-                  }`}
+                className={`flex items-center gap-2 px-2.5 py-2 rounded-lg cursor-pointer transition-colors ${
+                  selectedGroup === '' ? 'bg-blue-50 border border-blue-200 text-blue-700' : 'hover:bg-gray-50 text-gray-700'
+                }`}
                 onClick={() => setSelectedGroup('')}
               >
-                <ArchiveBoxIcon className="h-3.5 w-3.5 text-gray-500 flex-shrink-0 mt-0.5" />
-                <span className="text-sm font-medium flex-1 min-w-0 break-words leading-snug">
-                  All Products
-                </span>
-                <span className="text-[10px] text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded flex-shrink-0 mt-0.5 font-medium">
-                  {products.length}
-                </span>
+                <ArchiveBoxIcon className="h-4 w-4 text-gray-500" />
+                <span className="text-sm font-medium flex-1">All Products</span>
+                <span className="text-[10px] text-gray-600 bg-gray-100 px-1.5 py-0.5 rounded">{products.length}</span>
               </div>
 
-              {/* Folder Onboarding - Desktop */}
               {canManageInventory && groups.length === 0 && (
                 <div className="mt-3 rounded-xl border border-dashed border-blue-200 bg-blue-50/60 px-3 py-3 space-y-2">
-                  <div className="text-sm font-semibold text-blue-900">
-                    Get started by creating folders
-                  </div>
+                  <div className="text-sm font-semibold text-blue-900">Get started</div>
                   <p className="text-xs text-blue-900/80 leading-snug">
-                    Folders help you segment products into logical groups like raw materials, finished goods, or tools.
+                    Create folders to segment products (raw materials, finished goods, tools).
                   </p>
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      size="sm"
-                      variant="primary"
-                      onClick={handleCreateDefaultGroups}
-                    >
-                      Create recommended folders
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="primary" onClick={handleCreateDefaultGroups}>
+                      Create recommended
                     </Button>
                     <button
-                      type="button"
                       className="text-xs font-medium text-blue-700 hover:text-blue-900 underline underline-offset-2"
                       onClick={async () => {
                         const name = prompt('Folder name?')
@@ -1316,55 +1030,55 @@ export function Inventory() {
                         qc.invalidateQueries({ queryKey: ['groups', workspaceId] })
                       }}
                     >
-                      Create a custom folder
+                      Create custom
                     </button>
-                  </div>
-                  <div className="text-[11px] text-blue-900/80">
-                    <span className="font-semibold">Recommended: </span>
-                    <span>Raw Materials · Work In Progress · Finished Goods · Consumables · Tools &amp; Equipment</span>
                   </div>
                 </div>
               )}
 
-              {/* Folder Tree */}
               <FolderTree groups={groups} />
             </div>
           </Card>
         </aside>
 
-        {/* Main Content */}
+        {/* Main list/table */}
         <section className="flex-1 min-w-0">
-          {/* Bulk Actions */}
+          {/* Bulk actions (desktop) */}
           {selectedIds.length > 0 && (
-            <Card className="bg-blue-50 border-blue-200 mb-6">
+            <Card className="bg-blue-50 border-blue-200 mb-4">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                 <div className="flex items-center gap-3">
-                  <div className="bg-blue-100 text-blue-800 px-2 sm:px-3 py-1 sm:py-1.5 rounded-full text-xs sm:text-sm font-medium">
-                    {selectedIds.length} product{selectedIds.length !== 1 ? 's' : ''} selected
+                  <div className="bg-blue-100 text-blue-800 px-3 py-1.5 rounded-full text-sm font-medium">
+                    {selectedIds.length} selected
                   </div>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                <div className="flex flex-wrap items-center gap-2">
                   <select
-                    className="text-xs sm:text-sm border border-gray-300 rounded-lg px-2 sm:px-3 py-1 sm:py-1.5 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 flex-1 sm:flex-none min-w-0"
+                    className="text-sm border border-gray-300 rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     onChange={async (e) => {
                       const target = e.target.value
-                      if (!target) return
-                      await Promise.all(selectedIds.map(id => moveProductToGroup(workspaceId!, id, target || null)))
+                      if (target === '__noop__') return
+                      await Promise.all(selectedIds.map((id) => moveProductToGroup(workspaceId!, id, target || null)))
                       setSelectedIds([])
                       qc.invalidateQueries({ queryKey: ['products', workspaceId] })
-                      e.currentTarget.selectedIndex = 0
+                      e.currentTarget.value = '__noop__'
                     }}
+                    defaultValue="__noop__"
                   >
-                    <option value="">Move to folder...</option>
+                    <option value="__noop__">Move to folder…</option>
                     <option value="">No Folder</option>
-                    {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                    {groups.map((g) => (
+                      <option key={g.id} value={g.id}>
+                        {g.name}
+                      </option>
+                    ))}
                   </select>
 
                   <button
-                    className="text-xs sm:text-sm px-2 sm:px-3 py-1 sm:py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                    className="text-sm px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700"
                     onClick={async () => {
-                      await Promise.all(selectedIds.map(id => setProductStatus(workspaceId!, id, 'active')))
+                      await Promise.all(selectedIds.map((id) => setProductStatus(workspaceId!, id, 'active' as any)))
                       setSelectedIds([])
                       qc.invalidateQueries({ queryKey: ['products', workspaceId] })
                     }}
@@ -1373,9 +1087,9 @@ export function Inventory() {
                   </button>
 
                   <button
-                    className="text-xs sm:text-sm px-2 sm:px-3 py-1 sm:py-1.5 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+                    className="text-sm px-3 py-1.5 bg-gray-700 text-white rounded-lg hover:bg-gray-800"
                     onClick={async () => {
-                      await Promise.all(selectedIds.map(id => setProductStatus(workspaceId!, id, 'draft')))
+                      await Promise.all(selectedIds.map((id) => setProductStatus(workspaceId!, id, 'draft' as any)))
                       setSelectedIds([])
                       qc.invalidateQueries({ queryKey: ['products', workspaceId] })
                     }}
@@ -1385,23 +1099,20 @@ export function Inventory() {
 
                   {canManageInventory && (
                     <button
-                      className="text-xs sm:text-sm px-2 sm:px-3 py-1 sm:py-1.5 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors flex items-center gap-1"
+                      className="text-sm px-3 py-1.5 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center gap-1"
                       onClick={async () => {
-                        if (!confirm(`Delete ${selectedIds.length} product(s)? This action cannot be undone.`)) return
-                        await Promise.all(selectedIds.map(id => deleteProduct(workspaceId!, id)))
+                        if (!confirm(`Delete ${selectedIds.length} product(s)? This cannot be undone.`)) return
+                        await Promise.all(selectedIds.map((id) => deleteProduct(workspaceId!, id)))
                         setSelectedIds([])
                         qc.invalidateQueries({ queryKey: ['products', workspaceId] })
                       }}
                     >
-                      <TrashIcon className="h-3 w-3" />
-                      <span className="hidden sm:inline">Delete</span>
+                      <TrashIcon className="h-4 w-4" />
+                      Delete
                     </button>
                   )}
 
-                  <button
-                    onClick={() => setSelectedIds([])}
-                    className="text-xs sm:text-sm px-2 sm:px-3 py-1 sm:py-1.5 text-gray-600 hover:text-gray-800"
-                  >
+                  <button className="text-sm px-3 py-1.5 text-gray-700 hover:text-gray-900" onClick={() => setSelectedIds([])}>
                     Clear
                   </button>
                 </div>
@@ -1409,8 +1120,8 @@ export function Inventory() {
             </Card>
           )}
 
-          {/* Products Table - Desktop */}
-          <Card noPadding className="hidden md:block overflow-hidden shadow-lg border border-gray-200">
+          {/* Desktop table */}
+          <Card noPadding className="hidden md:block overflow-hidden border border-gray-200">
             <DataTable
               data={paginatedProducts}
               columns={columns}
@@ -1419,7 +1130,7 @@ export function Inventory() {
               getId={(p) => (p as any).id}
               selectedIds={selectedIds}
               onToggleSelect={(id, _item, checked) => {
-                setSelectedIds(prev => checked ? Array.from(new Set([...prev, id])) : prev.filter(x => x !== id))
+                setSelectedIds((prev) => (checked ? Array.from(new Set([...prev, id])) : prev.filter((x) => x !== id)))
               }}
               onToggleSelectAll={(checked) => {
                 setSelectedIds(checked ? paginatedProducts.map((p: any) => p.id) : [])
@@ -1435,29 +1146,41 @@ export function Inventory() {
                           e.stopPropagation()
                           setRowActionMenuOpen(isOpen ? null : itemId)
                         }}
-                        className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                        className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg"
                         title="Actions"
                       >
                         <EllipsisHorizontalIcon className="h-5 w-5" />
                       </button>
+
                       {isOpen && (
                         <>
-                          <div 
-                            className="fixed inset-0 z-40" 
-                            onClick={() => setRowActionMenuOpen(null)}
-                          />
-                          <div className="absolute right-0 mt-1 w-48 bg-white border border-gray-200 rounded-lg shadow-xl z-50">
+                          <div className="fixed inset-0 z-40" onClick={() => setRowActionMenuOpen(null)} />
+                          <div className="absolute right-0 mt-1 w-48 bg-white border border-gray-200 rounded-lg shadow-xl z-50 overflow-hidden">
                             <button
                               onClick={(e) => {
                                 e.stopPropagation()
                                 setSelectedProduct(item)
                                 setRowActionMenuOpen(null)
                               }}
-                              className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 rounded-t-lg flex items-center gap-2 transition-colors"
+                              className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
                             >
                               <EyeIcon className="h-4 w-4" />
                               View
                             </button>
+
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setQuickAdjustProduct(itemId)
+                                setAdjustQty(1)
+                                setRowActionMenuOpen(null)
+                              }}
+                              className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                            >
+                              <ArrowPathIcon className="h-4 w-4" />
+                              Quick adjust
+                            </button>
+
                             {canManageInventory && (
                               <>
                                 <button
@@ -1468,19 +1191,20 @@ export function Inventory() {
                                     qc.invalidateQueries({ queryKey: ['products', workspaceId] })
                                     setRowActionMenuOpen(null)
                                   }}
-                                  className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 transition-colors"
+                                  className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
                                 >
-                                  {(item as any).status === 'active' ? 'Draft' : 'Activate'}
+                                  {(item as any).status === 'active' ? 'Set Draft' : 'Activate'}
                                 </button>
+
                                 <button
                                   onClick={async (e) => {
                                     e.stopPropagation()
-                                    if (!confirm('Are you sure you want to delete this product?')) return
+                                    if (!confirm('Delete this product?')) return
                                     await deleteProduct(workspaceId!, itemId)
                                     qc.invalidateQueries({ queryKey: ['products', workspaceId] })
                                     setRowActionMenuOpen(null)
                                   }}
-                                  className="w-full text-left px-4 py-2 text-sm text-red-700 hover:bg-red-50 flex items-center gap-2 transition-colors rounded-b-lg border-t border-gray-200"
+                                  className="w-full text-left px-4 py-2.5 text-sm text-red-700 hover:bg-red-50 border-t border-gray-200 flex items-center gap-2"
                                 >
                                   <TrashIcon className="h-4 w-4" />
                                   Delete
@@ -1497,590 +1221,301 @@ export function Inventory() {
             />
           </Card>
 
-          {/* Products Cards - Mobile (Field Worker Optimized) */}
-          <div className="md:hidden space-y-4 pb-24">
-            {paginatedProducts.length === 0 ? (
-              <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
-                <div className="text-center">
-                  <div className="mx-auto h-16 w-16 bg-gray-100 rounded-full flex items-center justify-center mb-4">
-                    <CubeIcon className="h-8 w-8 text-gray-400" />
+          {/* Mobile list (world-standard: compact rows, product-first) */}
+          <div className="md:hidden">
+            <Card noPadding className="overflow-hidden border border-gray-200">
+              {paginatedProducts.length === 0 ? (
+                <div className="p-8 text-center">
+                  <div className="mx-auto h-12 w-12 bg-gray-100 rounded-full flex items-center justify-center">
+                    <ArchiveBoxIcon className="h-6 w-6 text-gray-400" />
                   </div>
-                  <h3 className="text-lg font-semibold text-gray-900">No products found</h3>
-                  <p className="mt-2 text-sm text-gray-500">Scan a barcode or add a new product to get started.</p>
-                  <div className="mt-6 flex flex-col gap-3">
-                    <button
-                      onClick={() => setShowScanner(true)}
-                      className="w-full flex items-center justify-center gap-2 px-6 py-4 bg-blue-600 text-white rounded-xl font-semibold text-base active:scale-98 transition-transform"
-                    >
-                      <QrCodeIcon className="h-6 w-6" />
-                      Scan Product
-                    </button>
+                  <div className="mt-3 text-sm font-semibold text-gray-900">No products found</div>
+                  <div className="mt-1 text-xs text-gray-500">Try a different search or clear filters.</div>
+                  <div className="mt-4 flex flex-col gap-2">
+                    <Button variant="secondary" size="sm" onClick={() => setShowScanner(true)}>
+                      <QrCodeIcon className="h-4 w-4 mr-1.5" />
+                      Scan
+                    </Button>
                     {canManageInventory && (
-                      <button
-                        onClick={() => setShowCreate(true)}
-                        className="w-full flex items-center justify-center gap-2 px-6 py-4 bg-gray-100 text-gray-700 rounded-xl font-semibold text-base active:scale-98 transition-transform"
-                      >
-                        <PlusIcon className="h-6 w-6" />
-                        Add Product
-                      </button>
+                      <Button variant="primary" size="sm" onClick={() => setShowCreate(true)}>
+                        <PlusIcon className="h-4 w-4 mr-1.5" />
+                        New Product
+                      </Button>
                     )}
                   </div>
                 </div>
-              </div>
-            ) : (
-              <>
-                {/* Quick Stats Bar - Mobile */}
-                <div className="bg-gradient-to-r from-blue-600 to-blue-700 rounded-2xl p-4 text-white shadow-lg">
-                  <div className="grid grid-cols-3 gap-4 text-center">
-                    <div>
-                      <div className="text-2xl font-bold">{stats.totalProducts}</div>
-                      <div className="text-xs text-blue-100 font-medium">Products</div>
-                    </div>
-                    <div className={stats.lowStockCount > 0 ? 'animate-pulse' : ''}>
-                      <div className="text-2xl font-bold">{stats.lowStockCount}</div>
-                      <div className="text-xs text-blue-100 font-medium">Low Stock</div>
-                    </div>
-                    <div>
-                      <div className="text-2xl font-bold">{stats.outOfStockCount}</div>
-                      <div className="text-xs text-blue-100 font-medium">Out of Stock</div>
-                    </div>
-                  </div>
-                </div>
+              ) : (
+                <div className="divide-y divide-gray-100">
+                  {paginatedProducts.map((item: any) => {
+                    const qty = item.qtyOnHand || 0
+                    const min = item.minStock || 0
+                    const isOut = qty <= 0
+                    const isLow = qty > 0 && qty < min
+                    const isSelected = selectedIds.includes(item.id)
+                    const groupName = groups.find((g) => g.id === item.groupId)?.name || ''
+                    const status = item.status || 'draft'
+                    const isQuick = quickAdjustProduct === item.id
 
-                {/* Low Stock Alert - If any */}
-                {stats.lowStockCount > 0 && (
-                  <button
-                    onClick={() => setLowStockFilter(!lowStockFilter)}
-                    className={`w-full flex items-center justify-between p-4 rounded-2xl transition-all ${
-                      lowStockFilter 
-                        ? 'bg-orange-500 text-white' 
-                        : 'bg-orange-50 text-orange-800 border-2 border-orange-200'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className={`p-2 rounded-xl ${lowStockFilter ? 'bg-orange-400' : 'bg-orange-100'}`}>
-                        <ExclamationTriangleIcon className="h-6 w-6" />
-                      </div>
-                      <div className="text-left">
-                        <div className="font-bold">{stats.lowStockCount} items need attention</div>
-                        <div className={`text-sm ${lowStockFilter ? 'text-orange-100' : 'text-orange-600'}`}>
-                          {lowStockFilter ? 'Tap to show all' : 'Tap to filter low stock'}
-                        </div>
-                      </div>
-                    </div>
-                    <ChevronRightIcon className="h-5 w-5" />
-                  </button>
-                )}
+                    const qtyCls = isOut ? 'text-red-600' : isLow ? 'text-amber-600' : 'text-gray-900'
 
-                {/* Select All Bar */}
-                <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
-                  <div className="flex items-center justify-between">
-                    <label className="flex items-center gap-3 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={paginatedProducts.length > 0 && selectedIds.length === paginatedProducts.length}
-                        onChange={(e) => {
-                          setSelectedIds(e.target.checked ? paginatedProducts.map((p: any) => p.id) : [])
-                        }}
-                        className="w-6 h-6 rounded-lg border-2 border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500 focus:ring-offset-0"
-                      />
-                      <span className="text-base font-bold text-gray-900">
-                        {selectedIds.length > 0 ? `${selectedIds.length} Selected` : `All (${paginatedProducts.length})`}
-                      </span>
-                    </label>
-                    <span className="text-sm text-gray-500">
-                      Page {currentPage}/{totalPages}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Product Cards - Premium Mobile View */}
-                {paginatedProducts.map((item: any) => {
-                  const isSelected = selectedIds.includes(item.id)
-                  const qtyOnHand = item.qtyOnHand || 0
-                  const minStock = item.minStock || 0
-                  const isLowStock = qtyOnHand < minStock && qtyOnHand > 0
-                  const isOutOfStock = qtyOnHand <= 0
-                  const isHealthy = qtyOnHand >= minStock
-                  const isOverstock = qtyOnHand > minStock * 2
-                  const showQuickAdjust = quickAdjustProduct === item.id
-                  const productGroup = groups.find((g) => (item as any).groupId === g.id)
-                  const stockPercent = minStock > 0 ? Math.min((qtyOnHand / (minStock * 2)) * 100, 100) : (qtyOnHand > 0 ? 100 : 0)
-                  const totalValue = (item.totalValue || 0)
-                  const unitPrice = item.pricePerBox || item.unitCost || 0
-                  const category = item.category || ''
-                  const lastUpdated = item.lastUpdated ? new Date(item.lastUpdated) : null
-                  const hasQR = !!item.qrUrl
-                  const hasBarcode = !!item.barcodeUrl
-
-                  // Category color mapping
-                  const getCategoryColor = (cat: string) => {
-                    const colors: Record<string, string> = {
-                      'Raw Materials': 'bg-amber-100 text-amber-700 border-amber-200',
-                      'Finished Goods': 'bg-blue-100 text-blue-700 border-blue-200',
-                      'Packaging': 'bg-purple-100 text-purple-700 border-purple-200',
-                      'Components': 'bg-cyan-100 text-cyan-700 border-cyan-200',
-                      'default': 'bg-gray-100 text-gray-600 border-gray-200'
-                    }
-                    return colors[cat] || colors['default']
-                  }
-
-                  return (
-                    <div
-                      key={item.id}
-                      className={`bg-white rounded-2xl overflow-hidden transition-all duration-300 ${
-                        isSelected
-                          ? 'ring-2 ring-blue-500 shadow-xl scale-[1.02] -translate-y-1'
-                          : 'shadow-sm border border-gray-100 hover:shadow-lg hover:-translate-y-0.5'
-                      }`}
-                    >
-                      {/* Stock Status Banner - Animated Gradient */}
-                      {(isOutOfStock || isLowStock) && (
-                        <div className={`px-4 py-2.5 relative overflow-hidden ${
-                          isOutOfStock 
-                            ? 'bg-gradient-to-r from-red-500 via-rose-500 to-red-600' 
-                            : 'bg-gradient-to-r from-amber-500 via-orange-500 to-amber-500'
-                        } text-white`}>
-                          {/* Animated shine effect */}
-                          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full animate-[shimmer_2s_infinite]" style={{ animationDuration: '3s' }} />
-                          <div className="flex items-center justify-between relative">
-                            <div className="flex items-center gap-2">
-                              <div className={`p-1.5 rounded-lg ${isOutOfStock ? 'bg-white/20' : 'bg-white/20'} backdrop-blur-sm`}>
-                                <ExclamationTriangleIcon className="h-4 w-4" />
-                              </div>
-                              <div>
-                                <span className="font-bold text-sm tracking-wide block">
-                                  {isOutOfStock ? 'OUT OF STOCK' : 'LOW STOCK'}
-                                </span>
-                                <span className="text-[10px] opacity-80">
-                                  {isOutOfStock ? 'Reorder immediately' : 'Below minimum level'}
-                                </span>
-                              </div>
-                            </div>
-                            <div className="text-right">
-                              <span className="text-lg font-black">{qtyOnHand.toFixed(0)}</span>
-                              <span className="text-xs opacity-80">/{minStock.toFixed(0)}</span>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Healthy/Overstock subtle indicator */}
-                      {!isOutOfStock && !isLowStock && (
-                        <div className={`h-1 ${isOverstock ? 'bg-gradient-to-r from-blue-400 to-indigo-500' : 'bg-gradient-to-r from-emerald-400 to-green-500'}`} />
-                      )}
-
-                      <div className="p-4">
-                        {/* Header with Checkbox, Image and Info */}
+                    return (
+                      <div key={item.id} className={`px-3 py-3 ${isSelected ? 'bg-blue-50/60' : 'bg-white'}`}>
                         <div className="flex items-start gap-3">
-                          {/* Checkbox with animation */}
-                          <div className="relative">
-                            <input
-                              type="checkbox"
-                              checked={isSelected}
-                              onChange={(e) => {
-                                e.stopPropagation()
-                                setSelectedIds(prev =>
-                                  e.target.checked
-                                    ? Array.from(new Set([...prev, item.id]))
-                                    : prev.filter(x => x !== item.id)
-                                )
-                              }}
-                              onClick={(e) => e.stopPropagation()}
-                              className="w-5 h-5 mt-1 rounded-lg border-2 border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500 focus:ring-offset-0 shrink-0 cursor-pointer transition-all checked:scale-110"
-                            />
-                          </div>
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={(e) => {
+                              setSelectedIds((prev) =>
+                                e.target.checked ? Array.from(new Set([...prev, item.id])) : prev.filter((x) => x !== item.id)
+                              )
+                            }}
+                            className="mt-1.5 w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          />
 
-                          {/* Product Image - Enhanced with overlay info */}
-                          <div 
-                            className="relative w-24 h-24 rounded-2xl overflow-hidden bg-gradient-to-br from-gray-50 to-gray-100 border-2 border-gray-100 shrink-0 flex items-center justify-center cursor-pointer group shadow-sm"
-                            onClick={() => setSelectedProduct(item)}
-                          >
-                            {item.imageUrl ? (
-                              <img
-                                src={item.imageUrl}
-                                alt={item.name}
-                                className="w-full h-full object-cover group-active:scale-110 transition-transform duration-300"
-                                loading="lazy"
-                              />
-                            ) : (
-                              <div className="flex flex-col items-center justify-center">
-                                <CubeIcon className="h-10 w-10 text-gray-300" />
-                                <span className="text-[8px] text-gray-400 mt-1">No image</span>
-                              </div>
-                            )}
-                            
-                            {/* Status indicator ring */}
-                            <div className={`absolute inset-0 rounded-2xl ring-2 ring-inset ${
-                              isOutOfStock ? 'ring-red-400/50' : 
-                              isLowStock ? 'ring-amber-400/50' : 
-                              'ring-transparent'
-                            }`} />
-                            
-                            {/* Top badges */}
-                            <div className="absolute top-1.5 left-1.5 right-1.5 flex justify-between">
-                              {/* Status dot with glow */}
-                              <div className={`w-3 h-3 rounded-full border-2 border-white shadow-lg ${
-                                item.status === 'active' ? 'bg-green-500 shadow-green-200' : 
-                                item.status === 'draft' ? 'bg-gray-400' : 'bg-red-500 shadow-red-200'
-                              }`} />
-                              
-                              {/* QR/Barcode indicator */}
-                              {(hasQR || hasBarcode) && (
-                                <div className="bg-black/60 backdrop-blur-sm rounded-md px-1 py-0.5">
-                                  <QrCodeIcon className="h-3 w-3 text-white" />
+                          <button className="flex-1 min-w-0 text-left" onClick={() => setSelectedProduct(item)}>
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="text-sm font-semibold text-gray-900 truncate">
+                                  {String(item.name || 'Unnamed Product')
+                                    .replace(/\uFFFD/g, '')
+                                    .replace(/\u0000/g, '')
+                                    .trim()}
                                 </div>
+                                <div className="mt-0.5 flex items-center gap-2 text-[11px] text-gray-500">
+                                  <span className="font-mono">{item.sku || item.id.slice(0, 8)}</span>
+                                  {groupName ? (
+                                    <span className="inline-flex items-center gap-1">
+                                      <FolderIcon className="h-3.5 w-3.5" />
+                                      <span className="truncate max-w-[120px]">{groupName}</span>
+                                    </span>
+                                  ) : null}
+                                </div>
+                              </div>
+
+                              <div className="text-right">
+                                <div className={`text-sm font-semibold ${qtyCls}`}>
+                                  {qty.toLocaleString('en-GB', { maximumFractionDigits: 2 })}
+                                </div>
+                                <div className="text-[11px] text-gray-500">
+                                  {item.uom || 'units'}
+                                  {min > 0 ? ` · min ${min.toLocaleString('en-GB', { maximumFractionDigits: 0 })}` : ''}
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="mt-2 flex items-center gap-2">
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[11px] font-medium border ${
+                                  status === 'active'
+                                    ? 'bg-green-50 text-green-700 border-green-200'
+                                    : status === 'draft'
+                                    ? 'bg-gray-50 text-gray-700 border-gray-200'
+                                    : 'bg-red-50 text-red-700 border-red-200'
+                                }`}
+                              >
+                                {status === 'active' ? (
+                                  <span className="inline-flex items-center gap-1">
+                                    <CheckCircleIcon className="h-3.5 w-3.5" /> Active
+                                  </span>
+                                ) : status === 'draft' ? (
+                                  'Draft'
+                                ) : (
+                                  'Inactive'
+                                )}
+                              </span>
+
+                              {(isOut || isLow) && (
+                                <span
+                                  className={`px-2 py-0.5 rounded-full text-[11px] font-medium border ${
+                                    isOut
+                                      ? 'bg-red-50 text-red-700 border-red-200'
+                                      : 'bg-amber-50 text-amber-700 border-amber-200'
+                                  }`}
+                                >
+                                  {isOut ? 'Out of stock' : 'Low stock'}
+                                </span>
                               )}
                             </div>
-                            
-                            {/* Unit price badge */}
-                            {unitPrice > 0 && (
-                              <div className="absolute bottom-1.5 left-1.5 bg-black/70 backdrop-blur-sm text-white text-[9px] font-bold px-1.5 py-0.5 rounded-md">
-                                £{unitPrice.toFixed(2)}
-                              </div>
-                            )}
-                          </div>
+                          </button>
 
-                          {/* Product Info */}
-                          <div className="flex-1 min-w-0" onClick={() => setSelectedProduct(item)}>
-                            {/* Category tag */}
-                            {category && (
-                              <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold mb-1 border ${getCategoryColor(category)}`}>
-                                {category}
-                              </span>
-                            )}
-                            
-                            {/* Product Name */}
-                            <h3 className="text-base font-bold text-gray-900 leading-tight mb-1 active:text-blue-600 line-clamp-2">
-                              {(() => {
-                                const name = item.name || 'Unnamed Product'
-                                let cleaned = name.replace(/\uFFFD/g, '').replace(/\u0000/g, '').trim()
-                                try {
-                                  const textarea = document.createElement('textarea')
-                                  textarea.innerHTML = cleaned
-                                  cleaned = textarea.value || cleaned
-                                } catch (e) {}
-                                return cleaned || name
-                              })()}
-                            </h3>
-                            
-                            {/* SKU with copy hint */}
-                            <div className="inline-flex items-center gap-1.5 px-2 py-1 bg-gradient-to-r from-gray-50 to-gray-100 rounded-lg mb-2 border border-gray-200">
-                              <span className="text-[11px] font-mono font-bold text-gray-700">{item.sku}</span>
-                            </div>
+                          <div className="relative">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setRowActionMenuOpen(rowActionMenuOpen === item.id ? null : item.id)
+                              }}
+                              className="p-2 rounded-lg hover:bg-gray-100 text-gray-500"
+                              title="Actions"
+                            >
+                              <EllipsisHorizontalIcon className="h-5 w-5" />
+                            </button>
 
-                            {/* Meta Info Row - Enhanced */}
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              {/* Status Badge */}
-                              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${
-                                item.status === 'active'
-                                  ? 'bg-green-50 text-green-700 border-green-200'
-                                  : item.status === 'draft'
-                                    ? 'bg-gray-50 text-gray-600 border-gray-200'
-                                    : 'bg-red-50 text-red-700 border-red-200'
-                              }`}>
-                                {item.status === 'active' && <CheckCircleIcon className="h-3 w-3" />}
-                                {item.status === 'active' ? 'Active' : item.status === 'draft' ? 'Draft' : 'Inactive'}
-                              </span>
-                              
-                              {/* Folder */}
-                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] text-gray-500 bg-gray-50 rounded-md">
-                                <FolderIcon className="h-3 w-3" />
-                                <span className="truncate max-w-[60px]">{productGroup?.name || 'No folder'}</span>
-                              </span>
-                              
-                              {/* UOM */}
-                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] text-gray-500 bg-gray-50 rounded-md">
-                                {item.uom || 'units'}
-                              </span>
-                            </div>
-                            
-                            {/* Last updated - subtle */}
-                            {lastUpdated && (
-                              <div className="mt-1.5 text-[9px] text-gray-400 flex items-center gap-1">
-                                <ArrowPathIcon className="h-3 w-3" />
-                                Updated {lastUpdated.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Stock Display - Premium Card Style */}
-                        <div className={`mt-4 p-4 rounded-2xl border-2 relative overflow-hidden ${
-                          isOutOfStock 
-                            ? 'bg-gradient-to-br from-red-50 to-rose-50 border-red-200' 
-                            : isLowStock 
-                              ? 'bg-gradient-to-br from-amber-50 to-orange-50 border-amber-200' 
-                              : 'bg-gradient-to-br from-emerald-50 to-green-50 border-emerald-200'
-                        }`}>
-                          {/* Background pattern */}
-                          <div className="absolute inset-0 opacity-5">
-                            <div className="absolute inset-0" style={{ backgroundImage: 'radial-gradient(circle, currentColor 1px, transparent 1px)', backgroundSize: '20px 20px' }} />
-                          </div>
-                          
-                          {/* Stock Numbers */}
-                          <div className="flex items-stretch justify-between mb-4 relative">
-                            <div className="text-center flex-1">
-                              <div className="text-[9px] font-bold text-gray-500 uppercase tracking-widest mb-1">On Hand</div>
-                              <div className={`text-4xl font-black tracking-tight ${
-                                isOutOfStock ? 'text-red-600' : isLowStock ? 'text-amber-600' : 'text-emerald-600'
-                              }`}>
-                                {qtyOnHand.toLocaleString('en-GB', { maximumFractionDigits: 0 })}
-                              </div>
-                              <div className="text-[10px] text-gray-500 font-semibold mt-0.5">{item.uom || 'units'}</div>
-                            </div>
-                            
-                            <div className="flex flex-col items-center justify-center px-3">
-                              <div className="w-px h-8 bg-gray-300"></div>
-                              <div className="text-[8px] text-gray-400 my-1">vs</div>
-                              <div className="w-px h-8 bg-gray-300"></div>
-                            </div>
-                            
-                            <div className="text-center flex-1">
-                              <div className="text-[9px] font-bold text-gray-500 uppercase tracking-widest mb-1">Min Stock</div>
-                              <div className="text-4xl font-black text-gray-400 tracking-tight">
-                                {minStock.toLocaleString('en-GB', { maximumFractionDigits: 0 })}
-                              </div>
-                              <div className="text-[10px] text-gray-500 font-semibold mt-0.5">{item.uom || 'units'}</div>
-                            </div>
-                            
-                            {totalValue > 0 && (
+                            {rowActionMenuOpen === item.id && (
                               <>
-                                <div className="w-px bg-gray-200 mx-3 self-center h-12"></div>
-                                <div className="text-center flex-1">
-                                  <div className="text-[9px] font-bold text-gray-500 uppercase tracking-widest mb-1">Value</div>
-                                  <div className="text-3xl font-black text-gray-700 tracking-tight">
-                                    <span className="text-lg">£</span>{totalValue >= 1000 ? `${(totalValue/1000).toFixed(1)}k` : totalValue.toFixed(0)}
-                                  </div>
-                                  <div className="text-[10px] text-gray-500 font-semibold mt-0.5">total</div>
+                                <div className="fixed inset-0 z-40" onClick={() => setRowActionMenuOpen(null)} />
+                                <div className="absolute right-0 mt-1 w-48 bg-white border border-gray-200 rounded-lg shadow-xl z-50 overflow-hidden">
+                                  <button
+                                    onClick={() => {
+                                      setSelectedProduct(item)
+                                      setRowActionMenuOpen(null)
+                                    }}
+                                    className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                                  >
+                                    <EyeIcon className="h-4 w-4" />
+                                    View
+                                  </button>
+
+                                  <button
+                                    onClick={() => {
+                                      setQuickAdjustProduct(item.id)
+                                      setAdjustQty(1)
+                                      setRowActionMenuOpen(null)
+                                    }}
+                                    className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                                  >
+                                    <ArrowPathIcon className="h-4 w-4" />
+                                    Quick adjust
+                                  </button>
+
+                                  {canManageInventory && (
+                                    <>
+                                      <button
+                                        onClick={async () => {
+                                          const next = item.status === 'active' ? 'draft' : 'active'
+                                          await setProductStatus(workspaceId!, item.id, next as any)
+                                          qc.invalidateQueries({ queryKey: ['products', workspaceId] })
+                                          setRowActionMenuOpen(null)
+                                        }}
+                                        className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
+                                      >
+                                        {item.status === 'active' ? 'Set Draft' : 'Activate'}
+                                      </button>
+
+                                      <button
+                                        onClick={async () => {
+                                          if (!confirm('Delete this product?')) return
+                                          await deleteProduct(workspaceId!, item.id)
+                                          qc.invalidateQueries({ queryKey: ['products', workspaceId] })
+                                          setRowActionMenuOpen(null)
+                                        }}
+                                        className="w-full text-left px-4 py-2.5 text-sm text-red-700 hover:bg-red-50 border-t border-gray-200 flex items-center gap-2"
+                                      >
+                                        <TrashIcon className="h-4 w-4" />
+                                        Delete
+                                      </button>
+                                    </>
+                                  )}
                                 </div>
                               </>
                             )}
                           </div>
-                          
-                          {/* Stock Level Progress Bar - Enhanced */}
-                          <div className="relative">
-                            <div className="h-3 bg-gray-200/80 rounded-full overflow-hidden shadow-inner">
-                              <div 
-                                className={`h-full rounded-full transition-all duration-700 ease-out relative ${
-                                  isOutOfStock ? 'bg-gradient-to-r from-red-400 to-red-600' : 
-                                  isLowStock ? 'bg-gradient-to-r from-amber-400 to-orange-500' : 
-                                  'bg-gradient-to-r from-emerald-400 to-green-500'
-                                }`}
-                                style={{ width: `${stockPercent}%` }}
-                              >
-                                {/* Shine effect on bar */}
-                                <div className="absolute inset-0 bg-gradient-to-b from-white/30 to-transparent" />
-                              </div>
-                            </div>
-                            {/* Min stock marker with label */}
-                            {minStock > 0 && (
-                              <div 
-                                className="absolute top-0 bottom-0 flex flex-col items-center"
-                                style={{ left: '50%', transform: 'translateX(-50%)' }}
-                              >
-                                <div className="w-0.5 h-full bg-gray-600 rounded-full" />
-                                <span className="absolute -bottom-4 text-[8px] text-gray-500 font-medium whitespace-nowrap">min</span>
-                              </div>
-                            )}
-                            
-                            {/* Stock status label */}
-                            <div className="flex justify-between mt-1.5 text-[9px] font-medium">
-                              <span className="text-gray-400">0</span>
-                              <span className={`${
-                                isOutOfStock ? 'text-red-500' : isLowStock ? 'text-amber-500' : 'text-emerald-500'
-                              }`}>
-                                {isOutOfStock ? 'Critical' : isLowStock ? 'Low' : isOverstock ? 'Overstock' : 'Healthy'}
-                              </span>
-                              <span className="text-gray-400">{(minStock * 2).toFixed(0)}</span>
-                            </div>
-                          </div>
                         </div>
 
-                        {/* Quick Stock Adjustment Panel */}
-                        {showQuickAdjust ? (
-                          <div className="mt-4 p-4 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl border-2 border-blue-200">
-                            <div className="text-sm font-bold text-blue-800 mb-3 text-center flex items-center justify-center gap-2">
-                              <AdjustmentsHorizontalIcon className="h-5 w-5" />
-                              Quick Stock Adjustment
-                            </div>
-                            
-                            {/* Quantity Selector */}
-                            <div className="flex items-center justify-center gap-3 mb-4">
+                        {/* Minimal quick adjust inline */}
+                        {isQuick && (
+                          <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-3">
+                            <div className="flex items-center justify-between">
+                              <div className="text-xs font-semibold text-gray-700">Quick adjust</div>
                               <button
-                                onClick={() => setAdjustQty(Math.max(1, adjustQty - 1))}
-                                className="w-12 h-12 flex items-center justify-center bg-white rounded-xl border-2 border-gray-200 active:bg-gray-100 shadow-sm"
+                                onClick={() => {
+                                  setQuickAdjustProduct(null)
+                                  setAdjustQty(1)
+                                }}
+                                className="text-xs text-gray-500 hover:text-gray-700"
                               >
-                                <MinusIcon className="h-5 w-5 text-gray-600" />
+                                Close
                               </button>
+                            </div>
+
+                            <div className="mt-2 flex items-center gap-2">
+                              <button
+                                onClick={() => setAdjustQty((q) => Math.max(1, q - 1))}
+                                className="h-9 w-9 inline-flex items-center justify-center rounded-lg border border-gray-200 bg-white"
+                                title="Decrease"
+                              >
+                                <MinusIcon className="h-4 w-4 text-gray-600" />
+                              </button>
+
                               <input
                                 type="number"
                                 value={adjustQty}
-                                onChange={(e) => setAdjustQty(Math.max(1, parseInt(e.target.value) || 1))}
-                                className="w-20 h-12 text-center text-2xl font-bold border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:ring-0 shadow-sm"
+                                onChange={(e) => setAdjustQty(Math.max(1, parseInt(e.target.value || '1', 10) || 1))}
+                                className="h-9 w-16 text-center rounded-lg border border-gray-300 bg-white text-sm font-semibold"
                               />
+
                               <button
-                                onClick={() => setAdjustQty(adjustQty + 1)}
-                                className="w-12 h-12 flex items-center justify-center bg-white rounded-xl border-2 border-gray-200 active:bg-gray-100 shadow-sm"
+                                onClick={() => setAdjustQty((q) => q + 1)}
+                                className="h-9 w-9 inline-flex items-center justify-center rounded-lg border border-gray-200 bg-white"
+                                title="Increase"
                               >
-                                <PlusIcon className="h-5 w-5 text-gray-600" />
+                                <PlusIcon className="h-4 w-4 text-gray-600" />
                               </button>
-                            </div>
 
-                            {/* Quick Amount Buttons */}
-                            <div className="flex gap-2 mb-4">
-                              {[1, 5, 10, 25, 50].map(n => (
-                                <button
-                                  key={n}
-                                  onClick={() => setAdjustQty(n)}
-                                  className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${
-                                    adjustQty === n 
-                                      ? 'bg-blue-600 text-white shadow-md scale-105' 
-                                      : 'bg-white text-gray-700 border border-gray-200 hover:border-blue-300'
-                                  }`}
-                                >
-                                  {n}
-                                </button>
-                              ))}
-                            </div>
+                              <div className="flex-1" />
 
-                            {/* Action Buttons */}
-                            <div className="flex gap-3">
                               <button
                                 onClick={() => handleQuickAdjust(item.id, 'out', adjustQty)}
-                                disabled={isAdjusting || qtyOnHand < adjustQty}
-                                className="flex-1 flex items-center justify-center gap-2 py-3.5 bg-gradient-to-r from-red-500 to-rose-600 text-white rounded-xl font-bold text-sm disabled:opacity-50 active:scale-98 shadow-lg shadow-red-200"
+                                disabled={isAdjusting || qty < adjustQty}
+                                className="h-9 px-3 rounded-lg bg-white border border-gray-200 text-sm font-semibold text-gray-700 disabled:opacity-50"
                               >
-                                <MinusCircleIcon className="h-5 w-5" />
-                                Stock Out
+                                Stock out
                               </button>
                               <button
                                 onClick={() => handleQuickAdjust(item.id, 'in', adjustQty)}
                                 disabled={isAdjusting}
-                                className="flex-1 flex items-center justify-center gap-2 py-3.5 bg-gradient-to-r from-green-500 to-emerald-600 text-white rounded-xl font-bold text-sm disabled:opacity-50 active:scale-98 shadow-lg shadow-green-200"
+                                className="h-9 px-3 rounded-lg bg-blue-600 text-white text-sm font-semibold disabled:opacity-50"
                               >
-                                <PlusCircleIcon className="h-5 w-5" />
-                                Stock In
+                                Stock in
                               </button>
                             </div>
-
-                            {/* Cancel */}
-                            <button
-                              onClick={() => {
-                                setQuickAdjustProduct(null)
-                                setAdjustQty(1)
-                              }}
-                              className="w-full mt-3 py-2 text-sm font-medium text-gray-500 hover:text-gray-700"
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        ) : (
-                          /* Action Buttons - Modern Style */
-                          <div className="mt-4 grid grid-cols-3 gap-2">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                setSelectedProduct(item)
-                              }}
-                              className="flex flex-col items-center justify-center gap-1.5 py-3.5 bg-gradient-to-br from-blue-50 to-blue-100 text-blue-700 rounded-xl font-semibold active:scale-95 transition-all border border-blue-200"
-                            >
-                              <EyeIcon className="h-5 w-5" />
-                              <span className="text-[11px]">Details</span>
-                            </button>
-                            
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                setQuickAdjustProduct(item.id)
-                                setAdjustQty(1)
-                              }}
-                              className="flex flex-col items-center justify-center gap-1.5 py-3.5 bg-gradient-to-br from-emerald-50 to-green-100 text-green-700 rounded-xl font-semibold active:scale-95 transition-all border border-green-200"
-                            >
-                              <PlusCircleIcon className="h-5 w-5" />
-                              <span className="text-[11px]">Adjust</span>
-                            </button>
-
-                            <button
-                              onClick={async (e) => {
-                                e.stopPropagation()
-                                const next = item.status === 'active' ? 'draft' : 'active'
-                                await setProductStatus(workspaceId!, item.id, next as any)
-                                qc.invalidateQueries({ queryKey: ['products', workspaceId] })
-                              }}
-                              className={`flex flex-col items-center justify-center gap-1.5 py-3.5 rounded-xl font-semibold active:scale-95 transition-all border ${
-                                item.status === 'active'
-                                  ? 'bg-gradient-to-br from-gray-50 to-gray-100 text-gray-600 border-gray-200'
-                                  : 'bg-gradient-to-br from-green-50 to-emerald-100 text-green-700 border-green-200'
-                              }`}
-                            >
-                              {item.status === 'active' ? (
-                                <>
-                                  <ArchiveBoxIcon className="h-5 w-5" />
-                                  <span className="text-[11px]">Archive</span>
-                                </>
-                              ) : (
-                                <>
-                                  <CheckCircleIcon className="h-5 w-5" />
-                                  <span className="text-[11px]">Activate</span>
-                                </>
-                              )}
-                            </button>
                           </div>
                         )}
                       </div>
-                    </div>
-                  )
-                })}
-              </>
-            )}
-          </div>
+                    )
+                  })}
+                </div>
+              )}
+            </Card>
 
-          {/* Floating Action Buttons - Mobile Only */}
-          <div className="md:hidden fixed bottom-20 right-4 flex flex-col gap-3 z-40" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
-            <button
-              onClick={() => {
-                // Scroll to top and focus search input
-                window.scrollTo({ top: 0, behavior: 'smooth' })
-                setTimeout(() => {
-                  const searchInput = document.querySelector('input[placeholder*="Search"]') as HTMLInputElement
-                  if (searchInput) {
-                    searchInput.focus()
-                  }
-                }, 300)
-              }}
-              className="w-14 h-14 bg-purple-600 text-white rounded-full shadow-lg flex items-center justify-center active:scale-95 transition-transform"
-              title="Search"
-            >
-              <MagnifyingGlassIcon className="h-7 w-7" />
-            </button>
-            <button
-              onClick={() => setShowScanner(true)}
-              className="w-14 h-14 bg-blue-600 text-white rounded-full shadow-lg flex items-center justify-center active:scale-95 transition-transform"
-              title="Scan"
-            >
-              <QrCodeIcon className="h-7 w-7" />
-            </button>
-            {canManageInventory && (
-              <button
-                onClick={() => setShowCreate(true)}
-                className="w-14 h-14 bg-green-600 text-white rounded-full shadow-lg flex items-center justify-center active:scale-95 transition-transform"
-                title="Add Product"
+            {/* Mobile bulk bar (simple, product-first) */}
+            {selectedIds.length > 0 && (
+              <div
+                className="fixed left-0 right-0 bottom-0 z-40 border-t border-gray-200 bg-white"
+                style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
               >
-                <PlusIcon className="h-7 w-7" />
-              </button>
+                <div className="px-3 py-3 flex items-center gap-2">
+                  <div className="text-sm font-semibold text-gray-900">{selectedIds.length} selected</div>
+                  <div className="flex-1" />
+                  <button className="px-3 py-2 text-sm rounded-lg border border-gray-200" onClick={() => setSelectedIds([])}>
+                    Clear
+                  </button>
+                  {canManageInventory && (
+                    <button
+                      className="px-3 py-2 text-sm rounded-lg bg-red-600 text-white"
+                      onClick={async () => {
+                        if (!confirm(`Delete ${selectedIds.length} product(s)?`)) return
+                        await Promise.all(selectedIds.map((id) => deleteProduct(workspaceId!, id)))
+                        setSelectedIds([])
+                        qc.invalidateQueries({ queryKey: ['products', workspaceId] })
+                      }}
+                    >
+                      Delete
+                    </button>
+                  )}
+                </div>
+              </div>
             )}
           </div>
 
-          {/* Pagination */}
+          {/* Pagination (shared) */}
           {filteredProducts.length > 0 && (
-            <Card className="mt-6">
+            <Card className="mt-5">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                 <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
                   <div className="text-xs sm:text-sm text-gray-700">
                     Showing <span className="font-medium">{startIndex + 1}</span> to{' '}
                     <span className="font-medium">{Math.min(endIndex, filteredProducts.length)}</span> of{' '}
-                    <span className="font-medium">{filteredProducts.length}</span> products
+                    <span className="font-medium">{filteredProducts.length}</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <label className="text-xs sm:text-sm text-gray-700">Per page:</label>
@@ -2102,35 +1537,29 @@ export function Inventory() {
 
                 <div className="flex items-center justify-between sm:justify-end gap-2">
                   <button
-                    onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
                     disabled={currentPage === 1}
-                    className="px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                    className="px-3 py-2 text-xs sm:text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
                   >
-                    <ChevronLeftIcon className="w-3 h-3 sm:w-4 sm:h-4" />
+                    <ChevronLeftIcon className="w-4 h-4" />
                     <span className="hidden sm:inline">Previous</span>
                   </button>
 
                   <div className="flex items-center gap-1">
                     {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
                       let pageNum: number
-                      if (totalPages <= 5) {
-                        pageNum = i + 1
-                      } else if (currentPage <= 3) {
-                        pageNum = i + 1
-                      } else if (currentPage >= totalPages - 2) {
-                        pageNum = totalPages - 4 + i
-                      } else {
-                        pageNum = currentPage - 2 + i
-                      }
+                      if (totalPages <= 5) pageNum = i + 1
+                      else if (currentPage <= 3) pageNum = i + 1
+                      else if (currentPage >= totalPages - 2) pageNum = totalPages - 4 + i
+                      else pageNum = currentPage - 2 + i
 
                       return (
                         <button
                           key={pageNum}
                           onClick={() => setCurrentPage(pageNum)}
-                          className={`px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm font-medium rounded-md ${currentPage === pageNum
-                            ? 'bg-blue-600 text-white'
-                            : 'text-gray-700 bg-white border border-gray-300 hover:bg-gray-50'
-                            }`}
+                          className={`px-3 py-2 text-xs sm:text-sm font-medium rounded-md ${
+                            currentPage === pageNum ? 'bg-blue-600 text-white' : 'text-gray-700 bg-white border border-gray-300 hover:bg-gray-50'
+                          }`}
                         >
                           {pageNum}
                         </button>
@@ -2139,12 +1568,12 @@ export function Inventory() {
                   </div>
 
                   <button
-                    onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
                     disabled={currentPage === totalPages}
-                    className="px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                    className="px-3 py-2 text-xs sm:text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
                   >
                     <span className="hidden sm:inline">Next</span>
-                    <ChevronRightIcon className="w-3 h-3 sm:w-4 sm:h-4" />
+                    <ChevronRightIcon className="w-4 h-4" />
                   </button>
                 </div>
               </div>
@@ -2163,14 +1592,9 @@ export function Inventory() {
         />
       )}
 
-      {showScanner && (
-        <Scanner
-          onScan={handleScan}
-          onClose={() => setShowScanner(false)}
-        />
-      )}
+      {showScanner && <Scanner onScan={handleScan} onClose={() => setShowScanner(false)} />}
 
-      {showCreate && workspaceId && (
+      {showCreate && (
         <ProductForm
           workspaceId={workspaceId}
           groups={groups}
@@ -2181,7 +1605,7 @@ export function Inventory() {
 
       {showImport && (
         <ImportModal
-          workspaceId={workspaceId!}
+          workspaceId={workspaceId}
           userId={userId}
           products={products}
           groups={groups}
@@ -2198,8 +1622,8 @@ export function Inventory() {
           duplicates={duplicateProducts}
           groups={groups}
           onClose={() => setShowDuplicates(false)}
-          onView={(product) => {
-            setSelectedProduct(product)
+          onView={(p) => {
+            setSelectedProduct(p)
             setShowDuplicates(false)
           }}
           onDelete={async (productId) => {
@@ -2212,13 +1636,15 @@ export function Inventory() {
   )
 }
 
-// Duplicates Modal Component
+// ---------------------------
+// Duplicates Modal (kept)
+// ---------------------------
 function DuplicatesModal({
   duplicates,
   groups,
   onClose,
   onView,
-  onDelete
+  onDelete,
 }: {
   duplicates: Array<{ sku: string; products: Product[] }>
   groups: Group[]
@@ -2229,14 +1655,13 @@ function DuplicatesModal({
   const [deletingId, setDeletingId] = useState<string | null>(null)
 
   const handleDelete = async (productId: string) => {
-    if (!confirm('Are you sure you want to delete this duplicate product?')) return
-
+    if (!confirm('Delete this duplicate product?')) return
     setDeletingId(productId)
     try {
       await onDelete(productId)
     } catch (err) {
-      alert('Failed to delete product')
       console.error(err)
+      alert('Failed to delete product')
     } finally {
       setDeletingId(null)
     }
@@ -2246,7 +1671,6 @@ function DuplicatesModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4">
       <div className="fixed inset-0 bg-black/50" onClick={onClose} />
       <div className="relative bg-white rounded-xl sm:rounded-2xl shadow-xl w-full max-w-4xl max-h-[95vh] sm:max-h-[90vh] overflow-hidden flex flex-col">
-        {/* Header */}
         <div className="px-4 sm:px-6 py-3 sm:py-5 border-b border-gray-200 flex items-center justify-between bg-amber-50">
           <div className="flex-1 min-w-0 pr-2">
             <h2 className="text-lg sm:text-xl font-bold text-gray-900 flex items-center gap-2">
@@ -2254,18 +1678,15 @@ function DuplicatesModal({
               <span className="truncate">Duplicate Products</span>
             </h2>
             <p className="text-xs sm:text-sm text-gray-600 mt-1">
-              Found {duplicates.length} duplicate SKU{duplicates.length !== 1 ? 's' : ''} with {duplicates.reduce((sum, d) => sum + d.products.length, 0)} total products
+              Found {duplicates.length} duplicate SKU{duplicates.length !== 1 ? 's' : ''} with{' '}
+              {duplicates.reduce((sum, d) => sum + d.products.length, 0)} total products
             </p>
           </div>
-          <button
-            onClick={onClose}
-            className="p-2 rounded-full hover:bg-white text-gray-400 hover:text-gray-600 shrink-0"
-          >
+          <button onClick={onClose} className="p-2 rounded-full hover:bg-white text-gray-400 hover:text-gray-600 shrink-0">
             <XMarkIcon className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Content */}
         <div className="flex-1 overflow-y-auto p-3 sm:p-6">
           <div className="space-y-4 sm:space-y-6">
             {duplicates.map((dup, idx) => (
@@ -2296,38 +1717,39 @@ function DuplicatesModal({
                           <div className="font-mono text-xs text-gray-600 break-all">{product.id}</div>
                         </div>
                         <div>
-                          <div className="text-xs text-gray-500 mb-1">Group</div>
+                          <div className="text-xs text-gray-500 mb-1">Folder</div>
                           <div className="text-sm text-gray-700">
-                            {groups.find(g => g.id === (product as any).groupId)?.name || 'Unassigned'}
+                            {groups.find((g) => g.id === (product as any).groupId)?.name || 'Unassigned'}
                           </div>
                         </div>
                         <div>
                           <div className="text-xs text-gray-500 mb-1">Stock</div>
-                          <div className={`text-sm font-medium ${(product.qtyOnHand || 0) > 0 ? 'text-green-600' : 'text-gray-500'
-                            }`}>
+                          <div className={`text-sm font-medium ${(product.qtyOnHand || 0) > 0 ? 'text-green-600' : 'text-gray-500'}`}>
                             {(product.qtyOnHand || 0).toLocaleString()}
                           </div>
                         </div>
                       </div>
+
                       <div className="flex items-center gap-2 sm:ml-4">
                         <button
                           onClick={() => onView(product)}
-                          className="px-2 sm:px-3 py-1.5 text-xs sm:text-sm text-blue-600 hover:bg-blue-50 rounded-lg transition-colors flex items-center gap-1"
+                          className="px-3 py-1.5 text-sm text-blue-600 hover:bg-blue-50 rounded-lg transition-colors flex items-center gap-1"
                         >
                           <EyeIcon className="w-4 h-4" />
-                          <span className="hidden sm:inline">View</span>
+                          View
                         </button>
+
                         <button
                           onClick={() => handleDelete(product.id)}
                           disabled={deletingId === product.id}
-                          className="px-2 sm:px-3 py-1.5 text-xs sm:text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors flex items-center gap-1 disabled:opacity-50"
+                          className="px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 rounded-lg transition-colors flex items-center gap-1 disabled:opacity-50"
                         >
                           {deletingId === product.id ? (
                             <ArrowPathIcon className="w-4 h-4 animate-spin" />
                           ) : (
                             <TrashIcon className="w-4 h-4" />
                           )}
-                          <span className="hidden sm:inline">Delete</span>
+                          Delete
                         </button>
                       </div>
                     </div>
@@ -2338,16 +1760,10 @@ function DuplicatesModal({
           </div>
         </div>
 
-        {/* Footer */}
         <div className="px-4 sm:px-6 py-3 sm:py-4 border-t border-gray-200 bg-gray-50">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <p className="text-xs sm:text-sm text-gray-600">
-              Keep the product with the most stock or most complete information, delete the others.
-            </p>
-            <button
-              onClick={onClose}
-              className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors text-sm"
-            >
+            <p className="text-xs sm:text-sm text-gray-600">Keep the most complete record, delete the others.</p>
+            <button onClick={onClose} className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors text-sm">
               Close
             </button>
           </div>
@@ -2357,14 +1773,16 @@ function DuplicatesModal({
   )
 }
 
-// Import Modal Component
+// ---------------------------
+// Import Modal (fixed counters + stays simple)
+// ---------------------------
 function ImportModal({
   workspaceId,
   userId,
   products,
   groups,
   onClose,
-  onSuccess
+  onSuccess,
 }: {
   workspaceId: string
   userId?: string | null
@@ -2380,65 +1798,38 @@ function ImportModal({
   const [errors, setErrors] = useState<string[]>([])
   const [successCount, setSuccessCount] = useState(0)
 
-  // Fetch UOMs
   const { data: uoms = [] } = useQuery({
     queryKey: ['uoms', workspaceId],
     queryFn: () => listUOMs(workspaceId),
-    enabled: !!workspaceId
+    enabled: !!workspaceId,
   })
 
   const downloadTemplate = () => {
-    // Build reference section with all available values
     let referenceSection = '# ============================================\n'
-    referenceSection += '# REFERENCE VALUES - Use these in your import\n'
+    referenceSection += '# REFERENCE VALUES\n'
     referenceSection += '# ============================================\n#\n'
 
-    // Groups
     if (groups.length > 0) {
-      referenceSection += '# GROUPS (use in groupId column):\n'
-      groups.forEach(g => {
-        referenceSection += `# ${g.id} = ${g.name}\n`
-      })
+      referenceSection += '# GROUPS (groupId):\n'
+      groups.forEach((g) => (referenceSection += `# ${g.id} = ${g.name}\n`))
       referenceSection += '#\n'
     }
 
-    // UOMs
     if (uoms.length > 0) {
-      referenceSection += '# UOMs (use in uom column):\n'
-      uoms.forEach(u => {
-        referenceSection += `# ${u.symbol} = ${u.name || u.symbol}\n`
-      })
+      referenceSection += '# UOMs (uom):\n'
+      uoms.forEach((u: any) => (referenceSection += `# ${u.symbol} = ${u.name || u.symbol}\n`))
       referenceSection += '#\n'
     }
 
-    // Status values
-    referenceSection += '# STATUS (use in status column):\n'
-    referenceSection += '# active = Active\n'
-    referenceSection += '# inactive = Inactive\n'
-    referenceSection += '# draft = Draft\n'
-    referenceSection += '#\n'
-
-    // Current products with stock (for create mode)
-    if (importMode === 'create' && products.length > 0) {
-      referenceSection += '# CURRENT PRODUCTS & STOCK (for reference):\n'
-      referenceSection += '# sku,name,currentStock\n'
-      products.slice(0, 50).forEach(p => {
-        const stock = (p as any).qtyOnHand || 0
-        referenceSection += `# ${p.sku},${p.name},${stock}\n`
-      })
-      if (products.length > 50) {
-        referenceSection += `# ... and ${products.length - 50} more products\n`
-      }
-      referenceSection += '#\n'
-    }
-
+    referenceSection += '# STATUS (status): active | inactive | draft\n#\n'
     referenceSection += '# ============================================\n'
-    referenceSection += '# DATA SECTION - Enter your data below\n'
+    referenceSection += '# DATA SECTION\n'
     referenceSection += '# ============================================\n'
 
-    const template = importMode === 'create'
-      ? `${referenceSection}name,sku,uom,status,minStock,reorderPoint,quantityBox,pricePerBox,groupId,tags\nProduct Name,SKU-001,unit,active,10,5,100,25.50,tag1, tag2, tag3`
-      : `${referenceSection}sku,quantity,reason\nSKU-001,50,Stock Adjustment`
+    const template =
+      importMode === 'create'
+        ? `${referenceSection}name,sku,uom,status,minStock,reorderPoint,quantityBox,pricePerBox,groupId,tags\nProduct Name,SKU-001,unit,active,10,5,100,25.50,,tag1, tag2`
+        : `${referenceSection}sku,quantity,reason\nSKU-001,50,Stock Adjustment`
 
     downloadCSV(`inventory-import-template-${importMode}.csv`, template)
   }
@@ -2450,6 +1841,7 @@ function ImportModal({
     setFile(selectedFile)
     setErrors([])
     setCsvData([])
+    setSuccessCount(0)
 
     try {
       const text = await selectedFile.text()
@@ -2460,16 +1852,11 @@ function ImportModal({
         return
       }
 
-      // Validate headers
-      const requiredHeaders = importMode === 'create'
-        ? ['name', 'sku']
-        : ['sku', 'quantity']
-
-      const headers = Object.keys(parsed[0])
-      const missingHeaders = requiredHeaders.filter(h => !headers.includes(h.toLowerCase()))
-
-      if (missingHeaders.length > 0) {
-        setErrors([`Missing required columns: ${missingHeaders.join(', ')}`])
+      const requiredHeaders = importMode === 'create' ? ['name', 'sku'] : ['sku', 'quantity']
+      const headers = Object.keys(parsed[0]).map((h) => h.toLowerCase().trim())
+      const missing = requiredHeaders.filter((h) => !headers.includes(h))
+      if (missing.length > 0) {
+        setErrors([`Missing required columns: ${missing.join(', ')}`])
         return
       }
 
@@ -2489,48 +1876,50 @@ function ImportModal({
     setErrors([])
     setSuccessCount(0)
 
+    let ok = 0
+    const errs: string[] = []
+
     try {
       if (importMode === 'create') {
-        // Create new products
         for (const row of csvData) {
           try {
-            // Parse tags (comma-separated string to array)
             const tagsValue = row.tags || row.Tags || row.TAGS || ''
-            const tags = tagsValue
-              ? tagsValue.split(',').map((t: string) => t.trim()).filter(Boolean)
-              : []
+            const tags = tagsValue ? String(tagsValue).split(',').map((t) => t.trim()).filter(Boolean) : []
 
-            const product = await createProduct(workspaceId, {
+            await createProduct(workspaceId, {
               name: row.name || row.Name || '',
               sku: row.sku || row.SKU || '',
               uom: row.uom || row.UOM || 'unit',
-              status: (row.status || row.Status || 'active') as 'active' | 'inactive',
+              status: (row.status || row.Status || 'active') as any,
               minStock: Number(row.minStock || row['Min Stock'] || 0),
               reorderPoint: Number(row.reorderPoint || row['Reorder Point'] || 0),
               quantityBox: Number(row.quantityBox || row['Quantity Box'] || 0),
               pricePerBox: Number(row.pricePerBox || row['Price Per Box'] || 0),
               groupId: row.groupId || row['Group ID'] || null,
-              tags: tags,
+              tags,
             })
-            setSuccessCount(prev => prev + 1)
+
+            ok++
+            setSuccessCount(ok)
           } catch (err: any) {
-            setErrors(prev => [...prev, `Failed to create ${row.sku || row.SKU}: ${err.message}`])
+            errs.push(`Failed to create ${row.sku || row.SKU || '(no sku)'}: ${err.message}`)
+            setErrors([...errs])
           }
         }
       } else {
-        // Update stock
         for (const row of csvData) {
           try {
             const sku = row.sku || row.SKU || ''
-            const product = products.find(p => p.sku === sku)
+            const product = products.find((p) => p.sku === sku)
 
             if (!product) {
-              setErrors(prev => [...prev, `Product not found: ${sku}`])
+              errs.push(`Product not found: ${sku}`)
+              setErrors([...errs])
               continue
             }
 
             const quantity = Number(row.quantity || row.Quantity || 0)
-            if (quantity === 0) continue
+            if (!quantity) continue
 
             await createStockTransaction({
               workspaceId,
@@ -2540,37 +1929,31 @@ function ImportModal({
               userId: userId || undefined,
               reason: row.reason || row.Reason || 'Bulk import',
             })
+
             window.dispatchEvent(new Event('stockTransactionCreated'))
-            setSuccessCount(prev => prev + 1)
+            ok++
+            setSuccessCount(ok)
           } catch (err: any) {
-            setErrors(prev => [...prev, `Failed to update stock for ${row.sku || row.SKU}: ${err.message}`])
+            errs.push(`Failed stock update for ${row.sku || row.SKU || '(no sku)'}: ${err.message}`)
+            setErrors([...errs])
           }
         }
       }
 
-      if (successCount > 0) {
+      if (ok > 0) {
         showToast(
-          `Successfully ${importMode === 'create' ? 'created' : 'updated stock for'} ${successCount} item${successCount !== 1 ? 's' : ''}`,
+          `Successfully ${importMode === 'create' ? 'created' : 'updated'} ${ok} item${ok !== 1 ? 's' : ''}`,
           'success',
-          4000
+          3500
         )
-        setTimeout(() => {
-          onSuccess()
-        }, 1000)
-      } else if (errors.length > 0) {
-        showToast(
-          `Import completed with ${errors.length} error${errors.length !== 1 ? 's' : ''}`,
-          'warning',
-          5000
-        )
+        setTimeout(onSuccess, 600)
+      } else if (errs.length > 0) {
+        showToast(`Import completed with ${errs.length} error${errs.length !== 1 ? 's' : ''}`, 'warning', 4500)
       }
     } catch (err: any) {
-      setErrors(prev => [...prev, `Import failed: ${err.message}`])
-      showToast(
-        `Import failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
-        'error',
-        5000
-      )
+      errs.push(`Import failed: ${err.message}`)
+      setErrors([...errs])
+      showToast(`Import failed: ${err instanceof Error ? err.message : 'Unknown error'}`, 'error', 5000)
     } finally {
       setIsProcessing(false)
     }
@@ -2580,23 +1963,17 @@ function ImportModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4">
       <div className="fixed inset-0 bg-black/50" onClick={onClose} />
       <div className="relative bg-white rounded-xl sm:rounded-2xl shadow-xl w-full max-w-2xl max-h-[95vh] sm:max-h-[90vh] overflow-hidden flex flex-col">
-        {/* Header */}
         <div className="px-4 sm:px-6 py-3 sm:py-5 border-b border-gray-200 flex items-center justify-between">
           <div className="flex-1 min-w-0 pr-2">
             <h2 className="text-lg sm:text-xl font-bold text-gray-900">Bulk Import</h2>
-            <p className="text-xs sm:text-sm text-gray-500 mt-1">Import products or update stock from CSV</p>
+            <p className="text-xs sm:text-sm text-gray-500 mt-1">Import products or adjust stock using CSV</p>
           </div>
-          <button
-            onClick={onClose}
-            className="p-2 rounded-full hover:bg-gray-100 text-gray-400 hover:text-gray-600 shrink-0"
-          >
+          <button onClick={onClose} className="p-2 rounded-full hover:bg-gray-100 text-gray-400 hover:text-gray-600 shrink-0">
             <XMarkIcon className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Content */}
         <div className="flex-1 overflow-y-auto p-3 sm:p-6 space-y-4 sm:space-y-6">
-          {/* Import Mode Selection */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-3">Import Mode</label>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
@@ -2606,98 +1983,47 @@ function ImportModal({
                   setFile(null)
                   setCsvData([])
                   setErrors([])
+                  setSuccessCount(0)
                 }}
-                className={`p-4 rounded-lg border-2 transition-all ${importMode === 'create'
-                  ? 'border-blue-500 bg-blue-50'
-                  : 'border-gray-200 hover:border-gray-300'
-                  }`}
+                className={`p-4 rounded-lg border-2 transition-all ${
+                  importMode === 'create' ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'
+                }`}
               >
                 <div className="font-medium text-gray-900">Create Products</div>
-                <div className="text-xs text-gray-500 mt-1">Add new products from CSV</div>
+                <div className="text-xs text-gray-500 mt-1">Add new products</div>
               </button>
+
               <button
                 onClick={() => {
                   setImportMode('stock')
                   setFile(null)
                   setCsvData([])
                   setErrors([])
+                  setSuccessCount(0)
                 }}
-                className={`p-4 rounded-lg border-2 transition-all ${importMode === 'stock'
-                  ? 'border-blue-500 bg-blue-50'
-                  : 'border-gray-200 hover:border-gray-300'
-                  }`}
+                className={`p-4 rounded-lg border-2 transition-all ${
+                  importMode === 'stock' ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'
+                }`}
               >
                 <div className="font-medium text-gray-900">Update Stock</div>
-                <div className="text-xs text-gray-500 mt-1">Adjust stock quantities</div>
+                <div className="text-xs text-gray-500 mt-1">Adjust quantities</div>
               </button>
             </div>
           </div>
 
-          {/* Template Download */}
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <div className="flex items-center justify-between">
-              <div className="flex-1">
+            <div className="flex items-center justify-between gap-3">
+              <div>
                 <div className="font-medium text-blue-900">Download Template</div>
                 <div className="text-sm text-blue-700 mt-1">
                   {importMode === 'create'
-                    ? 'Template includes: name, sku, uom, status, minStock, reorderPoint, quantityBox, pricePerBox, groupId'
-                    : 'Template includes: sku, quantity, reason'}
-                </div>
-                <div className="mt-3 space-y-2 text-xs">
-                  {groups.length > 0 && (
-                    <div className="bg-white/50 rounded p-2">
-                      <div className="font-medium text-blue-900 mb-1">Groups ({groups.length}):</div>
-                      <div className="max-h-16 overflow-y-auto space-y-0.5 font-mono text-blue-700">
-                        {groups.slice(0, 5).map(g => (
-                          <div key={g.id}>{g.id} = {g.name}</div>
-                        ))}
-                        {groups.length > 5 && <div className="text-blue-600">... {groups.length - 5} more</div>}
-                      </div>
-                    </div>
-                  )}
-                  {uoms.length > 0 && (
-                    <div className="bg-white/50 rounded p-2">
-                      <div className="font-medium text-blue-900 mb-1">UOMs ({uoms.length}):</div>
-                      <div className="max-h-16 overflow-y-auto space-y-0.5 font-mono text-blue-700">
-                        {uoms.slice(0, 5).map(u => (
-                          <div key={u.id}>{u.symbol} = {u.name || u.symbol}</div>
-                        ))}
-                        {uoms.length > 5 && <div className="text-blue-600">... {uoms.length - 5} more</div>}
-                      </div>
-                    </div>
-                  )}
-                  <div className="bg-white/50 rounded p-2">
-                    <div className="font-medium text-blue-900 mb-1">Status Values:</div>
-                    <div className="font-mono text-blue-700 space-y-0.5">
-                      <div>active = Active</div>
-                      <div>inactive = Inactive</div>
-                      <div>draft = Draft</div>
-                    </div>
-                  </div>
-                  <div className="bg-white/50 rounded p-2">
-                    <div className="font-medium text-blue-900 mb-1">Tags Format:</div>
-                    <div className="text-blue-700 text-[10px]">
-                      Comma-separated values: tag1, tag2, tag3
-                    </div>
-                  </div>
-                  {importMode === 'create' && products.length > 0 && (
-                    <div className="bg-white/50 rounded p-2">
-                      <div className="font-medium text-blue-900 mb-1">Current Products ({products.length}):</div>
-                      <div className="max-h-16 overflow-y-auto text-blue-700 text-[10px] font-mono">
-                        {products.slice(0, 3).map(p => (
-                          <div key={p.id}>
-                            {p.sku} = {p.name} (Stock: {(p as any).qtyOnHand || 0})
-                          </div>
-                        ))}
-                        {products.length > 3 && <div className="text-blue-600">... {products.length - 3} more (see template file)</div>}
-                      </div>
-                    </div>
-                  )}
+                    ? 'Columns: name, sku, uom, status, minStock, reorderPoint, quantityBox, pricePerBox, groupId, tags'
+                    : 'Columns: sku, quantity, reason'}
                 </div>
               </div>
               <button
                 onClick={downloadTemplate}
-                className="ml-4 inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shrink-0"
+                className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shrink-0"
               >
                 <DocumentArrowDownIcon className="w-4 h-4" />
                 Download
@@ -2705,40 +2031,23 @@ function ImportModal({
             </div>
           </div>
 
-          {/* File Upload */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Upload CSV File</label>
             <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-blue-400 transition-colors">
-              <input
-                type="file"
-                accept=".csv"
-                onChange={handleFileChange}
-                className="hidden"
-                id="csv-upload"
-              />
-              <label
-                htmlFor="csv-upload"
-                className="cursor-pointer flex flex-col items-center"
-              >
+              <input type="file" accept=".csv" onChange={handleFileChange} className="hidden" id="csv-upload" />
+              <label htmlFor="csv-upload" className="cursor-pointer flex flex-col items-center">
                 <ArrowUpTrayIcon className="w-8 h-8 text-gray-400 mb-2" />
-                <span className="text-sm font-medium text-gray-700">
-                  {file ? file.name : 'Click to upload CSV file'}
-                </span>
+                <span className="text-sm font-medium text-gray-700">{file ? file.name : 'Click to upload CSV file'}</span>
                 <span className="text-xs text-gray-500 mt-1">CSV files only</span>
               </label>
             </div>
           </div>
 
-          {/* Preview */}
           {csvData.length > 0 && (
             <div>
               <div className="flex items-center justify-between mb-2">
-                <label className="block text-sm font-medium text-gray-700">
-                  Preview ({csvData.length} rows)
-                </label>
-                <span className="text-xs text-gray-500">
-                  {successCount > 0 && `${successCount} processed`}
-                </span>
+                <label className="block text-sm font-medium text-gray-700">Preview ({csvData.length} rows)</label>
+                <span className="text-xs text-gray-500">{successCount > 0 ? `${successCount} processed` : ''}</span>
               </div>
               <div className="border border-gray-200 rounded-lg overflow-hidden max-h-64 overflow-y-auto">
                 <table className="min-w-full divide-y divide-gray-200 text-xs">
@@ -2764,33 +2073,28 @@ function ImportModal({
                   </tbody>
                 </table>
                 {csvData.length > 10 && (
-                  <div className="px-3 py-2 text-xs text-gray-500 bg-gray-50">
-                    ... and {csvData.length - 10} more rows
-                  </div>
+                  <div className="px-3 py-2 text-xs text-gray-500 bg-gray-50">… and {csvData.length - 10} more rows</div>
                 )}
               </div>
             </div>
           )}
 
-          {/* Errors */}
           {errors.length > 0 && (
             <div className="bg-red-50 border border-red-200 rounded-lg p-4">
               <div className="font-medium text-red-900 mb-2">Errors ({errors.length})</div>
               <div className="space-y-1 max-h-32 overflow-y-auto">
                 {errors.map((err, idx) => (
-                  <div key={idx} className="text-sm text-red-700">{err}</div>
+                  <div key={idx} className="text-sm text-red-700">
+                    {err}
+                  </div>
                 ))}
               </div>
             </div>
           )}
         </div>
 
-        {/* Footer */}
         <div className="px-4 sm:px-6 py-3 sm:py-4 border-t border-gray-200 flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-2 sm:gap-3">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg transition-colors text-sm"
-          >
+          <button onClick={onClose} className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg transition-colors text-sm">
             Cancel
           </button>
           <button
@@ -2801,7 +2105,7 @@ function ImportModal({
             {isProcessing ? (
               <>
                 <ArrowPathIcon className="w-4 h-4 animate-spin" />
-                Processing...
+                Processing…
               </>
             ) : (
               <>

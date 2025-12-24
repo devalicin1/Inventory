@@ -12,6 +12,7 @@ import {
   updateDoc,
   getDoc,
   increment,
+  deleteDoc,
 } from 'firebase/firestore'
 
 export type UiTxnType = 'in' | 'out' | 'transfer' | 'adjustment'
@@ -118,11 +119,44 @@ export async function getProductOnHand(workspaceId: string, productId: string): 
   )
   const txnsSnap = await getDocs(txnsQuery)
   
-  // Sum all transaction quantities (qty already has correct sign from createStockTransaction)
+  // Sum all transaction quantities
+  // Handle both signed qty (new format) and unsigned qty with type (old format) for backward compatibility
   let totalQty = 0
   txnsSnap.docs.forEach(txnDoc => {
     const txn = txnDoc.data()
-    totalQty += Number(txn.qty || 0)
+    const txnQty = Number(txn.qty || 0)
+    const txnType = txn.type
+    
+    // If qty is already signed (negative for OUT transactions), use it directly
+    // Otherwise, determine sign from type (for backward compatibility)
+    let deltaQty = txnQty
+    if (txnQty >= 0) {
+      // qty is positive, determine sign from type
+      switch (txnType) {
+        case 'Produce':
+        case 'Receive':
+        case 'Adjust+':
+          deltaQty = Math.abs(txnQty)
+          break
+        case 'Consume':
+        case 'Ship':
+        case 'Issue':
+        case 'Adjust-':
+          deltaQty = -Math.abs(txnQty)
+          break
+        case 'Transfer':
+          deltaQty = txn.toLoc ? Math.abs(txnQty) : -Math.abs(txnQty)
+          break
+        case 'Count':
+          deltaQty = 0
+          break
+        default:
+          // For unknown types, assume qty is already signed
+          deltaQty = txnQty
+      }
+    }
+    // If qty is negative, it's already signed (new format), use as-is
+    totalQty += deltaQty
   })
   
   return totalQty
@@ -203,11 +237,42 @@ export async function recalculateProductStock(workspaceId: string, productId: st
   )
   const txnsSnap = await getDocs(txnsQuery)
 
-  // Calculate total from transactions
+  // Calculate total from transactions using the same logic as getProductOnHand
   let calculatedQty = 0
   txnsSnap.docs.forEach(txnDoc => {
     const txn = txnDoc.data()
-    calculatedQty += Number(txn.qty || 0)
+    const txnQty = Number(txn.qty || 0)
+    const txnType = txn.type
+    
+    // Handle both signed qty (new format) and unsigned qty with type (old format)
+    let deltaQty = txnQty
+    if (txnQty >= 0) {
+      // qty is positive, determine sign from type
+      switch (txnType) {
+        case 'Produce':
+        case 'Receive':
+        case 'Adjust+':
+          deltaQty = Math.abs(txnQty)
+          break
+        case 'Consume':
+        case 'Ship':
+        case 'Issue':
+        case 'Adjust-':
+          deltaQty = -Math.abs(txnQty)
+          break
+        case 'Transfer':
+          deltaQty = txn.toLoc ? Math.abs(txnQty) : -Math.abs(txnQty)
+          break
+        case 'Count':
+          deltaQty = 0
+          break
+        default:
+          // For unknown types, assume qty is already signed
+          deltaQty = txnQty
+      }
+    }
+    // If qty is negative, it's already signed (new format), use as-is
+    calculatedQty += deltaQty
   })
 
   // Update the product document
@@ -219,5 +284,22 @@ export async function recalculateProductStock(workspaceId: string, productId: st
   console.log(`Product ${productId}: Recalculated qtyOnHand = ${calculatedQty} (from ${txnsSnap.size} transactions)`)
 
   return calculatedQty
+}
+
+/**
+ * Delete a stock transaction and recalculate product stock
+ * Only owners can delete transactions
+ */
+export async function deleteStockTransaction(
+  workspaceId: string,
+  transactionId: string,
+  productId: string
+): Promise<void> {
+  // Delete the transaction
+  const txnRef = doc(db, 'workspaces', workspaceId, 'stockTxns', transactionId)
+  await deleteDoc(txnRef)
+
+  // Recalculate product stock after deletion
+  await recalculateProductStock(workspaceId, productId)
 }
 

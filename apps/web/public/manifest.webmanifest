@@ -1,14 +1,27 @@
 {
   "name": "Itory",
   "short_name": "Itory",
+  "description": "Inventory Management System",
   "theme_color": "#0ea5e9",
   "background_color": "#ffffff",
   "display": "standalone",
+  "orientation": "portrait",
   "start_url": "/",
+  "scope": "/",
   "icons": [
-    { "src": "https://firebasestorage.googleapis.com/v0/b/inventory-ce0c2.firebasestorage.app/o/Logos%2Ficon.png?alt=media", "sizes": "64x64", "type": "image/png" },
-    { "src": "https://firebasestorage.googleapis.com/v0/b/inventory-ce0c2.firebasestorage.app/o/Logos%2Ficon.png?alt=media", "sizes": "192x192", "type": "image/png" },
-    { "src": "https://firebasestorage.googleapis.com/v0/b/inventory-ce0c2.firebasestorage.app/o/Logos%2Ficon.png?alt=media", "sizes": "512x512", "type": "image/png" }
+    { "src": "https://firebasestorage.googleapis.com/v0/b/inventory-ce0c2.firebasestorage.app/o/Logos%2Ficon.png?alt=media", "sizes": "57x57", "type": "image/png", "purpose": "any" },
+    { "src": "https://firebasestorage.googleapis.com/v0/b/inventory-ce0c2.firebasestorage.app/o/Logos%2Ficon.png?alt=media", "sizes": "60x60", "type": "image/png", "purpose": "any" },
+    { "src": "https://firebasestorage.googleapis.com/v0/b/inventory-ce0c2.firebasestorage.app/o/Logos%2Ficon.png?alt=media", "sizes": "72x72", "type": "image/png", "purpose": "any" },
+    { "src": "https://firebasestorage.googleapis.com/v0/b/inventory-ce0c2.firebasestorage.app/o/Logos%2Ficon.png?alt=media", "sizes": "76x76", "type": "image/png", "purpose": "any" },
+    { "src": "https://firebasestorage.googleapis.com/v0/b/inventory-ce0c2.firebasestorage.app/o/Logos%2Ficon.png?alt=media", "sizes": "96x96", "type": "image/png", "purpose": "any" },
+    { "src": "https://firebasestorage.googleapis.com/v0/b/inventory-ce0c2.firebasestorage.app/o/Logos%2Ficon.png?alt=media", "sizes": "114x114", "type": "image/png", "purpose": "any" },
+    { "src": "https://firebasestorage.googleapis.com/v0/b/inventory-ce0c2.firebasestorage.app/o/Logos%2Ficon.png?alt=media", "sizes": "120x120", "type": "image/png", "purpose": "any" },
+    { "src": "https://firebasestorage.googleapis.com/v0/b/inventory-ce0c2.firebasestorage.app/o/Logos%2Ficon.png?alt=media", "sizes": "144x144", "type": "image/png", "purpose": "any" },
+    { "src": "https://firebasestorage.googleapis.com/v0/b/inventory-ce0c2.firebasestorage.app/o/Logos%2Ficon.png?alt=media", "sizes": "152x152", "type": "image/png", "purpose": "any" },
+    { "src": "https://firebasestorage.googleapis.com/v0/b/inventory-ce0c2.firebasestorage.app/o/Logos%2Ficon.png?alt=media", "sizes": "180x180", "type": "image/png", "purpose": "any" },
+    { "src": "https://firebasestorage.googleapis.com/v0/b/inventory-ce0c2.firebasestorage.app/o/Logos%2Ficon.png?alt=media", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "https://firebasestorage.googleapis.com/v0/b/inventory-ce0c2.firebasestorage.app/o/Logos%2Ficon.png?alt=media", "sizes": "384x384", "type": "image/png", "purpose": "any" },
+    { "src": "https://firebasestorage.googleapis.com/v0/b/inventory-ce0c2.firebasestorage.app/o/Logos%2Ficon.png?alt=media", "sizes": "512x512", "type": "image/png", "purpose": "any" }
   ]
 }
 

@@ -9,8 +9,9 @@ import { useJobQueries } from './hooks/useJobQueries'
 import { useProductionRuns } from './hooks/useProductionRuns'
 import { useJobMutations } from './hooks/useJobMutations'
 import { Scanner } from '../Scanner'
-import { ScannerHeader } from './components/ScannerHeader'
 import { ScannerArea } from './components/ScannerArea'
+import { PageShell } from '../layout/PageShell'
+import { Button } from '../ui/Button'
 import { RecentScans } from './components/RecentScans'
 import { handleScan } from './utils/scanHandler'
 import { getStageName, getStageInfo, getNextStage, getStatusColor, getStatusLabel } from './utils/jobHelpers'
@@ -3144,21 +3145,28 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
 
   return (
     <>
-      <div className="relative min-h-screen bg-gradient-to-br from-blue-50 via-purple-50/50 to-pink-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900">
-        {/* Animated background elements */}
-        <div className="fixed inset-0 overflow-hidden pointer-events-none">
-          <div className="absolute top-0 -left-20 w-96 h-96 bg-gradient-to-br from-blue-400/20 to-purple-400/20 rounded-full blur-3xl animate-pulse" />
-          <div className="absolute bottom-0 -right-20 w-96 h-96 bg-gradient-to-br from-purple-400/20 to-pink-400/20 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '1s' }} />
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-gradient-to-br from-cyan-400/10 to-blue-400/10 rounded-full blur-3xl" />
-        </div>
-        
-        {/* Content container */}
-        <div className="relative space-y-5 sm:space-y-6 pb-24 sm:pb-8 px-4 sm:px-6 pt-4 sm:pt-6">
-          <ScannerHeader onClose={onClose} />
-          <div className="max-w-xl mx-auto space-y-5 sm:space-y-6">
-          {/* Scanner Area with glass morphism */}
+      <PageShell
+        title="Scanner"
+        subtitle="Scan jobs or products"
+        headerClassName="mb-3 sm:mb-4"
+        actions={
+          onClose && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={onClose}
+              className="h-9 w-9 p-0 flex items-center justify-center shrink-0"
+            >
+              <XMarkIcon className="h-4 w-4" />
+            </Button>
+          )
+        }
+        className="pb-24 sm:pb-8"
+      >
+        <div className="max-w-xl mx-auto space-y-4 sm:space-y-6">
+          {/* Scanner Area */}
           {scanMode === 'camera' ? (
-            <div className="relative bg-gradient-to-br from-gray-900 via-gray-800 to-black rounded-3xl sm:rounded-[2rem] overflow-hidden shadow-2xl shadow-black/50 aspect-[3/4] sm:aspect-[4/3] ring-2 ring-white/10">
+            <div className="relative bg-gray-900 rounded-xl sm:rounded-2xl overflow-hidden shadow-lg aspect-[3/4] sm:aspect-[4/3]">
               <Scanner
                 onScan={handleScanCode}
                 onClose={() => setScanMode('manual')}
@@ -3182,9 +3190,8 @@ export function ProductionScanner({ workspaceId, onClose }: ProductionScannerPro
             recentScans={recentScans}
             onScanClick={handleScanCode}
           />
-          </div>
         </div>
-      </div>
+      </PageShell>
 
       {/* Modals / Action Sheets */}
       {selectedJob && renderJobSheet()}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSessionStore } from '../state/sessionStore'
 import { hasWorkspacePermission } from '../utils/permissions'
@@ -55,6 +55,8 @@ import {
   XCircleIcon,
   LinkIcon,
 } from '@heroicons/react/24/outline'
+import { collection, doc, getDoc, onSnapshot, serverTimestamp, setDoc, type Unsubscribe } from 'firebase/firestore'
+import { db } from '../lib/firebase'
 
 export function Settings() {
   // Check for tab parameter in URL
@@ -755,18 +757,17 @@ export function Settings() {
                 }
               }}
               onImportProducts={async (skus?: string[]) => {
+                // Note: This function is called from QuickBooksTab component
+                // which handles the progress modal and job tracking
+                // No toast needed here as progress modal shows all details
                 if (!workspaceId) return
                 try {
-                  showToast('Importing products from QuickBooks...', 'info')
                   const result = await importProductsFromQuickBooks(workspaceId, skus)
-                  showToast(
-                    `Imported ${result.imported} products, updated ${result.updated} products. ${result.skipped > 0 ? `${result.skipped} skipped.` : ''} ${result.errors > 0 ? `${result.errors} errors.` : ''}`,
-                    result.imported > 0 || result.updated > 0 ? 'success' : 'error'
-                  )
+                  // Progress modal will show the result, no need for toast
                   queryClient.invalidateQueries({ queryKey: ['products', workspaceId] })
                 } catch (error) {
                   console.error('Import error:', error)
-                  showToast('Error importing products: ' + (error instanceof Error ? error.message : 'Unknown error'), 'error')
+                  // Error will be shown in progress modal, no need for toast
                 }
               }}
               onSyncInventory={async () => {
@@ -1376,6 +1377,10 @@ export function QuickBooksTab({
   const [previewItems, setPreviewItems] = useState<any[]>([])
   const [selectedSkus, setSelectedSkus] = useState<string[]>([])
   const [isLoadingPreview, setIsLoadingPreview] = useState(false)
+  const [showImportProgress, setShowImportProgress] = useState(false)
+  const [importJob, setImportJob] = useState<any | null>(null)
+  const importJobUnsub = useRef<Unsubscribe | null>(null)
+  const [previewError, setPreviewError] = useState<string | null>(null)
 
   const isConnected = status?.connected || false
 
@@ -1571,6 +1576,7 @@ export function QuickBooksTab({
                 <button
                   onClick={async () => {
                     setShowImportPreview(true)
+                    setPreviewError(null)
                     setIsLoadingPreview(true)
                     try {
                       const items = await getQuickBooksItems(workspaceId)
@@ -1592,13 +1598,15 @@ export function QuickBooksTab({
                           .filter((i: any) => !i._isExisting)
                           .map((i: any) => (i.Sku || '').toString())
                       )
-                    } catch (err) {
+                    } catch (err: any) {
                       console.error('Preview import error:', err)
-                      showToast(
-                        'Error loading products from QuickBooks for preview.',
-                        'error'
-                      )
-                      setShowImportPreview(false)
+                      const message =
+                        err instanceof Error
+                          ? err.message
+                          : typeof err === 'string'
+                          ? err
+                          : 'Error loading products from QuickBooks for preview.'
+                      setPreviewError(message)
                     } finally {
                       setIsLoadingPreview(false)
                     }
@@ -1690,8 +1698,30 @@ export function QuickBooksTab({
             </div>
 
             <div className="px-6 py-4 flex-1 overflow-auto">
-              {isLoadingPreview ? (
-                <div className="py-8 text-center text-gray-500">Loading products...</div>
+              {isLoadingPreview || isSyncing ? (
+                <div className="py-8 flex flex-col items-center space-y-4 text-sm text-gray-600">
+                  <div className="w-full max-w-md">
+                    <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden">
+                      <div className="h-2 w-1/2 bg-blue-500 animate-pulse" />
+                    </div>
+                  </div>
+                  <p>
+                    {isSyncing
+                      ? 'Importing selected products from QuickBooks. This may take a few minutes…'
+                      : 'Loading products from QuickBooks. This may take a moment for larger catalogs…'}
+                  </p>
+                </div>
+              ) : previewError ? (
+                <div className="py-6">
+                  <div className="mb-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2">
+                    <div className="font-semibold mb-1">Unable to load products from QuickBooks</div>
+                    <p className="text-xs whitespace-pre-wrap break-words">{previewError}</p>
+                  </div>
+                  <p className="text-sm text-gray-600">
+                    Please check your QuickBooks connection and try again. If the problem persists, share this
+                    error with support.
+                  </p>
+                </div>
               ) : previewItems.length === 0 ? (
                 <div className="py-8 text-center text-gray-500">
                   No inventory items found in QuickBooks.
@@ -1828,16 +1858,351 @@ export function QuickBooksTab({
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
                 onClick={async () => {
                   if (selectedSkus.length === 0) return
+                  if (!workspaceId) return
                   setIsSyncing(true)
                   try {
-                    await onImportProducts(selectedSkus)
+                    // Create job document for progress tracking
+                    const jobsCol = collection(db, 'workspaces', workspaceId, 'quickbooksImports')
+                    const jobRef = doc(jobsCol)
+                    await setDoc(jobRef, {
+                      type: 'product_import',
+                      trigger: 'manual',
+                      status: 'running',
+                      startedAt: serverTimestamp(),
+                      totalItems: null,
+                      processed: 0,
+                      imported: 0,
+                      updated: 0,
+                      skipped: 0,
+                      errors: 0,
+                      allowedSkus: selectedSkus,
+                    })
+
+                    // Start listening for job progress BEFORE showing modal
+                    if (importJobUnsub.current) {
+                      importJobUnsub.current()
+                    }
+                    
+                    // Set initial job state from document (in case it already exists)
+                    const initialSnap = await getDoc(jobRef)
+                    if (initialSnap.exists()) {
+                      const initialData = initialSnap.data() || {}
+                      setImportJob({ id: initialSnap.id, ...initialData })
+                    }
+                    
+                    // Listen for job progress and refresh inventory when the job completes
+                    importJobUnsub.current = onSnapshot(jobRef, (snap) => {
+                      if (!snap.exists()) {
+                        console.warn('[QuickBooks Import] Job document does not exist')
+                        return
+                      }
+                      
+                      const data = snap.data() || {}
+                      // Handle null/undefined values properly
+                      const processedValue = typeof data.processed === 'number' ? data.processed : 0
+                      const totalItemsValue = typeof data.totalItems === 'number' ? data.totalItems : (data.totalItems === null ? null : 0)
+                      const progressPercent = totalItemsValue && totalItemsValue > 0 
+                        ? Math.round((processedValue / totalItemsValue) * 100) 
+                        : 0
+                      
+                      console.log('[QuickBooks Import] Job update received:', {
+                        id: snap.id,
+                        status: data.status,
+                        processed: processedValue,
+                        totalItems: totalItemsValue,
+                        totalItemsType: typeof data.totalItems,
+                        progressPercent: totalItemsValue ? `${progressPercent}%` : 'N/A',
+                        imported: data.imported || 0,
+                        updated: data.updated || 0,
+                        skipped: data.skipped || 0,
+                        errors: data.errors || 0,
+                        timestamp: new Date().toISOString(),
+                        rawData: data, // Log raw data for debugging
+                      })
+                      
+                      // Update state with latest data - this should trigger React re-render
+                      const jobData = { 
+                        id: snap.id, 
+                        ...data,
+                        // Ensure numeric values are properly set (preserve null for totalItems if not yet set)
+                        processed: processedValue,
+                        totalItems: totalItemsValue,
+                      }
+                      console.log('[QuickBooks Import] Updating state with:', {
+                        processed: jobData.processed,
+                        totalItems: jobData.totalItems,
+                        totalItemsType: typeof jobData.totalItems,
+                        status: jobData.status,
+                      })
+                      setImportJob(jobData)
+
+                      const status = data.status
+                      if (status === 'success' || status === 'failed') {
+                        console.log('[QuickBooks Import] Job completed with status:', status)
+                        // Force products list to refresh so Inventory screen sees latest on-hand
+                        queryClient.invalidateQueries({ queryKey: ['products', workspaceId] })
+                        // Also trigger the global stock update event used by Inventory.tsx
+                        try {
+                          window.dispatchEvent(new Event('stockTransactionCreated'))
+                        } catch {
+                          // Ignore if window is not available (e.g. SSR)
+                        }
+                      }
+                    }, (error) => {
+                      console.error('[QuickBooks Import] onSnapshot error:', error)
+                      console.error('[QuickBooks Import] Error details:', {
+                        code: error.code,
+                        message: error.message,
+                        stack: error.stack,
+                      })
+                    })
+
+                    setShowImportProgress(true)
                     setShowImportPreview(false)
+
+                    await onImportProducts(selectedSkus, jobRef.id)
                   } finally {
                     setIsSyncing(false)
                   }
                 }}
               >
                 {isSyncing ? 'Importing...' : 'Import selected products'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Import Progress Modal - New Design */}
+      {showImportProgress && importJob && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full mx-4 max-h-[85vh] flex flex-col overflow-hidden">
+            {/* Header */}
+            <div className="px-6 py-5 bg-gradient-to-r from-blue-600 to-blue-700 text-white">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-white/20 rounded-lg backdrop-blur-sm">
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-bold">Importing from QuickBooks</h3>
+                    <p className="text-sm text-blue-100 mt-0.5">
+                      {importJob.status === 'success'
+                        ? 'Import completed successfully'
+                        : importJob.status === 'failed'
+                        ? 'Import finished with errors'
+                        : 'Processing products in real-time...'}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  className="p-2 hover:bg-white/20 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={importJob.status !== 'success' && importJob.status !== 'failed'}
+                  onClick={() => {
+                    setShowImportProgress(false)
+                    setImportJob(null)
+                    if (importJobUnsub.current) {
+                      importJobUnsub.current()
+                      importJobUnsub.current = null
+                    }
+                  }}
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            {/* Content */}
+            <div className="px-6 py-6 flex-1 overflow-auto space-y-6">
+              {/* Progress Section */}
+              <div className="space-y-4">
+                {/* Progress Bar */}
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-baseline gap-2">
+                      <span className="text-3xl font-bold text-gray-900">
+                        {importJob.processed || 0}
+                      </span>
+                      <span className="text-lg text-gray-500">
+                        / {importJob.totalItems ?? '…'} items
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {importJob.status === 'running' && (
+                        <div className="flex items-center gap-2 text-blue-600">
+                          <div className="w-2 h-2 bg-blue-600 rounded-full animate-pulse"></div>
+                          <span className="text-sm font-medium capitalize">Processing</span>
+                        </div>
+                      )}
+                      {importJob.status === 'success' && (
+                        <div className="flex items-center gap-2 text-green-600">
+                          <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                          </svg>
+                          <span className="text-sm font-medium">Completed</span>
+                        </div>
+                      )}
+                      {importJob.status === 'failed' && (
+                        <div className="flex items-center gap-2 text-red-600">
+                          <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                          </svg>
+                          <span className="text-sm font-medium">Failed</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* Large Progress Bar */}
+                  <div className="relative w-full bg-gray-200 rounded-full h-6 overflow-hidden shadow-inner">
+                    <div
+                      className="h-full bg-gradient-to-r from-blue-500 to-blue-600 rounded-full transition-all duration-500 ease-out flex items-center justify-end pr-2"
+                      style={{
+                        width: `${
+                          importJob.totalItems
+                            ? Math.min(
+                                100,
+                                Math.round(((importJob.processed || 0) / importJob.totalItems) * 100)
+                              )
+                            : 0
+                        }%`,
+                      }}
+                    >
+                      {importJob.totalItems && ((importJob.processed || 0) / importJob.totalItems) * 100 > 15 && (
+                        <span className="text-xs font-semibold text-white">
+                          {Math.round(((importJob.processed || 0) / importJob.totalItems) * 100)}%
+                        </span>
+                      )}
+                    </div>
+                    {importJob.totalItems && (
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <span className="text-xs font-medium text-gray-600">
+                          {importJob.totalItems
+                            ? `${Math.round(((importJob.processed || 0) / importJob.totalItems) * 100)}%`
+                            : '0%'}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Statistics Cards */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                    <div className="text-xs text-green-700 font-medium mb-1">Imported</div>
+                    <div className="text-2xl font-bold text-green-700">
+                      {importJob.imported || 0}
+                    </div>
+                  </div>
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <div className="text-xs text-blue-700 font-medium mb-1">Updated</div>
+                    <div className="text-2xl font-bold text-blue-700">
+                      {importJob.updated || 0}
+                    </div>
+                  </div>
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                    <div className="text-xs text-gray-700 font-medium mb-1">Skipped</div>
+                    <div className="text-2xl font-bold text-gray-700">
+                      {importJob.skipped || 0}
+                    </div>
+                  </div>
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                    <div className="text-xs text-red-700 font-medium mb-1">Errors</div>
+                    <div className="text-2xl font-bold text-red-700">
+                      {importJob.errors || 0}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Item Details Table */}
+              {importJob.details?.items && importJob.details.items.length > 0 && (
+                <div className="border border-gray-200 rounded-xl overflow-hidden bg-white shadow-sm">
+                  <div className="px-4 py-3 bg-gray-50 border-b flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                      </svg>
+                      <span className="text-sm font-semibold text-gray-700">Recent Items</span>
+                    </div>
+                    <span className="text-xs text-gray-500">
+                      {importJob.details.items.length} {importJob.details.truncated ? '(showing first 200)' : 'items'}
+                    </span>
+                  </div>
+                  <div className="max-h-64 overflow-y-auto">
+                    <table className="min-w-full text-sm">
+                      <thead className="bg-gray-50 sticky top-0">
+                        <tr>
+                          <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">SKU</th>
+                          <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Name</th>
+                          <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Action</th>
+                          <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Reason</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 bg-white">
+                        {importJob.details.items.map((item: any, idx: number) => (
+                          <tr key={`${item.sku || 'no-sku'}-${item.name || 'no-name'}-${item.productId || 'no-id'}-${idx}`} className="hover:bg-gray-50 transition-colors">
+                            <td className="px-4 py-2.5 font-mono text-xs text-gray-900">{item.sku || '-'}</td>
+                            <td className="px-4 py-2.5 text-gray-700">{item.name || '-'}</td>
+                            <td className="px-4 py-2.5">
+                              <span
+                                className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${
+                                  item.action === 'imported'
+                                    ? 'bg-green-100 text-green-800'
+                                    : item.action === 'updated'
+                                    ? 'bg-blue-100 text-blue-800'
+                                    : item.action === 'skipped'
+                                    ? 'bg-gray-100 text-gray-800'
+                                    : 'bg-red-100 text-red-800'
+                                }`}
+                              >
+                                {item.action}
+                              </span>
+                            </td>
+                            <td className="px-4 py-2.5 text-gray-600 text-xs max-w-xs truncate" title={item.reason || '-'}>
+                              {item.reason || '-'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Error Message */}
+              {importJob.errorMessage && (
+                <div className="rounded-xl border-2 border-red-200 bg-red-50 px-4 py-3 flex items-start gap-3">
+                  <svg className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                  </svg>
+                  <div className="flex-1">
+                    <div className="text-sm font-semibold text-red-800 mb-1">Error</div>
+                    <div className="text-sm text-red-700">{importJob.errorMessage}</div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 bg-gray-50 border-t flex items-center justify-end">
+              <button
+                className="px-5 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={importJob.status !== 'success' && importJob.status !== 'failed'}
+                onClick={() => {
+                  setShowImportProgress(false)
+                  setImportJob(null)
+                  if (importJobUnsub.current) {
+                    importJobUnsub.current()
+                    importJobUnsub.current = null
+                  }
+                }}
+              >
+                {importJob.status === 'success' ? 'Done' : importJob.status === 'failed' ? 'Close' : 'Close'}
               </button>
             </div>
           </div>

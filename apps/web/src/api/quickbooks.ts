@@ -125,11 +125,18 @@ export async function getQuickBooksItems(workspaceId: string): Promise<any[]> {
  */
 export async function importProductsFromQuickBooks(
   workspaceId: string,
-  skus?: string[]
-): Promise<{ imported: number; updated: number; skipped: number; errors: number }> {
+  skus?: string[],
+  jobId?: string
+): Promise<{ imported: number; updated: number; skipped: number; errors: number; totalItems: number }> {
   const fn = httpsCallable(functions, 'importProductsFromQuickBooks')
-  const result = await fn({ workspaceId, skus })
-  return result.data as { imported: number; updated: number; skipped: number; errors: number }
+  const result = await fn({ workspaceId, skus, jobId })
+  return result.data as {
+    imported: number
+    updated: number
+    skipped: number
+    errors: number
+    totalItems: number
+  }
 }
 
 export interface QuickBooksLogEntry {
@@ -146,6 +153,21 @@ export interface QuickBooksLogEntry {
   unchangedProducts?: number
   status?: string
   trigger?: 'auto' | 'manual'
+  errorMessage?: string
+  allowedSkus?: string[]
+  filteredBySkus?: boolean
+  totalItemsFromQuickBooks?: number
+  details?: {
+    items?: Array<{
+      sku?: string
+      name?: string
+      quickBooksItemId?: string | null
+      productId?: string | null
+      action: 'imported' | 'updated' | 'skipped' | 'error'
+      reason?: string
+    }>
+    truncated?: boolean
+  }
 }
 
 export async function getQuickBooksLogs(

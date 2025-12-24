@@ -8,7 +8,12 @@ import {
   CheckCircleIcon,
   ChevronDownIcon,
   ChevronLeftIcon,
-  ChevronRightIcon
+  ChevronRightIcon,
+  PlusIcon,
+  MinusIcon,
+  ArrowPathIcon,
+  ArrowDownTrayIcon,
+  ArrowUpTrayIcon
 } from '@heroicons/react/24/outline'
 import { Card } from '../components/ui/Card'
 import { Badge } from '../components/ui/Badge'
@@ -328,14 +333,28 @@ export function Dashboard() {
 
   const isLoading = productsLoading || jobsLoading
 
-  // Format currency
+  // Format currency with compact notation for large numbers
   const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    }).format(value)
+    if (value >= 1000000000) {
+      // Billions
+      const billions = value / 1000000000
+      return `$${(billions).toFixed(1)}B`
+    } else if (value >= 1000000) {
+      // Millions
+      const millions = value / 1000000
+      return `$${(millions).toFixed(1)}M`
+    } else if (value >= 1000) {
+      // Thousands
+      const thousands = value / 1000
+      return `$${(thousands).toFixed(1)}K`
+    } else {
+      return new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0,
+      }).format(value)
+    }
   }
 
   // Format time ago
@@ -360,14 +379,14 @@ export function Dashboard() {
       title="Dashboard"
       subtitle="Overview of your inventory performance and daily operations."
       actions={
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3 no-print">
-          <Link to="/production" className="w-full sm:w-auto">
+        <div className="flex flex-row items-center gap-2 sm:gap-3 no-print">
+          <Link to="/production" className="flex-1 sm:flex-none">
             <Button variant="secondary" size="md" className="w-full sm:w-auto">
               View Production
             </Button>
           </Link>
-          <Link to="/inventory" className="w-full sm:w-auto">
-            <Button variant="primary" size="md" className="w-full sm:w-auto">
+          <Link to="/inventory" className="flex-1 sm:flex-none">
+            <Button variant="secondary" size="md" className="w-full sm:w-auto">
               Manage Inventory
             </Button>
           </Link>
@@ -387,25 +406,29 @@ export function Dashboard() {
           </button>
         </div>
         
-        {/* KPI Cards - Hidden on mobile by default */}
-        <div className={`grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4 ${showKPIs ? '' : 'hidden sm:grid'}`}>
+        {/* KPI Cards - more compact on mobile */}
+        <div
+          className={`mt-3 grid grid-cols-2 gap-3 sm:grid-cols-2 lg:grid-cols-4 ${
+            showKPIs ? '' : 'hidden sm:grid'
+          }`}
+        >
         {/* Total Products */}
         <Card className="relative overflow-hidden border-l-4 border-l-primary-500">
-          <div className="p-3 sm:p-4">
-            <div className="flex items-center justify-between">
-              <p className="truncate text-xs sm:text-sm font-medium text-gray-500">Total Products</p>
-              <div className="rounded-md bg-primary-50 p-1.5 sm:p-2">
+          <div className="p-2.5 sm:p-4">
+            <div className="flex items-center justify-between gap-1">
+              <p className="truncate text-[11px] sm:text-sm font-medium text-gray-500">Total Products</p>
+              <div className="rounded-md bg-primary-50 p-1.5 sm:p-2 shrink-0">
                 <CubeIcon className="h-4 w-4 sm:h-5 sm:w-5 text-primary-600" aria-hidden="true" />
               </div>
             </div>
-            <div className="mt-3 sm:mt-4 flex items-baseline">
+            <div className="mt-2 sm:mt-3 flex items-baseline">
               {isLoading ? (
-                <div className="h-7 sm:h-8 w-16 animate-pulse bg-gray-200 rounded" />
+                <div className="h-6 sm:h-8 w-14 sm:w-16 animate-pulse bg-gray-200 rounded" />
               ) : (
-                <p className="text-2xl sm:text-3xl font-semibold text-gray-900">{stats.totalProducts}</p>
+                <p className="text-xl sm:text-3xl font-semibold text-gray-900">{stats.totalProducts}</p>
               )}
             </div>
-            <div className="mt-1">
+            <div className="mt-1 hidden sm:block">
               <p className="text-xs text-gray-500">Active SKUs in catalog</p>
             </div>
           </div>
@@ -413,28 +436,28 @@ export function Dashboard() {
 
         {/* Low Stock */}
         <Card className={`relative overflow-hidden border-l-4 ${stats.lowStockProducts > 0 ? 'border-l-amber-500' : 'border-l-green-500'}`}>
-          <div className="p-3 sm:p-4">
-            <div className="flex items-center justify-between">
-              <p className="truncate text-xs sm:text-sm font-medium text-gray-500">Low Stock Items</p>
-              <div className={`rounded-md p-1.5 sm:p-2 ${stats.lowStockProducts > 0 ? 'bg-amber-50' : 'bg-green-50'}`}>
+          <div className="p-2.5 sm:p-4">
+            <div className="flex items-center justify-between gap-1">
+              <p className="truncate text-[11px] sm:text-sm font-medium text-gray-500">Low Stock Items</p>
+              <div className={`rounded-md p-1.5 sm:p-2 shrink-0 ${stats.lowStockProducts > 0 ? 'bg-amber-50' : 'bg-green-50'}`}>
                 <ExclamationTriangleIcon className={`h-4 w-4 sm:h-5 sm:w-5 ${stats.lowStockProducts > 0 ? 'text-amber-600' : 'text-green-600'}`} aria-hidden="true" />
               </div>
             </div>
-            <div className="mt-3 sm:mt-4 flex items-baseline">
+            <div className="mt-2 sm:mt-3 flex items-baseline">
               {isLoading ? (
-                <div className="h-7 sm:h-8 w-16 animate-pulse bg-gray-200 rounded" />
+                <div className="h-6 sm:h-8 w-14 sm:w-16 animate-pulse bg-gray-200 rounded" />
               ) : (
                 <>
-                  <p className="text-2xl sm:text-3xl font-semibold text-gray-900">{stats.lowStockProducts}</p>
+                  <p className="text-xl sm:text-3xl font-semibold text-gray-900">{stats.lowStockProducts}</p>
                   {stats.outOfStockProducts > 0 && (
-                    <span className="ml-2 text-xs sm:text-sm font-medium text-red-600">
+                    <span className="ml-1.5 text-[11px] sm:text-sm font-medium text-red-600">
                       ({stats.outOfStockProducts} out)
                     </span>
                   )}
                 </>
               )}
             </div>
-            <div className="mt-1">
+            <div className="mt-1 hidden sm:block">
               <p className="text-xs text-gray-500">Items below reorder point</p>
             </div>
           </div>
@@ -442,28 +465,28 @@ export function Dashboard() {
 
         {/* Active Jobs */}
         <Card className="relative overflow-hidden border-l-4 border-l-blue-500">
-          <div className="p-3 sm:p-4">
-            <div className="flex items-center justify-between">
-              <p className="truncate text-xs sm:text-sm font-medium text-gray-500">Active Jobs</p>
-              <div className="rounded-md bg-blue-50 p-1.5 sm:p-2">
+          <div className="p-2.5 sm:p-4">
+            <div className="flex items-center justify-between gap-1">
+              <p className="truncate text-[11px] sm:text-sm font-medium text-gray-500">Active Jobs</p>
+              <div className="rounded-md bg-blue-50 p-1.5 sm:p-2 shrink-0">
                 <CogIcon className="h-4 w-4 sm:h-5 sm:w-5 text-blue-600" aria-hidden="true" />
               </div>
             </div>
-            <div className="mt-3 sm:mt-4 flex items-baseline">
+            <div className="mt-2 sm:mt-3 flex items-baseline">
               {isLoading ? (
-                <div className="h-7 sm:h-8 w-16 animate-pulse bg-gray-200 rounded" />
+                <div className="h-6 sm:h-8 w-14 sm:w-16 animate-pulse bg-gray-200 rounded" />
               ) : (
                 <>
-                  <p className="text-2xl sm:text-3xl font-semibold text-gray-900">{stats.activeJobs}</p>
+                  <p className="text-xl sm:text-3xl font-semibold text-gray-900">{stats.activeJobs}</p>
                   {stats.delayedJobs > 0 && (
-                    <span className="ml-2 text-xs sm:text-sm font-medium text-red-600">
+                    <span className="ml-1.5 text-[11px] sm:text-sm font-medium text-red-600">
                       ({stats.delayedJobs} delayed)
                     </span>
                   )}
                 </>
               )}
             </div>
-            <div className="mt-1">
+            <div className="mt-1 hidden sm:block">
               <p className="text-xs text-gray-500">In progress & released</p>
             </div>
           </div>
@@ -471,21 +494,21 @@ export function Dashboard() {
 
         {/* Total Value */}
         <Card className="relative overflow-hidden border-l-4 border-l-emerald-500">
-          <div className="p-3 sm:p-4">
-            <div className="flex items-center justify-between">
-              <p className="truncate text-xs sm:text-sm font-medium text-gray-500">Inventory Value</p>
-              <div className="rounded-md bg-emerald-50 p-1.5 sm:p-2">
+          <div className="p-2.5 sm:p-4">
+            <div className="flex items-center justify-between gap-1">
+              <p className="truncate text-[11px] sm:text-sm font-medium text-gray-500">Inventory Value</p>
+              <div className="rounded-md bg-emerald-50 p-1.5 sm:p-2 shrink-0">
                 <ChartBarIcon className="h-4 w-4 sm:h-5 sm:w-5 text-emerald-600" aria-hidden="true" />
               </div>
             </div>
-            <div className="mt-3 sm:mt-4 flex items-baseline">
+            <div className="mt-2 sm:mt-3 flex items-baseline min-w-0">
               {isLoading ? (
-                <div className="h-7 sm:h-8 w-20 sm:w-24 animate-pulse bg-gray-200 rounded" />
+                <div className="h-6 sm:h-8 w-20 sm:w-24 animate-pulse bg-gray-200 rounded" />
               ) : (
-                <p className="text-2xl sm:text-3xl font-semibold text-gray-900">{formatCurrency(stats.totalStockValue)}</p>
+                <p className="text-base sm:text-2xl lg:text-3xl font-semibold text-gray-900 truncate break-words leading-tight">{formatCurrency(stats.totalStockValue)}</p>
               )}
             </div>
-            <div className="mt-1">
+            <div className="mt-1 hidden sm:block">
               <p className="text-xs text-gray-500">Total asset value</p>
             </div>
           </div>
@@ -662,7 +685,138 @@ export function Dashboard() {
               </div>
             ) : (
               <>
-                <div className="overflow-x-auto">
+                {/* Mobile Card View */}
+                <div className="md:hidden p-4 space-y-3">
+                  {paginatedTxns.map((txn) => {
+                    const txnDate = txn.timestamp?.toDate ? txn.timestamp.toDate() : new Date(txn.timestamp)
+                    const userName = userNames[txn.userId || ''] || txn.userId || 'Unknown'
+                    
+                    // Get product name
+                    const product = products.find(p => p.id === txn.productId)
+                    const productName = product?.name || product?.sku || txn.productId?.substring(0, 8) || 'Unknown Product'
+                    const productSku = product?.sku || ''
+                    
+                    // Determine transaction type and styling
+                    const isIn = ['Produce', 'Receive', 'Adjust+'].includes(txn.type)
+                    const isOut = ['Consume', 'Ship', 'Adjust-'].includes(txn.type)
+                    const isTransfer = txn.type === 'Transfer'
+                    const qty = Math.abs(txn.qty || 0)
+                    
+                    // Get icon and colors
+                    const getTransactionIcon = () => {
+                      if (isIn) return <PlusIcon className="w-5 h-5 text-emerald-600" />
+                      if (isOut) return <MinusIcon className="w-5 h-5 text-red-600" />
+                      if (isTransfer) return <ArrowPathIcon className="w-5 h-5 text-blue-600" />
+                      if (txn.type === 'Receive') return <ArrowDownTrayIcon className="w-5 h-5 text-emerald-600" />
+                      if (txn.type === 'Ship') return <ArrowUpTrayIcon className="w-5 h-5 text-red-600" />
+                      return <ArrowPathIcon className="w-5 h-5 text-gray-600" />
+                    }
+                    
+                    const getBorderColor = () => {
+                      if (isIn) return 'border-l-emerald-500'
+                      if (isOut) return 'border-l-red-500'
+                      if (isTransfer) return 'border-l-blue-500'
+                      return 'border-l-gray-400'
+                    }
+                    
+                    const getIconBg = () => {
+                      if (isIn) return 'bg-emerald-100'
+                      if (isOut) return 'bg-red-100'
+                      if (isTransfer) return 'bg-blue-100'
+                      return 'bg-gray-100'
+                    }
+                    
+                    const getQtyColor = () => {
+                      if (isIn) return 'text-emerald-600'
+                      if (isOut) return 'text-red-600'
+                      return 'text-gray-600'
+                    }
+                    
+                    // Format transaction type
+                    const getActionLabel = (type: string, qty: number) => {
+                      const absQty = Math.abs(qty)
+                      switch (type) {
+                        case 'Produce':
+                          return `Produced ${absQty} units`
+                        case 'Consume':
+                          return `Consumed ${absQty} units`
+                        case 'Receive':
+                          return `Received ${absQty} units`
+                        case 'Ship':
+                          return `Shipped ${absQty} units`
+                        case 'Adjust+':
+                          return `Stock increased by ${absQty} units`
+                        case 'Adjust-':
+                          return `Stock decreased by ${absQty} units`
+                        case 'Transfer':
+                          return `Transferred ${absQty} units`
+                        case 'Count':
+                          return `Stock count: ${absQty} units`
+                        default:
+                          return `${type} ${absQty} units`
+                      }
+                    }
+
+                    const actionType = getActionLabel(txn.type, txn.qty || 0)
+
+                    const handleCardClick = () => {
+                      if (!txn.productId) return
+                      window.location.href = `/inventory?productId=${txn.productId}`
+                    }
+
+                    return (
+                      <div
+                        key={txn.id}
+                        onClick={handleCardClick}
+                        className={`bg-white rounded-xl border-2 border-l-4 ${getBorderColor()} border-gray-100 overflow-hidden shadow-sm hover:shadow-md transition-all cursor-pointer active:scale-[0.98]`}
+                      >
+                        <div className="p-4">
+                          <div className="flex items-start justify-between mb-3">
+                            <div className="flex items-center gap-3 flex-1 min-w-0">
+                              <div className={`p-2 rounded-xl ${getIconBg()} flex-shrink-0`}>
+                                {getTransactionIcon()}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className={`text-xl font-bold ${getQtyColor()}`}>
+                                    {isIn ? '+' : isOut ? '-' : ''}{qty}
+                                  </span>
+                                  <span className="text-xs text-gray-500">units</span>
+                                </div>
+                                <p className="text-sm font-semibold text-gray-900 truncate">{productName}</p>
+                                {productSku && (
+                                  <p className="text-xs text-gray-500 truncate">{productSku}</p>
+                                )}
+                              </div>
+                            </div>
+                            <div className="text-right flex-shrink-0 ml-2">
+                              <div className="text-xs font-semibold text-gray-900">
+                                {txnDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                              </div>
+                              <div className="text-xs text-gray-400">
+                                {txnDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="space-y-2 pt-2 border-t border-gray-100">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs text-gray-500 font-medium">Action</span>
+                              <span className="text-xs text-gray-700 font-semibold text-right">{actionType}</span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs text-gray-500 font-medium">User</span>
+                              <span className="text-xs text-gray-700 font-semibold">{userName}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                {/* Desktop Table View */}
+                <div className="hidden md:block overflow-x-auto">
                   <table className="min-w-full divide-y divide-gray-200">
                     <thead className="bg-gray-50">
                       <tr>
@@ -707,8 +861,18 @@ export function Dashboard() {
 
                         const actionType = getActionLabel(txn.type, txn.qty || 0)
 
+                        const handleRowClick = () => {
+                          if (!txn.productId) return
+                          // Navigate to inventory with productId so that ProductDetails modal opens
+                          window.location.href = `/inventory?productId=${txn.productId}`
+                        }
+
                         return (
-                          <tr key={txn.id} className="hover:bg-gray-50 transition-colors">
+                          <tr
+                            key={txn.id}
+                            className="hover:bg-gray-50 transition-colors cursor-pointer"
+                            onClick={handleRowClick}
+                          >
                             <td className="px-4 sm:px-6 py-4">
                               <div className="flex flex-col">
                                 <span className="text-sm font-medium text-gray-900">{productName}</span>

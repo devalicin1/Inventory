@@ -13,15 +13,28 @@ export default defineConfig({
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // 5 MB
       },
       manifest: {
-        name: 'Inventory PWA',
-        short_name: 'Inventory',
+        name: 'Itory',
+        short_name: 'Itory',
+        description: 'Inventory Management System',
         theme_color: '#0ea5e9',
         background_color: '#ffffff',
         display: 'standalone',
+        orientation: 'portrait',
         start_url: '/',
+        scope: '/',
         icons: [
-          { src: '/pwa-192.png', sizes: '192x192', type: 'image/png' },
-          { src: '/pwa-512.png', sizes: '512x512', type: 'image/png' }
+          { 
+            src: 'https://firebasestorage.googleapis.com/v0/b/inventory-ce0c2.firebasestorage.app/o/Logos%2Ficon.png?alt=media', 
+            sizes: '192x192', 
+            type: 'image/png',
+            purpose: 'any'
+          },
+          { 
+            src: 'https://firebasestorage.googleapis.com/v0/b/inventory-ce0c2.firebasestorage.app/o/Logos%2Ficon.png?alt=media', 
+            sizes: '512x512', 
+            type: 'image/png',
+            purpose: 'any'
+          }
         ]
       }
     })

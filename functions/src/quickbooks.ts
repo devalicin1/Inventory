@@ -498,19 +498,47 @@ export async function createQuickBooksInvoice(
  */
 export async function importProductsFromQuickBooks(
   workspaceId: string,
-  allowedSkus?: string[]
-): Promise<{ imported: number; updated: number; skipped: number; errors: number }> {
+  allowedSkus?: string[],
+  options?: { jobId?: string; trigger?: 'manual' | 'auto' }
+): Promise<{ imported: number; updated: number; skipped: number; errors: number; totalItems: number }> {
   console.log(`[importProductsFromQuickBooks] Starting import for workspace: ${workspaceId}`)
   console.log('[importProductsFromQuickBooks] allowedSkus:', allowedSkus)
   const db = admin.firestore()
   const startedAt = admin.firestore.FieldValue.serverTimestamp()
+  const jobId = options?.jobId
+  const jobRef = jobId
+    ? db.doc(`workspaces/${workspaceId}/quickbooksImports/${jobId}`)
+    : null
+  
+  console.log(`[importProductsFromQuickBooks] jobId: ${jobId}, jobRef exists: ${!!jobRef}, jobRef path: ${jobRef?.path || 'N/A'}`)
 
   try {
     // Step 1: Get items from QuickBooks
     console.log('[importProductsFromQuickBooks] Step 1: Fetching items from QuickBooks...')
+    console.log('[importProductsFromQuickBooks] jobId:', jobId)
+    console.log('[importProductsFromQuickBooks] allowedSkus:', allowedSkus)
     const items = await getQuickBooksItems(workspaceId)
     console.log(`[importProductsFromQuickBooks] Step 1 complete: Found ${items.length} items`)
-    
+    console.log(`[importProductsFromQuickBooks] Items array type: ${Array.isArray(items) ? 'array' : typeof items}`)
+    if (items.length === 0) {
+      console.warn('[importProductsFromQuickBooks] WARNING: No items found from QuickBooks!')
+    }
+    const MAX_DETAILS = 200
+    type ItemDetail = {
+      sku?: string
+      name?: string
+      quickBooksItemId?: string | null
+      productId?: string | null
+      action: 'imported' | 'updated' | 'skipped' | 'error'
+      reason?: string
+    }
+    const details: ItemDetail[] = []
+    const pushDetail = (detail: ItemDetail) => {
+      if (details.length < MAX_DETAILS) {
+        details.push(detail)
+      }
+    }
+
     if (!Array.isArray(items)) {
       throw new Error(`Expected array but got ${typeof items}`)
     }
@@ -519,8 +547,85 @@ export async function importProductsFromQuickBooks(
     let updated = 0
     let skipped = 0
     let errors = 0
+    let processed = 0
+
+    // Initialize job document if provided
+    if (jobRef) {
+      await jobRef.set(
+        {
+          type: 'product_import',
+          trigger: options?.trigger || 'manual',
+          status: 'running',
+          startedAt,
+          totalItems: items.length,
+          processed: 0,
+          imported: 0,
+          updated: 0,
+          skipped: 0,
+          errors: 0,
+          allowedSkus: allowedSkus ?? [],
+          lastUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      )
+    }
+
+    const flushProgress = async () => {
+      if (!jobRef) {
+        console.warn('[importProductsFromQuickBooks] flushProgress called but jobRef is null/undefined')
+        return
+      }
+      try {
+        const progressData = {
+          processed,
+          imported,
+          updated,
+          skipped,
+          errors,
+          totalItems: items.length,
+          details: {
+            items: details,
+            truncated: details.length >= MAX_DETAILS,
+          },
+          lastUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }
+        console.log(`[importProductsFromQuickBooks] flushProgress: Writing to Firestore jobRef=${jobRef.path}, data:`, {
+          processed,
+          imported,
+          updated,
+          skipped,
+          errors,
+          totalItems: items.length,
+        })
+        await jobRef.set(progressData, { merge: true })
+        console.log(`[importProductsFromQuickBooks] Progress flushed successfully: ${processed}/${items.length} processed (imported: ${imported}, updated: ${updated}, skipped: ${skipped}, errors: ${errors})`)
+      } catch (error: any) {
+        console.error('[importProductsFromQuickBooks] Failed to update job progress:', error)
+        console.error('[importProductsFromQuickBooks] Error details:', {
+          processed,
+          imported,
+          updated,
+          skipped,
+          errors,
+          totalItems: items.length,
+          errorMessage: error?.message,
+          errorStack: error?.stack,
+        })
+      }
+    }
     
     console.log(`[importProductsFromQuickBooks] Step 2: Processing ${items.length} items...`)
+    console.log(`[importProductsFromQuickBooks] jobRef check: jobId=${jobId}, jobRef=${!!jobRef ? 'exists' : 'null'}`)
+    
+    // Send initial progress update immediately so frontend knows totalItems
+    // This MUST happen after items are fetched to ensure totalItems is correct
+    if (jobRef) {
+      console.log(`[importProductsFromQuickBooks] Sending initial progress update: totalItems=${items.length}, processed=${processed}`)
+      await flushProgress()
+      console.log(`[importProductsFromQuickBooks] Initial progress update sent`)
+    } else {
+      console.warn(`[importProductsFromQuickBooks] WARNING: jobRef is null! Cannot update progress. jobId=${jobId}`)
+    }
     
     const allowedSet = allowedSkus && allowedSkus.length > 0
       ? new Set(allowedSkus.map(s => String(s).trim()))
@@ -528,46 +633,117 @@ export async function importProductsFromQuickBooks(
     
     for (let i = 0; i < items.length; i++) {
       const item = items[i]
-      console.log(`[importProductsFromQuickBooks] Processing item ${i + 1}/${items.length}: ${item?.Name || 'Unknown'}`)
       
+      // Increment processed counter at the START of each iteration
+      // This ensures ALL items are counted, including skipped ones
+      processed++
+      console.log(
+        `[importProductsFromQuickBooks] Processing item ${i + 1}/${items.length} (processed: ${processed}): ${ 
+          item?.Name || 'Unknown'
+        }`
+      )
+
+      const skuRaw = String(item?.Sku || '').trim()
+      const normalizedSku = skuRaw.toUpperCase()
+      const nameRaw = String(item?.Name || '').trim()
+
       // Only import Inventory type items
-      if (!item || item.Type !== 'Inventory' || !item.Sku || !item.Name) {
-        console.log(`[importProductsFromQuickBooks] Skipping item (invalid type/SKU/name): Type=${item?.Type}, SKU=${item?.Sku}, Name=${item?.Name}`)
+      if (!item || item.Type !== 'Inventory' || !skuRaw || !nameRaw) {
+        console.log(
+          `[importProductsFromQuickBooks] Skipping item (invalid type/SKU/name): Type=${item?.Type}, SKU=${item?.Sku}, Name=${item?.Name}`
+        )
         skipped++
+        pushDetail({
+          sku: skuRaw || item?.Sku,
+          name: nameRaw || item?.Name,
+          quickBooksItemId: item?.Id ? String(item.Id) : null,
+          productId: null,
+          action: 'skipped',
+          reason: 'Non-inventory item or missing SKU/name',
+        })
+        // Update progress before continuing
+        if (jobRef && (processed % 5 === 0 || processed === items.length)) {
+          await flushProgress()
+        }
         continue
       }
 
-      const sku = String(item.Sku || '').trim()
+      const sku = normalizedSku
 
       // If user selected specific SKUs, skip others
       if (allowedSet && !allowedSet.has(sku)) {
-        console.log(`[importProductsFromQuickBooks] Skipping item not in allowedSkus: SKU=${sku}`)
+        console.log(
+          `[importProductsFromQuickBooks] Skipping item not in allowedSkus: SKU=${sku}`
+        )
         skipped++
+        pushDetail({
+          sku,
+          name: nameRaw,
+          quickBooksItemId: item.Id ? String(item.Id) : null,
+          productId: null,
+          action: 'skipped',
+          reason: 'SKU not in selected list',
+        })
+        // Update progress before continuing
+        if (jobRef && (processed % 5 === 0 || processed === items.length)) {
+          await flushProgress()
+        }
         continue
       }
-      
+
       try {
-        // Check if product already exists by SKU
-        console.log(`[importProductsFromQuickBooks] Checking if product exists: SKU=${sku}`)
-        const existingQuery = db.collection(`workspaces/${workspaceId}/products`)
-          .where('sku', '==', sku)
-          .limit(1)
-        
-        const existingSnap = await existingQuery.get()
+        // First try to find by QuickBooks Item Id (stable identifier)
+        let existingDoc: FirebaseFirestore.QueryDocumentSnapshot<FirebaseFirestore.DocumentData> | null =
+          null
+
+        if (item.Id) {
+          const idQuery = db
+            .collection(`workspaces/${workspaceId}/products`)
+            .where('quickBooksItemId', '==', String(item.Id))
+            .limit(1)
+
+          const idSnap = await idQuery.get()
+          if (!idSnap.empty) {
+            existingDoc = idSnap.docs[0]
+            console.log(
+              `[importProductsFromQuickBooks] Found existing product by QuickBooks Id for SKU=${sku}, productId=${existingDoc.id}`
+            )
+          }
+        }
+
+        // Fallback: check by normalized SKU (in case older records don't have quickBooksItemId)
+        if (!existingDoc) {
+          console.log(`[importProductsFromQuickBooks] Checking if product exists by SKU=${sku}`)
+          const existingQuery = db
+            .collection(`workspaces/${workspaceId}/products`)
+            .where('sku', '==', sku)
+            .limit(2)
+
+          const existingSnap = await existingQuery.get()
+
+          if (!existingSnap.empty) {
+            // If multiple products share same SKU, always update the first one to avoid creating more duplicates
+            if (existingSnap.size > 1) {
+              console.warn(
+                `[importProductsFromQuickBooks] Multiple products found for SKU=${sku}. Will update the first one and log a warning.`
+              )
+            }
+            existingDoc = existingSnap.docs[0]
+          }
+        }
 
         // Try to fetch image URL once per item
         let imageUrl: string | null = null
         if (item.Id) {
           imageUrl = await getQuickBooksItemImageUrl(workspaceId, String(item.Id))
         }
-        
-        if (!existingSnap.empty) {
-          const existingDoc = existingSnap.docs[0]
+
+        if (existingDoc) {
           const existingData = existingDoc.data()
 
           const updates: any = {}
 
-          const newName = String(item.Name || '').trim()
+          const newName = nameRaw
           const newPrice = Number(item.UnitPrice) || 0
           const newReorderPoint = Number(item.ReorderPoint) || 0
           const newQbId = item.Id ? String(item.Id) : null
@@ -576,7 +752,10 @@ export async function importProductsFromQuickBooks(
           if (newName && newName !== (existingData.name || '')) {
             updates.name = newName
           }
-          if (existingData.pricePerBox === undefined || existingData.pricePerBox !== newPrice) {
+          if (
+            existingData.pricePerBox === undefined ||
+            existingData.pricePerBox !== newPrice
+          ) {
             updates.pricePerBox = newPrice
           }
           if (
@@ -597,17 +776,39 @@ export async function importProductsFromQuickBooks(
             updates.quickBooksLastSyncAt = admin.firestore.FieldValue.serverTimestamp()
             await existingDoc.ref.update(updates)
             updated++
+            pushDetail({
+              sku,
+              name: newName,
+              quickBooksItemId: newQbId,
+              productId: existingDoc.id,
+              action: 'updated',
+              reason: 'Updated existing product from QuickBooks',
+            })
           } else {
             skipped++
+            pushDetail({
+              sku,
+              name: newName,
+              quickBooksItemId: newQbId,
+              productId: existingDoc.id,
+              action: 'skipped',
+              reason: 'No changes (already up to date)',
+            })
           }
 
+          // Update progress before continuing
+          if (jobRef && (processed % 5 === 0 || processed === items.length)) {
+            await flushProgress()
+          }
           continue
         }
-        
+
         // Create new product
-        console.log(`[importProductsFromQuickBooks] Creating product: ${item.Name} (${sku})`)
+        console.log(
+          `[importProductsFromQuickBooks] Creating product: ${item.Name} (${sku})`
+        )
         const productData: any = {
-          name: String(item.Name || '').trim(),
+          name: nameRaw,
           sku,
           uom: 'unit', // Default UOM, can be customized
           minStock: 0,
@@ -622,22 +823,41 @@ export async function importProductsFromQuickBooks(
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           quickBooksLastSyncAt: admin.firestore.FieldValue.serverTimestamp(),
         }
-        
+
         // Validate required fields
         if (!productData.name || !productData.sku) {
-          console.error(`[importProductsFromQuickBooks] Invalid product data:`, productData)
+          console.error(
+            `[importProductsFromQuickBooks] Invalid product data:`,
+            productData
+          )
           errors++
+          pushDetail({
+            sku,
+            name: productData.name,
+            quickBooksItemId: productData.quickBooksItemId,
+            productId: null,
+            action: 'error',
+            reason: 'Invalid product data (missing name or SKU)',
+          })
+          // Update progress before continuing
+          if (jobRef && (processed % 5 === 0 || processed === items.length)) {
+            await flushProgress()
+          }
           continue
         }
-        
-        const productRef = await db.collection(`workspaces/${workspaceId}/products`).add(productData)
+
+        const productRef = await db
+          .collection(`workspaces/${workspaceId}/products`)
+          .add(productData)
         const productId = productRef.id
         console.log(`[importProductsFromQuickBooks] Product created: ${productId}`)
-        
+
         // If there's initial quantity, create stock transaction
         const qty = Number(item.QtyOnHand) || 0
         if (qty > 0) {
-          console.log(`[importProductsFromQuickBooks] Creating stock transaction: qty=${qty}`)
+          console.log(
+            `[importProductsFromQuickBooks] Creating stock transaction: qty=${qty}`
+          )
           await db.collection(`workspaces/${workspaceId}/stockTxns`).add({
             workspaceId,
             timestamp: admin.firestore.FieldValue.serverTimestamp(),
@@ -648,15 +868,40 @@ export async function importProductsFromQuickBooks(
             reason: 'Imported from QuickBooks',
           })
         }
-        
+
         imported++
+        pushDetail({
+          sku,
+          name: nameRaw,
+          quickBooksItemId: item.Id ? String(item.Id) : null,
+          productId,
+          action: 'imported',
+          reason: 'Imported as new product from QuickBooks',
+        })
       } catch (error: any) {
-        console.error(`[importProductsFromQuickBooks] Error importing product ${item.Name} (${sku}):`, error)
+        console.error(
+          `[importProductsFromQuickBooks] Error importing product ${item.Name} (${sku}):`,
+          error
+        )
         console.error(`[importProductsFromQuickBooks] Error stack:`, error.stack)
         errors++
+        pushDetail({
+          sku,
+          name: nameRaw,
+          quickBooksItemId: item.Id ? String(item.Id) : null,
+          productId: null,
+          action: 'error',
+          reason: error?.message || 'Unknown error while importing product',
+        })
+      }
+
+      // Update job progress periodically (every 5 items for better responsiveness)
+      // Note: processed++ is now at the start of the loop, so we just need to flush progress here
+      if (jobRef && (processed % 5 === 0 || processed === items.length)) {
+        await flushProgress()
       }
     }
-    
+
     console.log(
       `[importProductsFromQuickBooks] Completed: ${imported} imported, ${updated} updated, ${skipped} skipped, ${errors} errors`
     )
@@ -664,7 +909,7 @@ export async function importProductsFromQuickBooks(
     // Log operation under workspace (manual trigger by default)
     await db.collection(`workspaces/${workspaceId}/quickbooksLogs`).add({
       type: 'product_import',
-      trigger: 'manual',
+      trigger: options?.trigger || 'manual',
       status: errors > 0 ? 'failed' : 'success',
       startedAt,
       finishedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -675,9 +920,30 @@ export async function importProductsFromQuickBooks(
       filteredBySkus: !!allowedSkus && allowedSkus.length > 0,
       allowedSkus: allowedSkus ?? [],
       totalItemsFromQuickBooks: items.length,
+      details: {
+        items: details,
+        truncated: details.length >= MAX_DETAILS,
+      },
     })
 
-    return { imported, updated, skipped, errors }
+    // Final job update
+    if (jobRef) {
+      await jobRef.set(
+        {
+          status: errors > 0 ? 'failed' : 'success',
+          processed,
+          imported,
+          updated,
+          skipped,
+          errors,
+          totalItems: items.length,
+          finishedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      )
+    }
+
+    return { imported, updated, skipped, errors, totalItems: items.length }
   } catch (error: any) {
     console.error('[importProductsFromQuickBooks] Fatal error:', error)
     console.error('[importProductsFromQuickBooks] Error stack:', error.stack)
@@ -686,13 +952,26 @@ export async function importProductsFromQuickBooks(
     // Log failed operation
     await db.collection(`workspaces/${workspaceId}/quickbooksLogs`).add({
       type: 'product_import',
-      trigger: 'manual',
+      trigger: options?.trigger || 'manual',
       startedAt,
       finishedAt: admin.firestore.FieldValue.serverTimestamp(),
       status: 'failed',
       errorMessage: error.message || 'Unknown error',
       allowedSkus: allowedSkus ?? [],
     })
+
+    // Mark job as failed if tracking
+    if (jobRef) {
+      await jobRef.set(
+        {
+          status: 'failed',
+          errorMessage: error.message || 'Unknown error',
+          finishedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      )
+    }
+
     throw new Error(`Failed to import products from QuickBooks: ${error.message || 'Unknown error'}`)
   }
 }
@@ -721,41 +1000,109 @@ export async function syncInventoryFromQuickBooks(workspaceId: string): Promise<
       if (!productsSnap.empty) {
         matched++
         const productDoc = productsSnap.docs[0]
+        const productId = productDoc.id
         const currentData = productDoc.data()
 
         const newQty = item.QtyOnHand ?? 0
-        const currentQty =
-          (currentData.quantityBox as number | undefined) ??
-          (currentData.qtyOnHand as number | undefined) ??
-          0
+
+        // Calculate actual current stock from all transactions (source of truth)
+        // This ensures we compare against the real stock, not a potentially stale qtyOnHand
+        const txnsQuery = db.collection(`workspaces/${workspaceId}/stockTxns`)
+          .where('productId', '==', productId)
+        const txnsSnap = await txnsQuery.get()
+        
+        let calculatedQty = 0
+        txnsSnap.docs.forEach(txnDoc => {
+          const txn = txnDoc.data()
+          const txnQty = Number(txn.qty || 0)
+          const txnType = txn.type
+          
+          // Handle both signed qty (new format) and unsigned qty with type (old format)
+          // If qty is negative, it's already signed (new format), use as-is
+          // If qty is positive, determine sign from type (old format)
+          let deltaQty = txnQty
+          if (txnQty >= 0) {
+            // qty is positive, determine sign from type (backward compatibility)
+            switch (txnType) {
+              case 'Produce':
+              case 'Receive':
+              case 'Adjust+':
+                deltaQty = Math.abs(txnQty)
+                break
+              case 'Consume':
+              case 'Ship':
+              case 'Issue':
+              case 'Adjust-':
+                deltaQty = -Math.abs(txnQty)
+                break
+              case 'Transfer':
+                deltaQty = txn.toLoc ? Math.abs(txnQty) : -Math.abs(txnQty)
+                break
+              case 'Count':
+                deltaQty = 0
+                break
+              default:
+                // For unknown types, assume qty is already signed
+                deltaQty = txnQty
+            }
+          }
+          // If qty is negative, it's already signed (new format), use as-is
+          calculatedQty += deltaQty
+        })
+
+        // Use calculated quantity as the current stock (source of truth)
+        // Fall back to qtyOnHand if no transactions exist
+        const currentQty = txnsSnap.size > 0 
+          ? calculatedQty 
+          : ((currentData.qtyOnHand as number | undefined) ?? 0)
 
         // Update if quantity changed
         if (newQty !== currentQty) {
           updated++
           const diff = newQty - currentQty
 
-          // Update product base quantity
-          await productDoc.ref.update({
-            quantityBox: newQty,
-            quickBooksItemId: item.Id,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            quickBooksLastSyncAt: admin.firestore.FieldValue.serverTimestamp(),
-          })
-
-          // Create stock transaction to keep history consistent
-          if (diff !== 0) {
+          // Only create transaction if there's a meaningful difference
+          if (Math.abs(diff) > 0.0001) {
+            // Create stock transaction to keep history consistent
+            // Use signed qty (positive for Receive, negative for Issue) to match createStockTransaction behavior
+            const txnType = diff > 0 ? 'Receive' : 'Issue'
+            const signedQty = diff > 0 ? Math.abs(diff) : -Math.abs(diff)
+            
             await db.collection(`workspaces/${workspaceId}/stockTxns`).add({
               workspaceId,
               timestamp: admin.firestore.FieldValue.serverTimestamp(),
-              type: diff > 0 ? 'Receive' : 'Issue',
-              productId: productDoc.id,
-              qty: Math.abs(diff),
+              type: txnType,
+              productId: productId,
+              qty: signedQty, // Use signed qty (positive for Receive, negative for Issue)
               userId: 'system',
               reason: 'Synced inventory from QuickBooks',
+            })
+
+            // Update product qtyOnHand using increment (like createStockTransaction does)
+            // This ensures consistency with the transaction-based stock tracking
+            await productDoc.ref.update({
+              quantityBox: newQty,
+              qtyOnHand: admin.firestore.FieldValue.increment(signedQty),
+              quickBooksItemId: item.Id,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              quickBooksLastSyncAt: admin.firestore.FieldValue.serverTimestamp(),
+            })
+          } else {
+            // No transaction needed, just update metadata
+            await productDoc.ref.update({
+              quantityBox: newQty,
+              quickBooksItemId: item.Id,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              quickBooksLastSyncAt: admin.firestore.FieldValue.serverTimestamp(),
             })
           }
         } else {
           unchanged++
+          // Still update metadata even if quantity hasn't changed
+          await productDoc.ref.update({
+            quickBooksItemId: item.Id,
+            quickBooksLastSyncAt: admin.firestore.FieldValue.serverTimestamp(),
+          })
         }
       }
     }

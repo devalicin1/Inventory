@@ -727,6 +727,12 @@ export async function getInventoryLedgerReport(
   try {
     const txnsCol = collection(db, 'workspaces', workspaceId, 'stockTxns')
     
+    // Safety: limit the number of transactions processed for performance
+    // You can override via (filters as any).limit if needed
+    const maxTxns: number = (filters as any)?.limit && typeof (filters as any).limit === 'number'
+      ? Math.max(100, Math.min(5000, (filters as any).limit)) // clamp between 100 and 5000
+      : 1000
+    
     // Build query based on filters
     let q = query(txnsCol, orderBy('timestamp', 'desc'))
     
@@ -759,15 +765,19 @@ export async function getInventoryLedgerReport(
       q = query(txnsCol, where('userId', '==', filters.user), orderBy('timestamp', 'desc'))
     }
     
+    // Apply hard limit to avoid loading too many documents at once
+    q = query(q, limit(maxTxns))
+    
     const txnsSnap = await getDocs(q)
     
     // Get all products for SKU lookup
     const products = await listProducts(workspaceId)
     const productMap = new Map(products.map(p => [p.id, p]))
     
-    // Build ledger rows with running balance
+    // Build ledger rows with running balance PER PRODUCT
     const ledgerRows: InventoryLedgerRow[] = []
-    let runningBalance = 0
+    // Track running balance per product (productId -> balance)
+    const productBalances = new Map<string, number>()
     
     // Process transactions in chronological order (oldest first for running balance)
     const txns = txnsSnap.docs.map(d => ({ id: d.id, ...(d.data() as any) }))
@@ -777,7 +787,7 @@ export async function getInventoryLedgerReport(
       return dateA.getTime() - dateB.getTime()
     })
     
-    // Create a map to track products we couldn't find (for fetching individually)
+    // Create a map to track products we couldn't find (for fetching individually, with safety guard)
     const missingProductIds = new Set<string>()
     
     // First pass: identify missing products
@@ -787,20 +797,28 @@ export async function getInventoryLedgerReport(
       }
     })
     
-    // Try to fetch missing products individually from Firestore
+    // Try to fetch missing products individually from Firestore – but only up to a safe limit
     if (missingProductIds.size > 0) {
-      console.log('[Ledger] Fetching', missingProductIds.size, 'missing products individually')
-      const { doc, getDoc } = await import('firebase/firestore')
-      
-      for (const productId of missingProductIds) {
-        try {
-          const productDoc = await getDoc(doc(db, 'workspaces', workspaceId, 'products', productId))
-          if (productDoc.exists()) {
-            const data = productDoc.data()
-            productMap.set(productId, { id: productId, ...data } as any)
+      const MAX_MISSING_FETCH = 200
+      if (missingProductIds.size > MAX_MISSING_FETCH) {
+        console.warn(
+          `[Ledger] Skipping individual fetch for ${missingProductIds.size} missing products (limit ${MAX_MISSING_FETCH}). ` +
+          'They will appear as deleted products in the ledger.'
+        )
+      } else {
+        console.log('[Ledger] Fetching', missingProductIds.size, 'missing products individually')
+        const { doc, getDoc } = await import('firebase/firestore')
+        
+        for (const productId of missingProductIds) {
+          try {
+            const productDoc = await getDoc(doc(db, 'workspaces', workspaceId, 'products', productId))
+            if (productDoc.exists()) {
+              const data = productDoc.data()
+              productMap.set(productId, { id: productId, ...data } as any)
+            }
+          } catch (e) {
+            // Product doesn't exist, will show as deleted
           }
-        } catch (e) {
-          // Product doesn't exist, will show as deleted
         }
       }
     }
@@ -822,11 +840,48 @@ export async function getInventoryLedgerReport(
         if (txnDate > toDate) return
       }
       
-      const qty = Number(txn.qty || 0)
-      const qtyIn = qty > 0 ? qty : 0
-      const qtyOut = qty < 0 ? Math.abs(qty) : 0
-      const net = qty
-      runningBalance += qty
+      // Calculate qty based on transaction type and signed qty
+      const txnQty = Number(txn.qty || 0)
+      const txnType = txn.type
+      
+      // Handle both signed qty (new format) and unsigned qty with type (old format)
+      let deltaQty = txnQty
+      if (txnQty >= 0) {
+        // qty is positive, determine sign from type
+        switch (txnType) {
+          case 'Produce':
+          case 'Receive':
+          case 'Adjust+':
+            deltaQty = Math.abs(txnQty)
+            break
+          case 'Consume':
+          case 'Ship':
+          case 'Issue':
+          case 'Adjust-':
+            deltaQty = -Math.abs(txnQty)
+            break
+          case 'Transfer':
+            deltaQty = txn.toLoc ? Math.abs(txnQty) : -Math.abs(txnQty)
+            break
+          case 'Count':
+            deltaQty = 0
+            break
+          default:
+            // For unknown types, assume qty is already signed
+            deltaQty = txnQty
+        }
+      }
+      // If qty is negative, it's already signed (new format), use as-is
+      
+      const qtyIn = deltaQty > 0 ? deltaQty : 0
+      const qtyOut = deltaQty < 0 ? Math.abs(deltaQty) : 0
+      const net = deltaQty
+      
+      // Update running balance for THIS PRODUCT ONLY
+      const productId = txn.productId || 'unknown'
+      const currentBalance = productBalances.get(productId) || 0
+      const newBalance = currentBalance + deltaQty
+      productBalances.set(productId, newBalance)
       
       // Get product info - if not found, show as deleted with partial ID
       const sku = product?.sku || txn.sku || `#${txn.productId?.substring(0, 6) || 'N/A'}`
@@ -846,7 +901,7 @@ export async function getInventoryLedgerReport(
         qtyIn,
         qtyOut,
         net,
-        runningBalance,
+        runningBalance: newBalance, // Per-product balance
         user: txn.userId || 'Unknown',
         notes: reason,
         reason
