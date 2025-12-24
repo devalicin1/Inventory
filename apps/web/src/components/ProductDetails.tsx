@@ -509,6 +509,14 @@ export function ProductDetails({ product, onClose, onSaved, canManage = false }:
     enabled: userIds.length > 0 && !!workspaceId,
   })
 
+  // Helper function to get username from userId
+  const getUserName = (userId: string | undefined | null): string => {
+    if (!userId) return 'System'
+    if (userId === 'system' || userId.toLowerCase() === 'system') return 'System'
+    if (userId === 'anonymous') return 'Anonymous'
+    return userNames[userId] || userId
+  }
+
   // Process History from stockTxns
   const history = useMemo(() => {
     if (!stockTxns.length) return []
@@ -1909,7 +1917,7 @@ export function ProductDetails({ product, onClose, onSaved, canManage = false }:
                           Reference: h.reference || '',
                         'Unit Cost': h.unitCost || '',
                           Date: new Date(h.createdAt).toLocaleString('en-GB'),
-                          User: h.createdBy,
+                          User: getUserName(h.createdBy),
                         }))
                         downloadCSV(`product-${product.sku || product.id}-transactions.csv`, toCSV(exportData))
                       }}
@@ -2028,7 +2036,7 @@ export function ProductDetails({ product, onClose, onSaved, canManage = false }:
                               )}
                               <div className="flex items-center justify-between">
                                 <span className="text-xs text-gray-500 font-medium">User</span>
-                                <span className="text-xs text-gray-700 font-semibold">{userNames[h.createdBy] || h.createdBy || 'System'}</span>
+                                <span className="text-xs text-gray-700 font-semibold">{getUserName(h.createdBy)}</span>
                               </div>
                               {isOwner && (
                                 <div className="flex items-center justify-between pt-2 border-t border-gray-100">
@@ -2179,9 +2187,9 @@ export function ProductDetails({ product, onClose, onSaved, canManage = false }:
 
                                 {/* User - Hidden on smaller screens */}
                                 <td className="py-3 px-3 hidden lg:table-cell max-w-[120px]">
-                                  <div className="truncate" title={userNames[h.createdBy] || h.createdBy || 'System'}>
+                                  <div className="truncate" title={getUserName(h.createdBy)}>
                                     <span className="text-xs font-medium text-gray-700">
-                                      {userNames[h.createdBy] || h.createdBy || 'System'}
+                                      {getUserName(h.createdBy)}
                                     </span>
                                   </div>
                                 </td>
