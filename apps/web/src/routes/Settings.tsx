@@ -518,58 +518,82 @@ export function Settings() {
       title="Settings"
       subtitle="Manage units of measure, categories, subcategories, and custom fields"
     >
-      {/* Onboarding Banner */}
-      {isOwner && <ConfigurationBanner showOnlyCritical={false} compact={false} />}
+      <div className="space-y-6">
+        {/* Onboarding Banner - Subtle placement */}
+        {isOwner && (
+          <div className="mb-2">
+            <ConfigurationBanner showOnlyCritical={true} compact={true} />
+          </div>
+        )}
 
-      {/* Tabs */}
-      <div className="border-b border-gray-200">
-        <nav className="-mb-px flex space-x-8">
-          {[
-            { id: 'uom', name: 'Units of Measure', icon: '📏' },
-            { id: 'categories', name: 'Categories', icon: '📁' },
-            { id: 'subcategories', name: 'Subcategories', icon: '📂' },
-            { id: 'custom-fields', name: 'Custom Fields', icon: '⚙️' },
-            { id: 'stock-reasons', name: 'Stock Reasons', icon: '📋' },
-            { id: 'report-settings', name: 'Report Settings', icon: '📊' },
-            { id: 'vendors', name: 'Vendors', icon: '🏢' },
-            { id: 'addresses', name: 'Addresses', icon: '📍' },
-            { id: 'company-information', name: 'Company Information', icon: '🏛️' },
-            { id: 'quickbooks', name: 'QuickBooks', icon: '💼' }
-          ].map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
-              className={`py-2 px-1 border-b-2 font-medium text-sm h-11 ${
-                activeTab === tab.id
-                  ? 'border-blue-500 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              }`}
-            >
-              <span className="mr-2">{tab.icon}</span>
-              {tab.name}
-            </button>
-          ))}
-        </nav>
-      </div>
+        {/* Modern Tab Navigation */}
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
+          <div className="border-b border-gray-100">
+            <nav className="flex space-x-1 px-4 overflow-x-auto scrollbar-hide">
+              {[
+                { id: 'uom', name: 'Units of Measure', icon: '📏' },
+                { id: 'categories', name: 'Categories', icon: '📁' },
+                { id: 'subcategories', name: 'Subcategories', icon: '📂' },
+                { id: 'custom-fields', name: 'Custom Fields', icon: '⚙️' },
+                { id: 'stock-reasons', name: 'Stock Reasons', icon: '📋' },
+                { id: 'report-settings', name: 'Report Settings', icon: '📊' },
+                { id: 'vendors', name: 'Vendors', icon: '🏢' },
+                { id: 'addresses', name: 'Addresses', icon: '📍' },
+                { id: 'company-information', name: 'Company Information', icon: '🏛️' },
+                { id: 'quickbooks', name: 'QuickBooks', icon: '💼' }
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id as any)}
+                  className={`relative py-3 px-4 font-medium text-sm transition-all whitespace-nowrap ${
+                    activeTab === tab.id
+                      ? 'text-blue-600 bg-blue-50'
+                      : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                  }`}
+                >
+                  <span className="mr-2">{tab.icon}</span>
+                  {tab.name}
+                  {activeTab === tab.id && (
+                    <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600 rounded-t-full" />
+                  )}
+                </button>
+              ))}
+            </nav>
+          </div>
 
-      {/* Content */}
-      <div className="bg-white rounded-[14px] border border-gray-200">
-        <div className="p-6 border-b border-gray-200">
-          <div className="flex justify-between items-center">
-            <h2 className="text-lg font-semibold text-gray-900">
-              {activeTab === 'uom' && 'Units of Measure'}
-              {activeTab === 'categories' && 'Categories'}
-              {activeTab === 'subcategories' && 'Subcategories'}
-              {activeTab === 'custom-fields' && 'Custom Fields'}
-              {activeTab === 'stock-reasons' && 'Stock Operation Reasons'}
-              {activeTab === 'report-settings' && 'Report Customization'}
-              {activeTab === 'vendors' && 'Vendors'}
-              {activeTab === 'addresses' && 'Addresses'}
-              {activeTab === 'company-information' && 'Company Information'}
-              {activeTab === 'quickbooks' && 'QuickBooks Integration'}
-            </h2>
-            {activeTab !== 'report-settings' && activeTab !== 'company-information' && activeTab !== 'quickbooks' && canManageSettings && (
-              <div className="flex space-x-2">
+          {/* Content */}
+          <div className="bg-white rounded-b-xl">
+            {/* Tab Header */}
+            <div className="px-6 py-5 border-b border-gray-100">
+              <div className="flex justify-between items-center">
+                <div>
+                  <h2 className="text-xl font-semibold text-gray-900">
+                    {activeTab === 'uom' && 'Units of Measure'}
+                    {activeTab === 'categories' && 'Categories'}
+                    {activeTab === 'subcategories' && 'Subcategories'}
+                    {activeTab === 'custom-fields' && 'Custom Fields'}
+                    {activeTab === 'stock-reasons' && 'Stock Operation Reasons'}
+                    {activeTab === 'report-settings' && 'Report Customization'}
+                    {activeTab === 'vendors' && 'Vendors'}
+                    {activeTab === 'addresses' && 'Addresses'}
+                    {activeTab === 'company-information' && 'Company Information'}
+                    {activeTab === 'quickbooks' && 'QuickBooks Integration'}
+                  </h2>
+                  <p className="text-sm text-gray-500 mt-1">
+                    {activeTab === 'uom' && 'Define measurement units for your inventory items'}
+                    {activeTab === 'categories' && 'Organize products into categories'}
+                    {activeTab === 'subcategories' && 'Create subcategories within your categories'}
+                    {activeTab === 'custom-fields' && 'Add custom fields to track additional product information'}
+                    {activeTab === 'stock-reasons' && 'Manage reasons for stock adjustments and operations'}
+                    {activeTab === 'report-settings' && 'Customize report settings and configurations'}
+                    {activeTab === 'vendors' && 'Manage your vendor and supplier information'}
+                    {activeTab === 'addresses' && 'Store and manage business addresses'}
+                    {activeTab === 'company-information' && 'Configure your company details and information'}
+                    {activeTab === 'quickbooks' && 'Connect and sync with QuickBooks'}
+                  </p>
+                </div>
+                {activeTab !== 'report-settings' && activeTab !== 'company-information' && activeTab !== 'quickbooks' && canManageSettings && (
+                  <div className="flex space-x-2">
                 {activeTab === 'uom' && uoms.length === 0 && (
                   <button
                     onClick={async () => {
@@ -589,7 +613,7 @@ export function Settings() {
                         showToast('Error creating default units: ' + (error instanceof Error ? error.message : 'Unknown error'), 'error')
                       }
                     }}
-                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium shadow-sm hover:shadow"
                   >
                     Use Common UOMs
                   </button>
@@ -615,7 +639,7 @@ export function Settings() {
                         showToast('Error creating default categories: ' + (error instanceof Error ? error.message : 'Unknown error'), 'error')
                       }
                     }}
-                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium shadow-sm hover:shadow"
                   >
                     Use Common Categories
                   </button>
@@ -651,7 +675,7 @@ export function Settings() {
                         showToast('Error creating default subcategories: ' + (error instanceof Error ? error.message : 'Unknown error'), 'error')
                       }
                     }}
-                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium shadow-sm hover:shadow"
                   >
                     Use Common Subcategories
                   </button>
@@ -670,7 +694,7 @@ export function Settings() {
                         showToast('Error initializing default reasons: ' + (error instanceof Error ? error.message : 'Unknown error'), 'error')
                       }
                     }}
-                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium shadow-sm hover:shadow"
                   >
                     Use Common Reasons
                   </button>
@@ -683,16 +707,22 @@ export function Settings() {
                     setFormData({})
                     setModalError(null)
                   }}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium shadow-sm hover:shadow"
                 >
-                  Add New
+                  <span className="flex items-center gap-2">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    </svg>
+                    Add New
+                  </span>
                 </button>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-        </div>
+            </div>
 
-        <div className="p-6">
+            {/* Tab Content */}
+            <div className="p-6">
           {activeTab === 'company-information' ? (
             <CompanyInformationTab
               companyInfo={companyInfo}
@@ -886,6 +916,8 @@ export function Settings() {
               )}
             </div>
           )}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1039,7 +1071,7 @@ export function Settings() {
             </div>
           </div>
         </div>
-      )}
+      </div>
     </PageShell>
   )
 }

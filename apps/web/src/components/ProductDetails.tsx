@@ -3536,7 +3536,7 @@ export function ProductDetails({ product, onClose, onSaved, canManage = false }:
               refetchTickets()
               onSaved?.()
             } catch (e) {
-              alert('Failed to delete ticket: ' + (e instanceof Error ? e.message : 'Unknown error'))
+              showToast('Failed to delete ticket: ' + (e instanceof Error ? e.message : 'Unknown error'), 'error')
             }
           }}
           isLoading={false}

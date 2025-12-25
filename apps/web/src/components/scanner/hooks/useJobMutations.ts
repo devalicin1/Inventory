@@ -11,6 +11,7 @@ import {
 } from '../../../api/production-jobs'
 import { getProductByCode } from '../../../api/inventory'
 import { createStockTransaction } from '../../../api/inventory'
+import { showToast } from '../../../components/ui/Toast'
 import type { Job } from '../../../api/production-jobs'
 
 export function useJobMutations(
@@ -79,10 +80,10 @@ export function useJobMutations(
       
       setActiveAction(null)
       setActionData({})
-      alert('Consumption recorded!')
+      showToast('Consumption recorded!', 'success')
     },
     onError: (error: any) => {
-      alert(error?.message || 'Failed to record consumption')
+      showToast(error?.message || 'Failed to record consumption', 'error')
     }
   })
 
@@ -110,13 +111,13 @@ export function useJobMutations(
       await queryClient.invalidateQueries({ queryKey: ['jobRuns', workspaceId, job!.id] })
       await queryClient.invalidateQueries({ queryKey: ['allJobRuns', workspaceId] })
       
-      alert('✓ Production output recorded!')
+      showToast('Production output recorded!', 'success')
       
       setActiveAction(null)
       setActionData({})
     },
     onError: (error: any) => {
-      alert(error?.message || 'Failed to record production output')
+      showToast(error?.message || 'Failed to record production output', 'error')
     }
   })
 
@@ -126,7 +127,7 @@ export function useJobMutations(
       queryClient.invalidateQueries({ queryKey: ['products', workspaceId] })
       setActiveAction(null)
       setActionData({})
-      alert('Stock transaction recorded!')
+      showToast('Stock transaction recorded!', 'success')
     },
   })
 
@@ -293,7 +294,7 @@ export function useJobMutations(
       setActionData({})
     },
     onError: (error: any) => {
-      alert(error?.message || 'Failed to move job to next stage')
+      showToast(error?.message || 'Failed to move job to next stage', 'error')
     }
   })
 
