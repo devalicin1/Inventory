@@ -18,6 +18,7 @@ import { ProductionSettings } from './components/ProductionSettings'
 import { Settings } from './routes/Settings'
 import { Integrations } from './routes/Integrations'
 import { QuickBooksCallback } from './routes/QuickBooksCallback'
+import { AcceptInvitation } from './routes/AcceptInvitation'
 import { Reports } from './routes/Reports'
 import { PurchaseOrders } from './routes/PurchaseOrders'
 import { PurchaseOrderForm } from './routes/PurchaseOrderForm'
@@ -163,6 +164,10 @@ const router = createBrowserRouter([
   {
     path: '/create-workspace',
     element: <CreateWorkspace />,
+  },
+  {
+    path: '/accept-invitation',
+    element: <AcceptInvitation />,
   },
   {
     path: '/',

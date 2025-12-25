@@ -51,6 +51,7 @@ import { PageShell } from '../components/layout/PageShell'
 import { showToast } from '../components/ui/Toast'
 import { ConfigurationBanner } from '../components/onboarding/ConfigurationBanner'
 import { getWorkspaceConfigurationStatus } from '../api/onboarding'
+import { TeamMembers } from '../components/TeamMembers'
 import {
   ArrowPathIcon,
   CheckCircleIcon,
@@ -64,11 +65,11 @@ export function Settings() {
   // Check for tab parameter in URL
   const urlParams = new URLSearchParams(window.location.search)
   const tabParam = urlParams.get('tab')
-  const initialTab = (tabParam && ['uom', 'categories', 'subcategories', 'custom-fields', 'stock-reasons', 'report-settings', 'vendors', 'addresses', 'company-information', 'quickbooks'].includes(tabParam))
+  const initialTab = (tabParam && ['uom', 'categories', 'subcategories', 'custom-fields', 'stock-reasons', 'report-settings', 'vendors', 'addresses', 'company-information', 'quickbooks', 'team-members'].includes(tabParam))
     ? tabParam as any
     : 'uom'
   
-  const [activeTab, setActiveTab] = useState<'uom' | 'categories' | 'subcategories' | 'custom-fields' | 'stock-reasons' | 'report-settings' | 'vendors' | 'addresses' | 'company-information' | 'quickbooks'>(initialTab)
+  const [activeTab, setActiveTab] = useState<'uom' | 'categories' | 'subcategories' | 'custom-fields' | 'stock-reasons' | 'report-settings' | 'vendors' | 'addresses' | 'company-information' | 'quickbooks' | 'team-members'>(initialTab)
   const [showCreate, setShowCreate] = useState(false)
   const [editingItem, setEditingItem] = useState<any>(null)
   const [formData, setFormData] = useState<any>({})
@@ -540,7 +541,8 @@ export function Settings() {
                 { id: 'vendors', name: 'Vendors', icon: '🏢' },
                 { id: 'addresses', name: 'Addresses', icon: '📍' },
                 { id: 'company-information', name: 'Company Information', icon: '🏛️' },
-                { id: 'quickbooks', name: 'QuickBooks', icon: '💼' }
+                { id: 'quickbooks', name: 'QuickBooks', icon: '💼' },
+                ...(isOwner ? [{ id: 'team-members', name: 'Team Members', icon: '👥' }] : [])
               ].map((tab) => (
                 <button
                   key={tab.id}
@@ -578,6 +580,7 @@ export function Settings() {
                     {activeTab === 'addresses' && 'Addresses'}
                     {activeTab === 'company-information' && 'Company Information'}
                     {activeTab === 'quickbooks' && 'QuickBooks Integration'}
+                    {activeTab === 'team-members' && 'Team Members'}
                   </h2>
                   <p className="text-sm text-gray-500 mt-1">
                     {activeTab === 'uom' && 'Define measurement units for your inventory items'}
@@ -590,9 +593,10 @@ export function Settings() {
                     {activeTab === 'addresses' && 'Store and manage business addresses'}
                     {activeTab === 'company-information' && 'Configure your company details and information'}
                     {activeTab === 'quickbooks' && 'Connect and sync with QuickBooks'}
+                    {activeTab === 'team-members' && 'Invite team members and manage their roles'}
                   </p>
                 </div>
-                {activeTab !== 'report-settings' && activeTab !== 'company-information' && activeTab !== 'quickbooks' && canManageSettings && (
+                {activeTab !== 'report-settings' && activeTab !== 'company-information' && activeTab !== 'quickbooks' && activeTab !== 'team-members' && canManageSettings && (
                   <div className="flex space-x-2">
                 {activeTab === 'uom' && uoms.length === 0 && (
                   <button
@@ -819,6 +823,16 @@ export function Settings() {
                 }
               }}
             />
+          ) : activeTab === 'team-members' ? (
+            <div className="px-6 py-5">
+              {isOwner ? (
+                <TeamMembers workspaceId={workspaceId || ''} />
+              ) : (
+                <div className="text-center py-12">
+                  <p className="text-gray-500">Only workspace owners can manage team members.</p>
+                </div>
+              )}
+            </div>
           ) : getCurrentLoading() ? (
             <div className="animate-pulse space-y-4">
               {[...Array(3)].map((_, i) => (

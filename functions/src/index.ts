@@ -3,6 +3,7 @@ import { onDocumentCreated } from 'firebase-functions/v2/firestore'
 import { onCall, onRequest } from 'firebase-functions/v2/https'
 import { onSchedule } from 'firebase-functions/v2/scheduler'
 import { setGlobalOptions } from 'firebase-functions/v2/options'
+import nodemailer from 'nodemailer'
 import {
   getQuickBooksConfig as getQBConfig,
   saveQuickBooksConfig as saveQBConfig,
@@ -721,5 +722,236 @@ export const createQuickBooksInvoice = onCall(async (request) => {
 
   const invoiceId = await createQBInvoice(workspaceId, invoice)
   return { invoiceId }
+})
+
+// ===== TEAM INVITATIONS =====
+
+/**
+ * Email transporter setup (using environment variables or default SMTP)
+ */
+function getEmailTransporter() {
+  // For production, use environment variables:
+  // SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
+  // For development/testing, you can use a service like Ethereal Email or Gmail
+  
+  const smtpHost = process.env.SMTP_HOST || 'smtp.gmail.com'
+  const smtpPort = parseInt(process.env.SMTP_PORT || '587', 10)
+  const smtpUser = process.env.SMTP_USER || ''
+  const smtpPass = process.env.SMTP_PASS || ''
+  
+  if (!smtpUser || !smtpPass) {
+    console.warn('[getEmailTransporter] SMTP credentials not configured. Email sending will fail.')
+    console.warn('Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS environment variables.')
+  }
+  
+  return nodemailer.createTransport({
+    host: smtpHost,
+    port: smtpPort,
+    secure: smtpPort === 465,
+    auth: {
+      user: smtpUser,
+      pass: smtpPass,
+    },
+  })
+}
+
+/**
+ * Send workspace invitation email
+ */
+export const sendWorkspaceInvitation = onCall(async (request) => {
+  const { workspaceId, email, role, inviterName, workspaceName } = request.data
+  const userId = request.auth?.uid
+  
+  if (!userId) throw new Error('Unauthenticated')
+  if (!workspaceId || !email || !role) {
+    throw new Error('workspaceId, email, and role are required')
+  }
+  
+  const db = admin.firestore()
+  
+  // Verify user is owner of the workspace
+  const userDoc = await db.doc(`workspaces/${workspaceId}/users/${userId}`).get()
+  if (!userDoc.exists) {
+    throw new Error('User not found in workspace')
+  }
+  
+  const userData = userDoc.data()
+  if (userData?.role !== 'owner') {
+    throw new Error('Only workspace owners can send invitations')
+  }
+  
+  // Check if user already exists in workspace
+  const existingUserQuery = await db
+    .collection('users')
+    .where('email', '==', email.toLowerCase())
+    .limit(1)
+    .get()
+  
+  let existingUserId: string | null = null
+  if (!existingUserQuery.empty) {
+    existingUserId = existingUserQuery.docs[0].id
+    const existingWorkspaceUser = await db
+      .doc(`workspaces/${workspaceId}/users/${existingUserId}`)
+      .get()
+    if (existingWorkspaceUser.exists) {
+      throw new Error('User is already a member of this workspace')
+    }
+  }
+  
+  // Generate a secure invitation token
+  const token = `${workspaceId}-${Date.now()}-${Math.random().toString(36).substring(2, 15)}-${Math.random().toString(36).substring(2, 15)}`
+  
+  // Create invitation document
+  const invitationRef = db.collection(`workspaces/${workspaceId}/invitations`).doc()
+  const invitationData = {
+    email: email.toLowerCase(),
+    role,
+    token,
+    status: 'pending',
+    createdBy: userId,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    expiresAt: admin.firestore.Timestamp.fromDate(
+      new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
+    ),
+    existingUserId, // If user already has account
+  }
+  
+  await invitationRef.set(invitationData)
+  
+  // Send email
+  try {
+    const transporter = getEmailTransporter()
+    const appUrl = process.env.APP_URL || 'http://localhost:5173'
+    const invitationLink = `${appUrl}/accept-invitation?token=${token}&workspaceId=${workspaceId}`
+    
+    const mailOptions = {
+      from: `"${workspaceName || 'Inventory System'}" <${process.env.SMTP_USER || 'noreply@inventory.com'}>`,
+      to: email,
+      subject: `You've been invited to join ${workspaceName || 'a workspace'}`,
+      html: `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Workspace Invitation</title>
+        </head>
+        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+            <h1 style="color: white; margin: 0;">You've Been Invited!</h1>
+          </div>
+          <div style="background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px;">
+            <p>Hello,</p>
+            <p><strong>${inviterName || 'A workspace owner'}</strong> has invited you to join <strong>${workspaceName || 'their workspace'}</strong> as a <strong>${role}</strong>.</p>
+            <p style="text-align: center; margin: 30px 0;">
+              <a href="${invitationLink}" 
+                 style="background: #667eea; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: bold;">
+                Accept Invitation
+              </a>
+            </p>
+            <p style="font-size: 12px; color: #666;">
+              Or copy and paste this link into your browser:<br>
+              <a href="${invitationLink}" style="color: #667eea; word-break: break-all;">${invitationLink}</a>
+            </p>
+            <p style="font-size: 12px; color: #999; margin-top: 30px; border-top: 1px solid #ddd; padding-top: 20px;">
+              This invitation will expire in 7 days. If you didn't expect this invitation, you can safely ignore this email.
+            </p>
+          </div>
+        </body>
+        </html>
+      `,
+      text: `
+        Hello,
+        
+        ${inviterName || 'A workspace owner'} has invited you to join ${workspaceName || 'their workspace'} as a ${role}.
+        
+        Click here to accept: ${invitationLink}
+        
+        This invitation will expire in 7 days.
+      `,
+    }
+    
+    await transporter.sendMail(mailOptions)
+    console.log(`[sendWorkspaceInvitation] Email sent to ${email}`)
+  } catch (error: any) {
+    console.error('[sendWorkspaceInvitation] Failed to send email:', error)
+    // Don't throw - invitation is still created in database
+    // User can resend email later
+  }
+  
+  return {
+    success: true,
+    invitationId: invitationRef.id,
+    token,
+  }
+})
+
+/**
+ * Accept workspace invitation
+ */
+export const acceptWorkspaceInvitation = onCall(async (request) => {
+  const { token, workspaceId, userId } = request.data
+  
+  if (!token || !workspaceId || !userId) {
+    throw new Error('token, workspaceId, and userId are required')
+  }
+  
+  const db = admin.firestore()
+  
+  // Find invitation
+  const invitationsRef = db.collection(`workspaces/${workspaceId}/invitations`)
+  const invitationsQuery = await invitationsRef
+    .where('token', '==', token)
+    .where('status', '==', 'pending')
+    .limit(1)
+    .get()
+  
+  if (invitationsQuery.empty) {
+    throw new Error('Invalid or expired invitation')
+  }
+  
+  const invitationDoc = invitationsQuery.docs[0]
+  const invitation = invitationDoc.data()
+  
+  // Check expiration
+  const expiresAt = invitation.expiresAt?.toMillis?.() || 0
+  if (expiresAt < Date.now()) {
+    await invitationDoc.ref.update({ status: 'expired' })
+    throw new Error('Invitation has expired')
+  }
+  
+  // Verify email matches
+  const userDoc = await db.doc(`users/${userId}`).get()
+  if (!userDoc.exists) {
+    throw new Error('User not found')
+  }
+  
+  const userData = userDoc.data()
+  if (userData?.email?.toLowerCase() !== invitation.email.toLowerCase()) {
+    throw new Error('Invitation email does not match your account email')
+  }
+  
+  // Add user to workspace
+  const { getRolePermissions, getRoleScreens } = await import('./role-permissions.js')
+  const permissions = await getRolePermissions(workspaceId, invitation.role)
+  const screens = await getRoleScreens(workspaceId, invitation.role)
+  
+  await db.doc(`workspaces/${workspaceId}/users/${userId}`).set({
+    role: invitation.role,
+    permissions,
+    screens,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdBy: invitation.createdBy,
+  })
+  
+  // Update invitation status
+  await invitationDoc.ref.update({
+    status: 'accepted',
+    acceptedAt: admin.firestore.FieldValue.serverTimestamp(),
+    acceptedBy: userId,
+  })
+  
+  return { success: true }
 })
 
