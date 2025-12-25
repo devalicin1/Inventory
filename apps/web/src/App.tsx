@@ -172,7 +172,7 @@ function App() {
     })
 
     return () => unsubscribe()
-  }, [setSession, clear, switchWorkspace])
+  }, [setSession, clear, switchWorkspace, navigate])
 
   // Workspace seçimi yapıldığında
   const handleWorkspaceSelect = (selectedWorkspaceId: string) => {

@@ -1,5 +1,3 @@
-import { db } from '../lib/firebase'
-import { doc, getDoc, getDocs, collection, query } from 'firebase/firestore'
 import { listUOMs } from './settings'
 import { listCategories } from './settings'
 import { getCompanyInformation } from './company'
@@ -47,7 +45,7 @@ export async function getWorkspaceConfigurationStatus(
       settingsPath: '/settings?tab=uom',
       priority: 'critical',
     })
-  } catch (error) {
+  } catch {
     checks.push({
       id: 'uom',
       name: 'Units of Measure',
@@ -74,7 +72,7 @@ export async function getWorkspaceConfigurationStatus(
       settingsPath: '/settings?tab=company-information',
       priority: 'critical',
     })
-  } catch (error) {
+  } catch {
     checks.push({
       id: 'company-information',
       name: 'Company Information',
@@ -100,7 +98,7 @@ export async function getWorkspaceConfigurationStatus(
       settingsPath: '/settings?tab=categories',
       priority: 'high',
     })
-  } catch (error) {
+  } catch {
     checks.push({
       id: 'categories',
       name: 'Product Categories',
@@ -126,7 +124,7 @@ export async function getWorkspaceConfigurationStatus(
       settingsPath: '/settings?tab=vendors',
       priority: 'high',
     })
-  } catch (error) {
+  } catch {
     checks.push({
       id: 'vendors',
       name: 'Vendors',
@@ -152,7 +150,7 @@ export async function getWorkspaceConfigurationStatus(
       settingsPath: '/settings?tab=addresses',
       priority: 'medium',
     })
-  } catch (error) {
+  } catch {
     checks.push({
       id: 'addresses',
       name: 'Shipping Addresses',
@@ -178,7 +176,7 @@ export async function getWorkspaceConfigurationStatus(
       settingsPath: '/settings?tab=report-settings',
       priority: 'medium',
     })
-  } catch (error) {
+  } catch {
     checks.push({
       id: 'report-settings',
       name: 'Report Settings',

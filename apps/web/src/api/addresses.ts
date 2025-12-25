@@ -12,6 +12,8 @@ import {
   where,
   serverTimestamp,
   onSnapshot,
+  type Timestamp,
+  type DocumentData,
 } from 'firebase/firestore'
 
 export interface Address {
@@ -25,8 +27,8 @@ export interface Address {
   country: string
   type: 'ship' | 'bill' | 'both'
   notes?: string
-  createdAt: Date | any
-  updatedAt: Date | any
+  createdAt: Date | Timestamp
+  updatedAt: Date | Timestamp
 }
 
 export interface AddressInput {
@@ -55,7 +57,7 @@ export async function listAddresses(
     }
     
     const snap = await getDocs(q)
-    return snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as Address[]
+    return snap.docs.map((d) => ({ id: d.id, ...(d.data() as DocumentData) })) as Address[]
   } catch (error) {
     console.error('Error fetching addresses:', error)
     throw error
@@ -72,7 +74,7 @@ export async function getAddress(workspaceId: string, addressId: string): Promis
       return null
     }
     
-    return { id: docSnap.id, ...(docSnap.data() as any) } as Address
+    return { id: docSnap.id, ...(docSnap.data() as DocumentData) } as Address
   } catch (error) {
     console.error('Error fetching address:', error)
     throw error
@@ -80,8 +82,8 @@ export async function getAddress(workspaceId: string, addressId: string): Promis
 }
 
 // Helper function to remove undefined values (Firestore doesn't accept undefined)
-const removeUndefined = (obj: any): any => {
-  const cleaned: any = {}
+const removeUndefined = <T extends Record<string, unknown>>(obj: T): Partial<T> => {
+  const cleaned: Partial<T> = {}
   for (const key in obj) {
     if (obj[key] !== undefined) {
       cleaned[key] = obj[key]
@@ -101,7 +103,7 @@ export async function createAddress(workspaceId: string, data: AddressInput): Pr
       updatedAt: serverTimestamp(),
     })
     const docSnap = await getDoc(docRef)
-    return { id: docSnap.id, ...(docSnap.data() as any) } as Address
+    return { id: docSnap.id, ...(docSnap.data() as DocumentData) } as Address
   } catch (error) {
     console.error('Error creating address:', error)
     throw error
@@ -116,7 +118,7 @@ export async function updateAddress(workspaceId: string, addressId: string, data
     await updateDoc(docRef, {
       ...cleanedData,
       updatedAt: serverTimestamp(),
-    } as any)
+    })
   } catch (error) {
     console.error('Error updating address:', error)
     throw error
@@ -148,7 +150,7 @@ export function subscribeToAddresses(
     (snapshot) => {
       const addresses = snapshot.docs.map((d) => ({
         id: d.id,
-        ...(d.data() as any),
+        ...(d.data() as DocumentData),
       })) as Address[]
       callback(addresses)
     },

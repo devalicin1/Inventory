@@ -13,6 +13,8 @@ import {
   getDoc,
   increment,
   deleteDoc,
+  type Timestamp,
+  type DocumentData,
 } from 'firebase/firestore'
 
 export type UiTxnType = 'in' | 'out' | 'transfer' | 'adjustment'
@@ -44,7 +46,7 @@ export async function createStockTransaction(params: {
   fromLoc?: string | null
   toLoc?: string | null
   unitCost?: number | null
-  refs?: any
+  refs?: Record<string, unknown>
 }) {
   const { workspaceId, productId, type, qty, userId, reason, reference, fromLoc, toLoc, unitCost } = params
   const { serverType, signedQty } = mapUiTypeToServer(type, qty)
@@ -53,7 +55,7 @@ export async function createStockTransaction(params: {
     workspaceId,
     timestamp: serverTimestamp(),
     type: serverType,
-    refs: { ...(reference ? { ref: reference } : {}), ...((params as any).refs || {}) },
+    refs: { ...(reference ? { ref: reference } : {}), ...(params.refs || {}) },
     productId,
     fromLoc: fromLoc || null,
     toLoc: toLoc || null,
@@ -61,7 +63,7 @@ export async function createStockTransaction(params: {
     unitCost: typeof unitCost === 'number' ? unitCost : null,
     userId: userId || 'anonymous',
     reason: reason || '',
-  } as any)
+  })
 
   // Keep the product's aggregated qtyOnHand field in sync with transactions so
   // inventory lists and real-time subscriptions always see the latest stock.
@@ -69,7 +71,7 @@ export async function createStockTransaction(params: {
     const productRef = doc(db, 'workspaces', workspaceId, 'products', productId)
     await updateDoc(productRef, {
       qtyOnHand: increment(signedQty),
-    } as any)
+    })
   } catch (e) {
     // If this fails we still keep the transaction history; callers can
     // recalculate using recalculateProductStock to repair any inconsistencies.
@@ -79,13 +81,13 @@ export async function createStockTransaction(params: {
 
 export interface StockTxn {
   id: string
-  timestamp: any
+  timestamp: Date | Timestamp
   type: string
   productId: string
   qty: number
   userId?: string
   reason?: string
-  refs?: any
+  refs?: Record<string, unknown>
 }
 
 export async function listProductStockTxns(
@@ -96,7 +98,7 @@ export async function listProductStockTxns(
   const col = collection(db, 'workspaces', workspaceId, 'stockTxns')
   const qy = query(col, where('productId', '==', productId), orderBy('timestamp', 'desc'), limit(max))
   const snap = await getDocs(qy)
-  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as StockTxn[]
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as DocumentData) })) as StockTxn[]
 }
 
 export async function listAllStockTxns(
@@ -106,7 +108,7 @@ export async function listAllStockTxns(
   const col = collection(db, 'workspaces', workspaceId, 'stockTxns')
   const qy = query(col, orderBy('timestamp', 'desc'), limit(max))
   const snap = await getDocs(qy)
-  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as StockTxn[]
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as DocumentData) })) as StockTxn[]
 }
 
 export async function getProductOnHand(workspaceId: string, productId: string): Promise<number> {
@@ -171,7 +173,7 @@ export interface ListedProduct {
   reorderPoint: number
   status: string
   qtyOnHand?: number
-  [key: string]: any
+  [key: string]: unknown
 }
 
 // Lists products and enriches each with current qtyOnHand by calculating from transaction history
@@ -182,7 +184,7 @@ export async function listProducts(workspaceId: string): Promise<ListedProduct[]
   // Calculate on-hand quantity for each product from transaction history
   const productsWithStock = await Promise.all(
     prodSnap.docs.map(async (d) => {
-      const data = d.data() as any
+      const data = d.data() as DocumentData
       const onHand = await getProductOnHand(workspaceId, d.id)
       return {
         id: d.id,
@@ -204,7 +206,7 @@ export async function getProductByCode(workspaceId: string, code: string): Promi
 
   if (!skuSnap.empty) {
     const d = skuSnap.docs[0]
-    const data = d.data() as any
+    const data = d.data() as DocumentData
     const onHand = await getProductOnHand(workspaceId, d.id)
     return { id: d.id, ...data, qtyOnHand: onHand } as ListedProduct
   }
@@ -214,11 +216,11 @@ export async function getProductByCode(workspaceId: string, code: string): Promi
     const docRef = doc(db, 'workspaces', workspaceId, 'products', code)
     const docSnap = await getDoc(docRef)
     if (docSnap.exists()) {
-      const data = docSnap.data() as any
+      const data = docSnap.data() as DocumentData
       const onHand = await getProductOnHand(workspaceId, docSnap.id)
       return { id: docSnap.id, ...data, qtyOnHand: onHand } as ListedProduct
     }
-  } catch (e) {
+  } catch {
     // Ignore invalid ID format errors
   }
 

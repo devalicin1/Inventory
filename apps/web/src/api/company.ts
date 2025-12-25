@@ -4,6 +4,8 @@ import {
   doc,
   setDoc,
   serverTimestamp,
+  type Timestamp,
+  type DocumentData,
 } from 'firebase/firestore'
 
 export interface CompanyInformation {
@@ -21,7 +23,7 @@ export interface CompanyInformation {
   registrationNumber?: string
   website?: string
   notes?: string
-  updatedAt: Date | any
+  updatedAt: Date | Timestamp
 }
 
 export interface CompanyInformationInput {
@@ -50,7 +52,7 @@ export async function getCompanyInformation(workspaceId: string): Promise<Compan
       return null
     }
     
-    return { id: docSnap.id, ...(docSnap.data() as any) } as CompanyInformation
+    return { id: docSnap.id, ...(docSnap.data() as DocumentData) } as CompanyInformation
   } catch (error) {
     console.error('Error fetching company information:', error)
     throw error
@@ -58,8 +60,8 @@ export async function getCompanyInformation(workspaceId: string): Promise<Compan
 }
 
 // Helper function to remove undefined values (Firestore doesn't accept undefined)
-const removeUndefined = (obj: any): any => {
-  const cleaned: any = {}
+const removeUndefined = <T extends Record<string, unknown>>(obj: T): Partial<T> => {
+  const cleaned: Partial<T> = {}
   for (const key in obj) {
     if (obj[key] !== undefined) {
       cleaned[key] = obj[key]
@@ -82,7 +84,7 @@ export async function updateCompanyInformation(
     }, { merge: true })
     
     const docSnap = await getDoc(docRef)
-    return { id: docSnap.id, ...(docSnap.data() as any) } as CompanyInformation
+    return { id: docSnap.id, ...(docSnap.data() as DocumentData) } as CompanyInformation
   } catch (error) {
     console.error('Error updating company information:', error)
     throw error

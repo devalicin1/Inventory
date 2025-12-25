@@ -600,7 +600,7 @@ export async function saveJobQr(
   const oldQrRef = ref(storage, `workspaces/${workspaceId}/jobs/${jobId}/qr.png`)
   try {
     await deleteObject(oldQrRef)
-  } catch (err) {
+  } catch {
     // Ignore if file doesn't exist
     console.log('Old QR code not found or already deleted')
   }
@@ -628,7 +628,7 @@ export async function deleteJobQr(
   const qrRef = ref(storage, `workspaces/${workspaceId}/jobs/${jobId}/qr.png`)
   try {
     await deleteObject(qrRef)
-  } catch (err) {
+  } catch {
     // Ignore if file doesn't exist
   }
   await updateDoc(doc(db, 'workspaces', workspaceId, 'jobs', jobId), {
@@ -1122,7 +1122,7 @@ export async function createConsumption(
         reason: `Job consumption (${jobCode})`,
         reference: wcName ? `${jobCode} • Workcenter: ${wcName}` : `${jobCode}`,
         // also include structured references for richer UIs
-        // @ts-ignore
+        // @ts-expect-error - refs is a dynamic property
         refs: { jobId, jobCode, workcenterId: wcId, workcenterName: wcName },
       })
     }
@@ -1176,7 +1176,7 @@ export async function deleteConsumption(
         userId: data.userId || 'current-user',
         reason: `Reversal of consumption (${jobCode})`,
         reference: wcName ? `${jobCode} • Workcenter: ${wcName}` : `${jobCode}`,
-        // @ts-ignore
+        // @ts-expect-error - refs is a dynamic property
         refs: { jobId, jobCode, workcenterId: wcId, workcenterName: wcName },
       })
     }
@@ -1224,7 +1224,7 @@ export async function approveConsumption(
       userId: data.userId || 'current-user',
       reason: `Job consumption (${jobCode})`,
       reference: wcName ? `${jobCode} • Workcenter: ${wcName}` : `${jobCode}`,
-      // @ts-ignore
+      // @ts-expect-error - refs is a dynamic property
       refs: { jobId, jobCode, workcenterId: wcId, workcenterName: wcName },
     })
   }
@@ -1423,7 +1423,7 @@ export async function recordJobOutput(
       userId: currentUser,
       reason: `Production output (${job.code})`,
       reference: job.code,
-      // @ts-ignore
+      // @ts-expect-error - refs is a dynamic property
       refs,
     })
   }
